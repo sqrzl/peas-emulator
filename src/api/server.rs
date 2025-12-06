@@ -28,7 +28,7 @@ pub async fn start_ui_server(storage: Arc<dyn Storage>, ui_port: u16) -> std::io
             app.route("/", web::get().to(|| async {
                 HttpResponse::Ok()
                     .content_type("text/html")
-                    .body("<html><body><h1>Wasabi S3 Emulator</h1><p>Running in headless mode</p></body></html>")
+                    .body("<html><body><h1>Peas Emulator</h1><p>Running in headless mode</p></body></html>")
             }))
         }
     })

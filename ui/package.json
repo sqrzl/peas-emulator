@@ -1,7 +1,7 @@
 {
-  "name": "wasabi-emulator",
+  "name": "peas-emulator",
   "version": "0.0.0",
-  "description": "Wasabi S3 Emulator UI",
+  "description": "Peas S3 Emulator UI",
   "private": true,
   "type": "module",
   "scripts": {

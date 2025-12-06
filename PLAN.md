@@ -1,4 +1,4 @@
-# Wasabi S3 Emulator - Consolidated Implementation Plan
+# Peas Emulator - Consolidated Implementation Plan
 
 ## ✅ Recent: Dependency Cleanup & Optimization
 

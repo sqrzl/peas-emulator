@@ -1,11 +1,11 @@
 [package]
-name = "wasabi-emulator"
+name = "peas-emulator"
 version = "0.1.0"
 edition = "2021"
 authors = ["smiggleworth"]
 license = "Apache-2.0"
-description = "An S3-compliant emulator designed to emulate Wasabi's object storage implementation"
-repository = "https://github.com/sqrzl/wasabi-emulator"
+description = "An S3-compliant emulator with Wasabi API compatibility"
+repository = "https://github.com/sqrzl/peas-emulator"
 
 [dependencies]
 actix-web = "4"
@@ -32,7 +32,7 @@ rand = "0.8"
 [dev-dependencies]
 
 [[bin]]
-name = "wasabi-emulator"
+name = "peas-emulator"
 path = "src/main.rs"
 
 [profile.release]

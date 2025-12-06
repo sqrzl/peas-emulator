@@ -1,11 +1,11 @@
-# Wasabi S3 Emulator
+# Peas Emulator
 
-An S3-compliant emulator designed to emulate Wasabi's object storage implementation. This emulator provides a local development environment for testing S3 applications against Wasabi's specific API behavior and features.
+An S3-compliant emulator with Wasabi API compatibility. This emulator provides a local development environment for testing S3 applications with full support for versioning, multipart uploads, lifecycle policies, and more.
 
 ## Features
 
-- S3-compliant API
-- Wasabi-specific implementation details
+- S3-compliant API with Wasabi compatibility
+- Object versioning and lifecycle management
 - Docker deployment ready
 - Local development support
 
@@ -26,13 +26,13 @@ cargo run
 ### Build the Docker image
 
 ```bash
-docker build -t sqrzl/wasabi-emulator .
+docker build -t sqrzl/peas-emulator .
 ```
 
 ### Run the container
 
 ```bash
-docker run sqrzl/wasabi-emulator
+docker run sqrzl/peas-emulator
 ```
 
 ### Using Docker Compose

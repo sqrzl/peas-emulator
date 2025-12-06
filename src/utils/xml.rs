@@ -272,8 +272,8 @@ pub fn list_buckets_xml(buckets: &[Bucket]) -> String {
         r#"
   </Buckets>
   <Owner>
-    <ID>wasabi-emulator</ID>
-    <DisplayName>Wasabi Emulator</DisplayName>
+    <ID>peas-emulator</ID>
+    <DisplayName>Peas Emulator</DisplayName>
   </Owner>
 </ListBucketsResult>"#,
     );
@@ -521,8 +521,8 @@ pub fn list_versions_xml(
     <ETag>{}</ETag>
     <Size>{}</Size>
     <Owner>
-      <ID>wasabi-emulator</ID>
-      <DisplayName>Wasabi Emulator</DisplayName>
+      <ID>peas-emulator</ID>
+      <DisplayName>Peas Emulator</DisplayName>
     </Owner>
     <StorageClass>{}</StorageClass>
   </Version>"#,

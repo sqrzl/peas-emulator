@@ -7,8 +7,8 @@ use tracing::{info, instrument};
 
 fn default_owner() -> Owner {
     Owner {
-        id: "wasabi-emulator".to_string(),
-        display_name: "Wasabi Emulator".to_string(),
+        id: "peas-emulator".to_string(),
+        display_name: "Peas Emulator".to_string(),
     }
 }
 
