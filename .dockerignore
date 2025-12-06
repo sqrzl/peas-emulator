@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+.cargo/
+
+# Node/UI
+ui/node_modules/
+ui/dist/
+.npm
+npm-debug.log
+yarn-error.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+Dockerfile
+
+# Misc
+README.md
+LICENSE
+PLAN.md
+GAP_ANALYSIS.md
+TODO.md
+IMPLEMENTATION.md
+.env.local
+.env.*.local
+blobs/

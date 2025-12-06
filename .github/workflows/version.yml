@@ -1,0 +1,27 @@
+name: Version
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      semver:
+        description: Semantic version (GitVersion semVer)
+        value: ${{ jobs.gitversion.outputs.semver }}
+
+jobs:
+  gitversion:
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.gitversion.outputs.semVer }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitVersion
+        uses: gittools/actions/gitversion/setup@v4
+
+      - name: Compute Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4

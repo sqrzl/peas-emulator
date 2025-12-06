@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  wasabi:
+    build: .
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      BLOBS_PATH: /app/blobs
+      WASABI_ACCESS_TOKEN: developer
+      WASABI_ACCESS_SECRET: developer
+    volumes:
+      - wasabi-blobs:/app/blobs
+
+volumes:
+  wasabi-blobs:
