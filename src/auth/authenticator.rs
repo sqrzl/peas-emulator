@@ -176,7 +176,6 @@ mod tests {
             secret_access_key: secret_key.map(|k| k.to_string()),
             enforce_auth,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         }
     }

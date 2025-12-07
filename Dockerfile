@@ -1,5 +1,5 @@
 # Build UI
-FROM node:22-alpine as ui-builder
+FROM node:latest as ui-builder
 
 WORKDIR /ui
 
@@ -29,25 +29,30 @@ COPY src ./src
 # Build the application
 RUN cargo build --release
 
+# Create blobs directory structure
+RUN mkdir -p /tmp/blobs
+
 # Final stage - use distroless (minimal with libc, ca-certs, tzdata)
 FROM gcr.io/distroless/cc-debian12
 
 WORKDIR /app
 
 # Copy the Rust binary from builder
-COPY --from=rust-builder /app/target/release/wasabi-emulator /app/wasabi-emulator
+COPY --from=rust-builder /app/target/release/peas-emulator /app/peas-emulator
 
 # Copy the built UI from ui-builder
 COPY --from=ui-builder /ui/dist /app/static
 
-# Create blobs directory for filesystem storage
-RUN mkdir -p /app/blobs
+# Copy blobs directory from rust-builder (created with shell available)
+COPY --from=rust-builder /tmp/blobs /app/blobs
 
 # Environment variables
 ENV BLOBS_PATH=/app/blobs
+ENV ACCESS_KEY=minioadmin
+ENV SECRET_KEY=minioadmin
 
 # Expose both S3 API and UI ports
 EXPOSE 9000 9001
 
 # Set the entrypoint
-ENTRYPOINT ["/app/wasabi-emulator"]
+ENTRYPOINT ["/app/peas-emulator"]

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   peas:
     build: .
@@ -8,8 +6,8 @@ services:
       - "9001:9001"
     environment:
       BLOBS_PATH: /app/blobs
-      PEAS_ACCESS_TOKEN: developer
-      PEAS_ACCESS_SECRET: developer
+      ACCESS_KEY: developer
+      SECRET_KEY: developer
     volumes:
       - peas-blobs:/app/blobs
 

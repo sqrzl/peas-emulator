@@ -7,6 +7,16 @@
 use std::env;
 use std::time::Duration;
 
+// Environment variable names
+const ENV_ACCESS_KEY: &str = "ACCESS_KEY";
+const ENV_SECRET_KEY: &str = "SECRET_KEY";
+const ENV_BLOBS_PATH: &str = "BLOBS_PATH";
+const ENV_LIFECYCLE_HOURS: &str = "LIFECYCLE_HOURS";
+
+// Default values
+const DEFAULT_BLOBS_PATH: &str = "./blobs";
+const DEFAULT_LIFECYCLE_HOURS: u64 = 1;
+
 /// Global application configuration loaded from environment variables.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -18,8 +28,6 @@ pub struct Config {
     pub enforce_auth: bool,
     /// Path to filesystem storage directory
     pub blobs_path: String,
-    /// Whether to use JSON format for logs
-    pub log_json: bool,
     /// Interval for running lifecycle rules
     pub lifecycle_interval: Duration,
 }
@@ -29,22 +37,19 @@ impl Config {
     ///
     /// # Environment Variables
     ///
-    /// - `PEAS_ACCESS_KEY_ID`: AWS access key ID (optional)
-    /// - `PEAS_SECRET_ACCESS_KEY`: AWS secret access key (optional)
+    /// - `ACCESS_KEY`: AWS access key ID (optional)
+    /// - `SECRET_KEY`: AWS secret access key (optional)
     /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
-    /// - `LOG_JSON`: Set to "true" to use JSON log format (default: false)
-    /// - `LIFECYCLE_INTERVAL_HOURS`: Hours between lifecycle rule executions (default: 1)
+    /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
     pub fn from_env() -> Self {
-        let access_key_id = env::var("PEAS_ACCESS_KEY_ID").ok();
-        let secret_access_key = env::var("PEAS_SECRET_ACCESS_KEY").ok();
-        let blobs_path = env::var("BLOBS_PATH").unwrap_or_else(|_| "./blobs".to_string());
-        let log_json = env::var("LOG_JSON").unwrap_or_default() == "true";
+        let access_key_id = env::var(ENV_ACCESS_KEY).ok();
+        let secret_access_key = env::var(ENV_SECRET_KEY).ok();
+        let blobs_path = env::var(ENV_BLOBS_PATH).unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string());
 
-        let lifecycle_interval_hours = env::var("LIFECYCLE_INTERVAL_HOURS")
+        let lifecycle_interval_hours = env::var(ENV_LIFECYCLE_HOURS)
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1);
-
+            .unwrap_or(DEFAULT_LIFECYCLE_HOURS);
 
         let enforce_auth = access_key_id.is_some() && secret_access_key.is_some();
 
@@ -53,7 +58,6 @@ impl Config {
             secret_access_key,
             enforce_auth,
             blobs_path,
-            log_json,
             lifecycle_interval: Duration::from_secs(lifecycle_interval_hours * 3600),
         }
     }
@@ -95,7 +99,6 @@ mod tests {
             secret_access_key: None,
             enforce_auth: false,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 
@@ -109,7 +112,6 @@ mod tests {
             secret_access_key: Some("test-secret".to_string()),
             enforce_auth: true,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 
@@ -123,7 +125,6 @@ mod tests {
             secret_access_key: Some("test-secret".to_string()),
             enforce_auth: true,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 
@@ -138,7 +139,6 @@ mod tests {
             secret_access_key: None,
             enforce_auth: false,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 
@@ -152,7 +152,6 @@ mod tests {
             secret_access_key: None,
             enforce_auth: false,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 
@@ -166,7 +165,6 @@ mod tests {
             secret_access_key: Some("test-secret".to_string()),
             enforce_auth: true,
             blobs_path: "./blobs".to_string(),
-            log_json: false,
             lifecycle_interval: Duration::from_secs(3600),
         };
 

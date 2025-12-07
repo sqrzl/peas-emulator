@@ -122,7 +122,7 @@ pub async fn list_buckets(
             }))
         }
         Err(e) => {
-            eprintln!("Error listing buckets: {:?}", e);
+            tracing::error!(error = ?e, "Error listing buckets");
             Ok(HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to list buckets"
             })))
@@ -141,7 +141,7 @@ pub async fn create_bucket(
             "bucket": req.name
         }))),
         Err(e) => {
-            eprintln!("Error creating bucket: {:?}", e);
+            tracing::error!(error = ?e, "Error creating bucket");
             Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": format!("Failed to create bucket: {}", e)
             })))
@@ -161,7 +161,7 @@ pub async fn get_bucket(
             versioning_enabled: bucket.versioning_enabled,
         })),
         Err(e) => {
-            eprintln!("Error getting bucket: {:?}", e);
+            tracing::error!(error = ?e, "Error getting bucket");
             Ok(HttpResponse::NotFound().json(serde_json::json!({
                 "error": "Bucket not found"
             })))
@@ -177,7 +177,7 @@ pub async fn delete_bucket(
     match storage.delete_bucket(&bucket_name) {
         Ok(_) => Ok(HttpResponse::NoContent().finish()),
         Err(e) => {
-            eprintln!("Error deleting bucket: {:?}", e);
+            tracing::error!(error = ?e, "Error deleting bucket");
             Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": format!("Failed to delete bucket: {}", e)
             })))
@@ -195,7 +195,7 @@ pub async fn get_versioning(
             "enabled": bucket.versioning_enabled
         }))),
         Err(e) => {
-            eprintln!("Error getting versioning: {:?}", e);
+            tracing::error!(error = ?e, "Error getting versioning");
             Ok(HttpResponse::NotFound().json(serde_json::json!({
                 "error": "Bucket not found"
             })))
@@ -221,7 +221,7 @@ pub async fn set_versioning(
             "enabled": req.enabled
         }))),
         Err(e) => {
-            eprintln!("Error setting versioning: {:?}", e);
+            tracing::error!(error = ?e, "Error setting versioning");
             Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": format!("Failed to set versioning: {}", e)
             })))
@@ -269,7 +269,7 @@ pub async fn list_objects(
             })))
         }
         Err(e) => {
-            eprintln!("Error listing objects: {:?}", e);
+            tracing::error!(error = ?e, "Error listing objects");
             Ok(HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to list objects"
             })))
@@ -295,7 +295,7 @@ pub async fn get_object_metadata(
             version_id: obj.version_id,
         })),
         Err(e) => {
-            eprintln!("Error getting object metadata: {:?}", e);
+            tracing::error!(error = ?e, "Error getting object metadata");
             Ok(HttpResponse::NotFound().json(serde_json::json!({
                 "error": "Object not found"
             })))
@@ -324,7 +324,7 @@ pub async fn download_object(
                 .body(obj.data))
         }
         Err(e) => {
-            eprintln!("Error downloading object: {:?}", e);
+            tracing::error!(error = ?e, "Error downloading object");
             Ok(HttpResponse::NotFound().json(serde_json::json!({
                 "error": "Object not found"
             })))
@@ -387,7 +387,7 @@ pub async fn upload_object(
             "key": key
         }))),
         Err(e) => {
-            eprintln!("Error uploading object: {:?}", e);
+            tracing::error!(error = ?e, "Error uploading object");
             Ok(HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to upload object: {}", e)
             })))
@@ -405,7 +405,7 @@ pub async fn delete_object(
     match storage.delete_object(&bucket_name, &key) {
         Ok(_) => Ok(HttpResponse::NoContent().finish()),
         Err(e) => {
-            eprintln!("Error deleting object: {:?}", e);
+            tracing::error!(error = ?e, "Error deleting object");
             Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": format!("Failed to delete object: {}", e)
             })))
@@ -440,7 +440,7 @@ pub async fn list_object_versions(
             })))
         }
         Err(e) => {
-            eprintln!("Error listing versions: {:?}", e);
+            tracing::error!(error = ?e, "Error listing versions");
             Ok(HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to list versions"
             })))
@@ -458,7 +458,7 @@ pub async fn get_object_tags(
     match storage.get_object_tags(&bucket_name, &key) {
         Ok(tags) => Ok(HttpResponse::Ok().json(TagsResponse { tags })),
         Err(e) => {
-            eprintln!("Error getting tags: {:?}", e);
+            tracing::error!(error = ?e, "Error getting tags");
             Ok(HttpResponse::NotFound().json(serde_json::json!({
                 "error": "Object not found"
             })))
@@ -479,7 +479,7 @@ pub async fn put_object_tags(
             "success": true
         }))),
         Err(e) => {
-            eprintln!("Error setting tags: {:?}", e);
+            tracing::error!(error = ?e, "Error setting tags");
             Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": format!("Failed to set tags: {}", e)
             })))

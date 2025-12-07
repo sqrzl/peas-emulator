@@ -576,8 +576,8 @@ Add validators to all endpoints before calling storage.
 - [SigV4 Signing Process](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
 
 ### Wasabi Specifics
-- [Wasabi Documentation](https://wasabi.com/help/)
-- [Wasabi API Compatibility](https://wasabi.com/s3-compatibility/)
+- [Wasabi Documentation](https://peas.com/help/)
+- [Wasabi API Compatibility](https://peas.com/s3-compatibility/)
 
 ### S3 Emulator Reference Projects
 - [MinIO](https://min.io/)
