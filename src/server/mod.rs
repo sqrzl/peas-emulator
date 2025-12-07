@@ -1,3 +1,4 @@
+use crate::auth::AuthConfig;
 use crate::storage::Storage;
 use actix_web::{web, App, HttpServer};
 use std::sync::Arc;
@@ -6,21 +7,24 @@ mod handlers;
 
 pub struct Server {
     storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
     api_port: u16,
 }
 
 impl Server {
-    pub fn new(storage: Arc<dyn Storage>, api_port: u16) -> Self {
-        Self { storage, api_port }
+    pub fn new(storage: Arc<dyn Storage>, auth_config: Arc<AuthConfig>, api_port: u16) -> Self {
+        Self { storage, auth_config, api_port }
     }
 
     pub async fn start(self) -> std::io::Result<()> {
         let storage_api = self.storage.clone();
+        let auth_config_api = self.auth_config.clone();
         let api_port = self.api_port;
 
         HttpServer::new(move || {
             App::new()
                 .app_data(web::Data::new(storage_api.clone()))
+                .app_data(web::Data::new(auth_config_api.clone()))
                 // S3-compatible endpoints (port 9000)
                 .route("/", web::get().to(handlers::list_buckets))
                 .service(

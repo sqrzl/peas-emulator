@@ -1,12 +1,10 @@
-use crate::models::{Bucket, Object, MultipartUpload};
+use crate::models::{Bucket, Object, MultipartUpload, ListObjectsResult};
 use crate::error::Result;
 
-pub mod memory;
 pub mod filesystem;
 pub mod indexed;
 pub mod lockfree_index;
 
-pub use memory::MemoryStorage;
 pub use filesystem::FilesystemStorage;
 pub use indexed::IndexedStorage;
 pub use lockfree_index::LockFreeIndex;
@@ -27,7 +25,7 @@ pub trait Storage: Send + Sync {
     fn get_object_range(&self, bucket: &str, key: &str, start: u64, end: Option<u64>) -> Result<(Object, Vec<u8>)>;
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()>;
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool>;
-    fn list_objects(&self, bucket: &str, prefix: Option<&str>, delimiter: Option<&str>, marker: Option<&str>) -> Result<Vec<Object>>;
+    fn list_objects(&self, bucket: &str, prefix: Option<&str>, delimiter: Option<&str>, marker: Option<&str>, max_keys: Option<usize>) -> Result<ListObjectsResult>;
 
     // Multipart operations
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload>;
@@ -47,6 +45,7 @@ pub trait Storage: Send + Sync {
     // Tagging operations
     fn get_object_tags(&self, bucket: &str, key: &str) -> Result<std::collections::HashMap<String, String>>;
     fn put_object_tags(&self, bucket: &str, key: &str, tags: std::collections::HashMap<String, String>) -> Result<()>;
+    fn delete_object_tags(&self, bucket: &str, key: &str) -> Result<()>;
 
     // ACL operations
     fn get_bucket_acl(&self, bucket: &str) -> Result<crate::models::policy::Acl>;

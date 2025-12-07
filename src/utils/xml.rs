@@ -1,243 +1,5 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_escape_ampersand_given_string_with_ampersand_when_escape_xml_called() {
-        // Arrange
-        let input = "test & data";
-        let expected = "test &amp; data";
-
-        // Act
-        let result = escape_xml(input);
-
-        // Assert
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn should_escape_angle_brackets_given_string_with_brackets_when_escape_xml_called() {
-        // Arrange
-        let input = "<tag>";
-        let expected = "&lt;tag&gt;";
-
-        // Act
-        let result = escape_xml(input);
-
-        // Assert
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn should_escape_quotes_given_string_with_quotes_when_escape_xml_called() {
-        // Arrange
-        let input = r#"quote"test"#;
-        let expected = "quote&quot;test";
-
-        // Act
-        let result = escape_xml(input);
-
-        // Assert
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn should_include_xml_declaration_given_any_input_when_list_buckets_xml_called() {
-        // Arrange
-        let buckets = vec![];
-
-        // Act
-        let xml = list_buckets_xml(&buckets);
-
-        // Assert
-        assert!(xml.starts_with("<?xml version="), "XML should start with declaration");
-    }
-
-    #[test]
-    fn should_include_bucket_name_given_bucket_list_when_list_buckets_xml_called() {
-        // Arrange
-        let buckets = vec![];
-
-        // Act
-        let xml = list_buckets_xml(&buckets);
-
-        // Assert
-        assert!(xml.contains("<ListBucketsResult"), "XML should contain ListBucketsResult element");
-        assert!(xml.contains("</ListBucketsResult>"), "XML should close ListBucketsResult element");
-    }
-
-    #[test]
-    fn should_include_error_code_given_error_parameters_when_error_xml_called() {
-        // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
-        // Act
-        let xml = error_xml(code, message, request_id);
-
-        // Assert
-        assert!(xml.contains("<Code>NoSuchBucket</Code>"), "XML should contain error code");
-    }
-
-    #[test]
-    fn should_include_error_message_given_error_parameters_when_error_xml_called() {
-        // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
-        // Act
-        let xml = error_xml(code, message, request_id);
-
-        // Assert
-        assert!(xml.contains("<Message>Bucket not found</Message>"), "XML should contain error message");
-    }
-
-    #[test]
-    fn should_include_request_id_given_request_id_when_error_xml_called() {
-        // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
-        // Act
-        let xml = error_xml(code, message, request_id);
-
-        // Assert
-        assert!(xml.contains("<RequestId>req-12345</RequestId>"), "XML should contain request ID");
-    }
-
-    #[test]
-    fn should_include_enabled_status_given_enabled_string_when_versioning_status_xml_called() {
-        // Arrange
-        let status = Some("Enabled");
-
-        // Act
-        let xml = versioning_status_xml(status);
-
-        // Assert
-        assert!(xml.contains("<Status>Enabled</Status>"), "XML should contain Enabled status");
-    }
-
-    #[test]
-    fn should_include_suspended_status_given_suspended_string_when_versioning_status_xml_called() {
-        // Arrange
-        let status = Some("Suspended");
-
-        // Act
-        let xml = versioning_status_xml(status);
-
-        // Assert
-        assert!(xml.contains("<Status>Suspended</Status>"), "XML should contain Suspended status");
-    }
-
-    #[test]
-    fn should_include_versioning_configuration_element_given_any_status_when_versioning_status_xml_called() {
-        // Arrange
-        let status = Some("Enabled");
-
-        // Act
-        let xml = versioning_status_xml(status);
-
-        // Assert
-        assert!(xml.contains("<VersioningConfiguration"), "XML should contain VersioningConfiguration element");
-        assert!(xml.contains("</VersioningConfiguration>"), "XML should close VersioningConfiguration element");
-    }
-
-    #[test]
-    fn should_include_empty_constraint_given_us_east_1_when_location_xml_called() {
-        // Arrange
-        let region = "us-east-1";
-
-        // Act
-        let xml = location_xml(region);
-
-        // Assert
-        assert!(xml.contains("<LocationConstraint"), "XML should contain LocationConstraint element");
-        // US-east-1 returns empty constraint in S3
-    }
-
-    #[test]
-    fn should_include_region_given_non_us_east_1_when_location_xml_called() {
-        // Arrange
-        let region = "eu-central-1";
-
-        // Act
-        let xml = location_xml(region);
-
-        // Assert
-        assert!(xml.contains("eu-central-1"), "XML should contain region name");
-    }
-
-    #[test]
-    fn should_parse_tagging_xml_into_map() {
-        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
-<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag><Tag><Key>owner</Key><Value>alice</Value></Tag></TagSet></Tagging>"#;
-
-        let tags = parse_tagging_xml(body).expect("parse tagging xml");
-
-        assert_eq!(tags.get("env"), Some(&"dev".to_string()));
-        assert_eq!(tags.get("owner"), Some(&"alice".to_string()));
-    }
-
-    #[test]
-    fn should_render_tagging_xml_with_entries() {
-        let mut tags = std::collections::HashMap::new();
-        tags.insert("env".to_string(), "prod".to_string());
-
-        let xml = tagging_xml(&tags);
-
-        assert!(xml.contains("<Tag>"));
-        assert!(xml.contains("<Key>env</Key>"));
-        assert!(xml.contains("<Value>prod</Value>"));
-    }
-
-    #[test]
-    fn should_error_when_more_than_ten_tags() {
-        let mut body = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet>");
-        for i in 0..11 {
-            body.push_str(&format!("<Tag><Key>k{i}</Key><Value>v{i}</Value></Tag>"));
-        }
-        body.push_str("</TagSet></Tagging>");
-
-        let result = parse_tagging_xml(&body);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_error_on_empty_tag_key() {
-        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet><Tag><Key></Key><Value>v</Value></Tag></TagSet></Tagging>";
-        let result = parse_tagging_xml(body);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_render_owner_grant_in_acl_xml() {
-        let owner = Owner { id: "owner-id".to_string(), display_name: "Owner".to_string() };
-        let acl = Acl { canned: CannedAcl::Private };
-
-        let xml = acl_xml(&owner, &acl);
-
-        assert!(xml.contains("<AccessControlPolicy"));
-        assert!(xml.contains("<Permission>FULL_CONTROL</Permission>"));
-        assert!(xml.contains("owner-id"));
-        assert!(!xml.contains("AllUsers"));
-    }
-
-    #[test]
-    fn should_render_public_read_grant_in_acl_xml() {
-        let owner = Owner { id: "owner-id".to_string(), display_name: "Owner".to_string() };
-        let acl = Acl { canned: CannedAcl::PublicRead };
-
-        let xml = acl_xml(&owner, &acl);
-
-        assert!(xml.contains("AllUsers"));
-        assert!(xml.contains("<Permission>READ</Permission>"));
-    }
-}
 /// XML response builders for S3-compliant responses
-use crate::models::{Acl, Bucket, CannedAcl, Object, MultipartUpload, Owner, Part};
+use crate::models::{Acl, Bucket, CannedAcl, MultipartUpload, Object, Owner, Part};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::collections::HashMap;
@@ -264,7 +26,8 @@ pub fn list_buckets_xml(buckets: &[Bucket]) -> String {
       <Name>{}</Name>
       <CreationDate>{}</CreationDate>
     </Bucket>"#,
-            escape_xml(&bucket.name), created
+            escape_xml(&bucket.name),
+            created
         ));
     }
 
@@ -329,20 +92,16 @@ pub fn parse_tagging_xml(body: &str) -> Result<HashMap<String, String>, String> 
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                match e.name().as_ref() {
-                    b"Key" => in_key = true,
-                    b"Value" => in_value = true,
-                    _ => {}
-                }
-            }
-            Ok(Event::End(e)) => {
-                match e.name().as_ref() {
-                    b"Key" => in_key = false,
-                    b"Value" => in_value = false,
-                    _ => {}
-                }
-            }
+            Ok(Event::Start(e)) => match e.name().as_ref() {
+                b"Key" => in_key = true,
+                b"Value" => in_value = true,
+                _ => {}
+            },
+            Ok(Event::End(e)) => match e.name().as_ref() {
+                b"Key" => in_key = false,
+                b"Value" => in_value = false,
+                _ => {}
+            },
             Ok(Event::Text(e)) => {
                 let text = e.unescape().map_err(|err| err.to_string())?.to_string();
                 if in_key {
@@ -534,7 +293,7 @@ pub fn list_versions_xml(
             escape_xml(&obj.storage_class)
         ));
     }
-    
+
     let mut result = format!(
         r#"{}
 <ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -556,10 +315,16 @@ pub fn list_versions_xml(
 
     if truncated {
         if let Some(nkm) = next_key_marker {
-            result.push_str(&format!("\n  <NextKeyMarker>{}</NextKeyMarker>", escape_xml(nkm)));
+            result.push_str(&format!(
+                "\n  <NextKeyMarker>{}</NextKeyMarker>",
+                escape_xml(nkm)
+            ));
         }
         if let Some(nvm) = next_version_id_marker {
-            result.push_str(&format!("\n  <NextVersionIdMarker>{}</NextVersionIdMarker>", escape_xml(nvm)));
+            result.push_str(&format!(
+                "\n  <NextVersionIdMarker>{}</NextVersionIdMarker>",
+                escape_xml(nvm)
+            ));
         }
     }
 
@@ -644,10 +409,10 @@ pub fn list_multipart_uploads_xml(uploads: &[MultipartUpload], bucket: &str) -> 
 
 /// ACL response
 pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
-        let mut grants = String::new();
+    let mut grants = String::new();
 
-        grants.push_str(&format!(
-                r#"
+    grants.push_str(&format!(
+        r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
                 <ID>{}</ID>
@@ -655,26 +420,26 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
             </Grantee>
             <Permission>FULL_CONTROL</Permission>
         </Grant>"#,
-                escape_xml(&owner.id),
-                escape_xml(&owner.display_name)
-        ));
+        escape_xml(&owner.id),
+        escape_xml(&owner.display_name)
+    ));
 
-        match acl.canned {
-                CannedAcl::Private => {}
-                CannedAcl::PublicRead => {
-                        grants.push_str(
-                                r#"
+    match acl.canned {
+        CannedAcl::Private => {}
+        CannedAcl::PublicRead => {
+            grants.push_str(
+                r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
                 <URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
             </Grantee>
             <Permission>READ</Permission>
         </Grant>"#,
-                        );
-                }
-                CannedAcl::PublicReadWrite => {
-                        grants.push_str(
-                                r#"
+            );
+        }
+        CannedAcl::PublicReadWrite => {
+            grants.push_str(
+                r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
                 <URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
@@ -687,12 +452,31 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
             </Grantee>
             <Permission>WRITE</Permission>
         </Grant>"#,
-                        );
-                }
+            );
         }
+        CannedAcl::AuthenticatedRead => {
+            grants.push_str(
+                r#"
+        <Grant>
+            <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+                <URI>http://acs.amazonaws.com/groups/global/AuthenticatedUsers</URI>
+            </Grantee>
+            <Permission>READ</Permission>
+        </Grant>"#,
+            );
+        }
+        CannedAcl::BucketOwnerRead => {
+            // Bucket owner read - owner has full control, requester has read
+            // For simplicity, we don't add additional grants as owner already has full control
+        }
+        CannedAcl::BucketOwnerFullControl => {
+            // Bucket owner full control - owner has full control
+            // For simplicity, we don't add additional grants as owner already has full control
+        }
+    }
 
-        format!(
-                r#"{}
+    format!(
+        r#"{}
 <AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
     <Owner>
         <ID>{}</ID>
@@ -701,11 +485,11 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
     <AccessControlList>{}
     </AccessControlList>
 </AccessControlPolicy>"#,
-                xml_declaration(),
-                escape_xml(&owner.id),
-                escape_xml(&owner.display_name),
-                grants
-        )
+        xml_declaration(),
+        escape_xml(&owner.id),
+        escape_xml(&owner.display_name),
+        grants
+    )
 }
 
 /// List parts response
@@ -733,7 +517,10 @@ pub fn list_parts_xml(bucket: &str, key: &str, upload_id: &str, parts: &[Part]) 
       <ETag>"{}"</ETag>
       <Size>{}</Size>
     </Part>"#,
-            part.part_number, modified, escape_xml(&part.etag), part.size
+            part.part_number,
+            modified,
+            escape_xml(&part.etag),
+            part.size
         ));
     }
 
@@ -748,11 +535,7 @@ pub fn list_parts_xml(bucket: &str, key: &str, upload_id: &str, parts: &[Part]) 
 }
 
 /// Complete multipart upload response
-pub fn complete_multipart_upload_xml(
-    bucket: &str,
-    key: &str,
-    etag: &str,
-) -> String {
+pub fn complete_multipart_upload_xml(bucket: &str, key: &str, etag: &str) -> String {
     format!(
         r#"{}
 <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -773,7 +556,7 @@ pub fn complete_multipart_upload_xml(
 /// Generate lifecycle configuration XML response
 pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) -> String {
     use crate::models::lifecycle::*;
-    
+
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<LifecycleConfiguration>\n");
 
@@ -784,8 +567,14 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
             xml.push_str(&format!("    <ID>{}</ID>\n", escape_xml(id)));
         }
 
-        xml.push_str(&format!("    <Status>{}</Status>\n", 
-            if rule.status == Status::Enabled { "Enabled" } else { "Disabled" }));
+        xml.push_str(&format!(
+            "    <Status>{}</Status>\n",
+            if rule.status == Status::Enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        ));
 
         if let Some(filter) = &rule.filter {
             xml.push_str("    <Filter>\n");
@@ -795,7 +584,10 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
             for tag in &filter.tags {
                 xml.push_str("      <Tag>\n");
                 xml.push_str(&format!("        <Key>{}</Key>\n", escape_xml(&tag.key)));
-                xml.push_str(&format!("        <Value>{}</Value>\n", escape_xml(&tag.value)));
+                xml.push_str(&format!(
+                    "        <Value>{}</Value>\n",
+                    escape_xml(&tag.value)
+                ));
                 xml.push_str("      </Tag>\n");
             }
             xml.push_str("    </Filter>\n");
@@ -810,7 +602,10 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
                 xml.push_str(&format!("      <Date>{}</Date>\n", escape_xml(date)));
             }
             if let Some(marker) = expiration.expired_object_delete_marker {
-                xml.push_str(&format!("      <ExpiredObjectDeleteMarker>{}</ExpiredObjectDeleteMarker>\n", marker));
+                xml.push_str(&format!(
+                    "      <ExpiredObjectDeleteMarker>{}</ExpiredObjectDeleteMarker>\n",
+                    marker
+                ));
             }
             xml.push_str("    </Expiration>\n");
         }
@@ -828,7 +623,10 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
                 StorageClass::Glacier => "GLACIER",
                 StorageClass::DeepArchive => "DEEP_ARCHIVE",
             };
-            xml.push_str(&format!("      <StorageClass>{}</StorageClass>\n", storage_class));
+            xml.push_str(&format!(
+                "      <StorageClass>{}</StorageClass>\n",
+                storage_class
+            ));
             xml.push_str("    </Transition>\n");
         }
 
@@ -840,10 +638,12 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
 }
 
 /// Parse lifecycle configuration XML body
-pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::LifecycleConfiguration, String> {
+pub fn parse_lifecycle_xml(
+    body: &str,
+) -> Result<crate::models::lifecycle::LifecycleConfiguration, String> {
     use crate::models::lifecycle::*;
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
 
     let mut reader = Reader::from_str(body);
     reader.trim_text(true);
@@ -854,7 +654,7 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
     let mut current_expiration: Option<Expiration> = None;
     let mut current_transition: Option<Transition> = None;
     let mut current_tag: Option<(String, String)> = None;
-    
+
     let mut path_stack: Vec<String> = Vec::new();
     let mut text_buffer = String::new();
 
@@ -863,7 +663,7 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
             Ok(Event::Start(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 path_stack.push(name.clone());
-                
+
                 match name.as_str() {
                     "Rule" => {
                         current_rule = Some(Rule {
@@ -906,7 +706,7 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
             }
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                
+
                 match name.as_str() {
                     "ID" => {
                         if let Some(ref mut rule) = current_rule {
@@ -915,10 +715,10 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
                     }
                     "Status" => {
                         if let Some(ref mut rule) = current_rule {
-                            rule.status = if text_buffer == "Enabled" { 
-                                Status::Enabled 
-                            } else { 
-                                Status::Disabled 
+                            rule.status = if text_buffer == "Enabled" {
+                                Status::Enabled
+                            } else {
+                                Status::Disabled
                             };
                         }
                     }
@@ -938,7 +738,9 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
                         }
                     }
                     "Tag" => {
-                        if let (Some(ref mut filter), Some(tag)) = (&mut current_filter, current_tag.take()) {
+                        if let (Some(ref mut filter), Some(tag)) =
+                            (&mut current_filter, current_tag.take())
+                        {
                             filter.tags.push(crate::models::lifecycle::Tag {
                                 key: tag.0,
                                 value: tag.1,
@@ -976,17 +778,23 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
                         }
                     }
                     "Filter" => {
-                        if let (Some(ref mut rule), Some(filter)) = (&mut current_rule, current_filter.take()) {
+                        if let (Some(ref mut rule), Some(filter)) =
+                            (&mut current_rule, current_filter.take())
+                        {
                             rule.filter = Some(filter);
                         }
                     }
                     "Expiration" => {
-                        if let (Some(ref mut rule), Some(exp)) = (&mut current_rule, current_expiration.take()) {
+                        if let (Some(ref mut rule), Some(exp)) =
+                            (&mut current_rule, current_expiration.take())
+                        {
                             rule.expiration = Some(exp);
                         }
                     }
                     "Transition" => {
-                        if let (Some(ref mut rule), Some(trans)) = (&mut current_rule, current_transition.take()) {
+                        if let (Some(ref mut rule), Some(trans)) =
+                            (&mut current_rule, current_transition.take())
+                        {
                             rule.transitions.push(trans);
                         }
                     }
@@ -997,7 +805,7 @@ pub fn parse_lifecycle_xml(body: &str) -> Result<crate::models::lifecycle::Lifec
                     }
                     _ => {}
                 }
-                
+
                 path_stack.pop();
                 text_buffer.clear();
             }
@@ -1017,4 +825,291 @@ fn escape_xml(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_escape_ampersand_given_string_with_ampersand_when_escape_xml_called() {
+        // Arrange
+        let input = "test & data";
+        let expected = "test &amp; data";
+
+        // Act
+        let result = escape_xml(input);
+
+        // Assert
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn should_escape_angle_brackets_given_string_with_brackets_when_escape_xml_called() {
+        // Arrange
+        let input = "<tag>";
+        let expected = "&lt;tag&gt;";
+
+        // Act
+        let result = escape_xml(input);
+
+        // Assert
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn should_escape_quotes_given_string_with_quotes_when_escape_xml_called() {
+        // Arrange
+        let input = r#"quote"test"#;
+        let expected = "quote&quot;test";
+
+        // Act
+        let result = escape_xml(input);
+
+        // Assert
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn should_include_xml_declaration_given_any_input_when_list_buckets_xml_called() {
+        // Arrange
+        let buckets = vec![];
+
+        // Act
+        let xml = list_buckets_xml(&buckets);
+
+        // Assert
+        assert!(
+            xml.starts_with("<?xml version="),
+            "XML should start with declaration"
+        );
+    }
+
+    #[test]
+    fn should_include_bucket_name_given_bucket_list_when_list_buckets_xml_called() {
+        // Arrange
+        let buckets = vec![];
+
+        // Act
+        let xml = list_buckets_xml(&buckets);
+
+        // Assert
+        assert!(
+            xml.contains("<ListBucketsResult"),
+            "XML should contain ListBucketsResult element"
+        );
+        assert!(
+            xml.contains("</ListBucketsResult>"),
+            "XML should close ListBucketsResult element"
+        );
+    }
+
+    #[test]
+    fn should_include_error_code_given_error_parameters_when_error_xml_called() {
+        // Arrange
+        let code = "NoSuchBucket";
+        let message = "Bucket not found";
+        let request_id = "req-12345";
+
+        // Act
+        let xml = error_xml(code, message, request_id);
+
+        // Assert
+        assert!(
+            xml.contains("<Code>NoSuchBucket</Code>"),
+            "XML should contain error code"
+        );
+    }
+
+    #[test]
+    fn should_include_error_message_given_error_parameters_when_error_xml_called() {
+        // Arrange
+        let code = "NoSuchBucket";
+        let message = "Bucket not found";
+        let request_id = "req-12345";
+
+        // Act
+        let xml = error_xml(code, message, request_id);
+
+        // Assert
+        assert!(
+            xml.contains("<Message>Bucket not found</Message>"),
+            "XML should contain error message"
+        );
+    }
+
+    #[test]
+    fn should_include_request_id_given_request_id_when_error_xml_called() {
+        // Arrange
+        let code = "NoSuchBucket";
+        let message = "Bucket not found";
+        let request_id = "req-12345";
+
+        // Act
+        let xml = error_xml(code, message, request_id);
+
+        // Assert
+        assert!(
+            xml.contains("<RequestId>req-12345</RequestId>"),
+            "XML should contain request ID"
+        );
+    }
+
+    #[test]
+    fn should_include_enabled_status_given_enabled_string_when_versioning_status_xml_called() {
+        // Arrange
+        let status = Some("Enabled");
+
+        // Act
+        let xml = versioning_status_xml(status);
+
+        // Assert
+        assert!(
+            xml.contains("<Status>Enabled</Status>"),
+            "XML should contain Enabled status"
+        );
+    }
+
+    #[test]
+    fn should_include_suspended_status_given_suspended_string_when_versioning_status_xml_called() {
+        // Arrange
+        let status = Some("Suspended");
+
+        // Act
+        let xml = versioning_status_xml(status);
+
+        // Assert
+        assert!(
+            xml.contains("<Status>Suspended</Status>"),
+            "XML should contain Suspended status"
+        );
+    }
+
+    #[test]
+    fn should_include_versioning_configuration_element_given_any_status_when_versioning_status_xml_called(
+    ) {
+        // Arrange
+        let status = Some("Enabled");
+
+        // Act
+        let xml = versioning_status_xml(status);
+
+        // Assert
+        assert!(
+            xml.contains("<VersioningConfiguration"),
+            "XML should contain VersioningConfiguration element"
+        );
+        assert!(
+            xml.contains("</VersioningConfiguration>"),
+            "XML should close VersioningConfiguration element"
+        );
+    }
+
+    #[test]
+    fn should_include_empty_constraint_given_us_east_1_when_location_xml_called() {
+        // Arrange
+        let region = "us-east-1";
+
+        // Act
+        let xml = location_xml(region);
+
+        // Assert
+        assert!(
+            xml.contains("<LocationConstraint"),
+            "XML should contain LocationConstraint element"
+        );
+        // US-east-1 returns empty constraint in S3
+    }
+
+    #[test]
+    fn should_include_region_given_non_us_east_1_when_location_xml_called() {
+        // Arrange
+        let region = "eu-central-1";
+
+        // Act
+        let xml = location_xml(region);
+
+        // Assert
+        assert!(
+            xml.contains("eu-central-1"),
+            "XML should contain region name"
+        );
+    }
+
+    #[test]
+    fn should_parse_tagging_xml_into_map() {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag><Tag><Key>owner</Key><Value>alice</Value></Tag></TagSet></Tagging>"#;
+
+        let tags = parse_tagging_xml(body).expect("parse tagging xml");
+
+        assert_eq!(tags.get("env"), Some(&"dev".to_string()));
+        assert_eq!(tags.get("owner"), Some(&"alice".to_string()));
+    }
+
+    #[test]
+    fn should_render_tagging_xml_with_entries() {
+        let mut tags = std::collections::HashMap::new();
+        tags.insert("env".to_string(), "prod".to_string());
+
+        let xml = tagging_xml(&tags);
+
+        assert!(xml.contains("<Tag>"));
+        assert!(xml.contains("<Key>env</Key>"));
+        assert!(xml.contains("<Value>prod</Value>"));
+    }
+
+    #[test]
+    fn should_error_when_more_than_ten_tags() {
+        let mut body = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet>");
+        for i in 0..11 {
+            body.push_str(&format!("<Tag><Key>k{i}</Key><Value>v{i}</Value></Tag>"));
+        }
+        body.push_str("</TagSet></Tagging>");
+
+        let result = parse_tagging_xml(&body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_error_on_empty_tag_key() {
+        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet><Tag><Key></Key><Value>v</Value></Tag></TagSet></Tagging>";
+        let result = parse_tagging_xml(body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_render_owner_grant_in_acl_xml() {
+        let owner = Owner {
+            id: "owner-id".to_string(),
+            display_name: "Owner".to_string(),
+        };
+        let acl = Acl {
+            canned: CannedAcl::Private,
+            grants: Vec::new(),
+        };
+
+        let xml = acl_xml(&owner, &acl);
+
+        assert!(xml.contains("<AccessControlPolicy"));
+        assert!(xml.contains("<Permission>FULL_CONTROL</Permission>"));
+        assert!(xml.contains("owner-id"));
+        assert!(!xml.contains("AllUsers"));
+    }
+    #[test]
+    fn should_render_public_read_grant_in_acl_xml() {
+        let owner = Owner {
+            id: "owner-id".to_string(),
+            display_name: "Owner".to_string(),
+        };
+        let acl = Acl {
+            canned: CannedAcl::PublicRead,
+            grants: Vec::new(),
+        };
+
+        let xml = acl_xml(&owner, &acl);
+
+        assert!(xml.contains("AllUsers"));
+        assert!(xml.contains("<Permission>READ</Permission>"));
+    }
 }

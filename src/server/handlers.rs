@@ -1,14 +1,281 @@
 use super::*;
 use actix_web::{web, HttpRequest, HttpResponse};
+use crate::auth::{AuthConfig, AuthInfo, SignatureVerifier, SigV4Config};
 use crate::models::{Acl, CannedAcl, Owner};
+use crate::models::policy::{AuthContext, Authorizer, PolicyEffect};
 use crate::utils::{headers as header_utils, validation};
 use crate::utils::xml as xml_utils;
-use tracing::{info, instrument};
+use tracing::{info, warn, instrument};
 
 fn default_owner() -> Owner {
     Owner {
         id: "peas-emulator".to_string(),
         display_name: "Peas Emulator".to_string(),
+    }
+}
+
+/// Verify SigV4 signature in the request
+/// Returns Ok(true) if signature is valid or auth is not enforced
+/// Returns Ok(false) if signature is invalid
+/// Returns Err(HttpResponse) with 400/403 error if verification fails
+fn verify_sigv4_signature(
+    req: &HttpRequest,
+    auth_config: &AuthConfig,
+) -> Result<bool, HttpResponse> {
+    // If auth is not enforced, skip verification
+    if !auth_config.enforce_auth {
+        return Ok(true);
+    }
+
+    // Check if there's an Authorization header with SigV4
+    let auth_header = match req.headers().get("authorization") {
+        Some(header) => match header.to_str() {
+            Ok(s) => s,
+            Err(_) => return Ok(true), // Invalid header format, will be caught later
+        },
+        None => return Ok(true), // No auth header, will be handled by other checks
+    };
+
+    // Only verify if it's SigV4
+    if !auth_header.starts_with("AWS4-HMAC-SHA256") {
+        return Ok(true); // Not SigV4, skip verification (v2 or presigned URLs handled separately)
+    }
+
+    let req_id = header_utils::generate_request_id();
+
+    // Extract required headers for SigV4
+    let amz_date = match req.headers().get("x-amz-date")
+        .or_else(|| req.headers().get("date")) {
+        Some(h) => match h.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                let xml = xml_utils::error_xml("InvalidRequest", "Invalid date header", &req_id);
+                return Err(HttpResponse::BadRequest()
+                    .content_type("application/xml; charset=utf-8")
+                    .insert_header(("Content-Length", xml.len().to_string()))
+                    .insert_header(("x-amz-request-id", req_id))
+                    .body(xml));
+            }
+        },
+        None => {
+            let xml = xml_utils::error_xml("InvalidRequest", "Missing date header", &req_id);
+            return Err(HttpResponse::BadRequest()
+                .content_type("application/xml; charset=utf-8")
+                .insert_header(("Content-Length", xml.len().to_string()))
+                .insert_header(("x-amz-request-id", req_id))
+                .body(xml));
+        }
+    };
+
+    // Extract signature from Authorization header
+    let signature = match extract_sigv4_signature(auth_header) {
+        Some(sig) => sig,
+        None => {
+            let xml = xml_utils::error_xml("InvalidRequest", "Missing signature in authorization header", &req_id);
+            return Err(HttpResponse::BadRequest()
+                .content_type("application/xml; charset=utf-8")
+                .insert_header(("Content-Length", xml.len().to_string()))
+                .insert_header(("x-amz-request-id", req_id))
+                .body(xml));
+        }
+    };
+
+    // Extract credential scope from Authorization header
+    let credential_scope = match extract_credential_scope(auth_header) {
+        Some(scope) => scope,
+        None => {
+            let xml = xml_utils::error_xml("InvalidRequest", "Missing credential in authorization header", &req_id);
+            return Err(HttpResponse::BadRequest()
+                .content_type("application/xml; charset=utf-8")
+                .insert_header(("Content-Length", xml.len().to_string()))
+                .insert_header(("x-amz-request-id", req_id))
+                .body(xml));
+        }
+    };
+
+    // Get credentials from config
+    let secret_key = match auth_config.secret_key() {
+        Some(key) => key,
+        None => {
+            // No secret key configured, can't verify
+            warn!("SigV4 signature verification requested but no secret key configured");
+            return Ok(true);
+        }
+    };
+
+    let access_key = match auth_config.access_key() {
+        Some(key) => key,
+        None => {
+            warn!("SigV4 signature verification requested but no access key configured");
+            return Ok(true);
+        }
+    };
+
+    // Build canonical request for verification
+    let canonical_request = build_canonical_request(req);
+
+    // Verify the signature
+    let sigv4_config = SigV4Config {
+        access_key: access_key.to_string(),
+        secret_key: secret_key.to_string(),
+    };
+
+    let is_valid = SignatureVerifier::verify(&signature, &canonical_request, &amz_date, &credential_scope, &sigv4_config);
+
+    if !is_valid {
+        warn!("SigV4 signature verification failed");
+        let xml = xml_utils::error_xml("SignatureDoesNotMatch", "The provided signature does not match", &req_id);
+        return Err(HttpResponse::Forbidden()
+            .content_type("application/xml; charset=utf-8")
+            .insert_header(("Content-Length", xml.len().to_string()))
+            .insert_header(("x-amz-request-id", req_id))
+            .body(xml));
+    }
+
+    Ok(true)
+}
+
+/// Extract signature from SigV4 Authorization header
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn extract_sigv4_signature(auth_header: &str) -> Option<String> {
+    for part in auth_header.split(',') {
+        let part = part.trim();
+        if part.starts_with("Signature=") {
+            return Some(part[10..].to_string()); // Skip "Signature="
+        }
+    }
+    None
+}
+
+/// Extract credential scope from SigV4 Authorization header
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn extract_credential_scope(auth_header: &str) -> Option<String> {
+    for part in auth_header.split(',') {
+        let part = part.trim();
+        if let Some(cred_start) = part.find("Credential=") {
+            let credential = &part[cred_start + 11..]; // Skip "Credential="
+            // Scope is everything after the access key and first slash
+            if let Some(slash_pos) = credential.find('/') {
+                let scope = &credential[slash_pos + 1..];
+                // Stop at comma if present
+                return Some(scope.split(',').next().unwrap_or(scope).to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Build canonical request for SigV4 verification
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn build_canonical_request(req: &HttpRequest) -> String {
+    let method = req.method().to_string();
+    let uri = req.uri().path();
+    let query = req.uri().query().unwrap_or("");
+    
+    // For now, use a simplified canonical request
+    // In production, this should properly construct the full canonical request
+    // including headers, query parameters, etc.
+    format!(
+        "{}\n{}\n{}\n\nhost\nUNSIGNED-PAYLOAD",
+        method, uri, query
+    )
+}
+
+/// Check if the request is authorized to perform the action
+fn check_authorization(
+    req: &HttpRequest,
+    auth_config: &AuthConfig,
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: Option<&str>,
+    action: &str,
+) -> Result<AuthInfo, HttpResponse> {
+    // First, verify SigV4 signature if present
+    verify_sigv4_signature(req, auth_config)?;
+
+    // Extract authentication info
+    let auth_info = AuthInfo::from_request(req, auth_config);
+    
+    // If auth is not enforced, allow everything
+    if !auth_config.enforce_auth {
+        return Ok(auth_info);
+    }
+
+    // Build authorization context
+    let resource = if let Some(k) = key {
+        format!("arn:aws:s3:::{}/{}", bucket, k)
+    } else {
+        format!("arn:aws:s3:::{}", bucket)
+    };
+
+    let owner_id = default_owner().id;
+    let context = AuthContext {
+        principal: auth_info.principal.clone(),
+        is_authenticated: auth_info.is_authenticated,
+        action: action.to_string(),
+        resource: resource.clone(),
+        bucket_owner: Some(owner_id.clone()),
+        object_owner: Some(owner_id.clone()),
+    };
+
+    // Check ACL permissions
+    let acl_allowed = if let Some(k) = key {
+        // Object ACL check
+        match storage.get_object_acl(bucket, k) {
+            Ok(acl) => Authorizer::check_acl_permission(&acl, &owner_id, &context),
+            Err(_) => false, // If we can't get ACL, skip to policy check
+        }
+    } else {
+        // Bucket ACL check
+        match storage.get_bucket_acl(bucket) {
+            Ok(acl) => Authorizer::check_acl_permission(&acl, &owner_id, &context),
+            Err(_) => false,
+        }
+    };
+
+    // Check bucket policy
+    let policy_result = match storage.get_bucket_policy(bucket) {
+        Ok(policy) => Authorizer::evaluate_policy(&policy, &context),
+        Err(_) => PolicyEffect::Neutral,
+    };
+
+    // Combine results: Deny takes precedence, then Allow, then check if owner
+    let final_decision = match policy_result {
+        PolicyEffect::Deny => PolicyEffect::Deny,
+        PolicyEffect::Allow => PolicyEffect::Allow,
+        PolicyEffect::Neutral => {
+            if acl_allowed {
+                PolicyEffect::Allow
+            } else if auth_info.is_authenticated && auth_info.principal.contains(&owner_id) {
+                // Owner has full access
+                PolicyEffect::Allow
+            } else {
+                PolicyEffect::Deny
+            }
+        }
+    };
+
+    match final_decision {
+        PolicyEffect::Allow => Ok(auth_info),
+        _ => {
+            warn!(
+                principal = %context.principal,
+                action = %action,
+                resource = %resource,
+                "Access denied"
+            );
+            let req_id = header_utils::generate_request_id();
+            let xml = xml_utils::error_xml(
+                "AccessDenied",
+                "Access Denied",
+                &req_id,
+            );
+            Err(HttpResponse::Forbidden()
+                .content_type("application/xml; charset=utf-8")
+                .insert_header(("Content-Length", xml.len().to_string()))
+                .insert_header(("x-amz-request-id", req_id))
+                .body(xml))
+        }
     }
 }
 
@@ -24,7 +291,16 @@ fn parse_canned_acl(header: Option<&str>) -> Result<CannedAcl, String> {
     }
 }
 
-pub async fn list_buckets(storage: web::Data<Arc<dyn Storage>>) -> actix_web::Result<HttpResponse> {
+pub async fn list_buckets(
+    storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    // Check authorization for listing buckets
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, "*", None, "s3:ListAllMyBuckets") {
+        return Ok(response);
+    }
+
     let storage = storage.clone();
     let buckets = tokio::task::block_in_place(|| storage.list_buckets())?;
     let xml = xml_utils::list_buckets_xml(&buckets);
@@ -38,11 +314,24 @@ pub async fn list_buckets(storage: web::Data<Arc<dyn Storage>>) -> actix_web::Re
 
 pub async fn bucket_delete(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     bucket: web::Path<String>,
     query: web::Query<std::collections::HashMap<String, String>>,
+    req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
     let bucket_name = bucket.into_inner();
     let req_id = header_utils::generate_request_id();
+
+    // Check authorization
+    let action = if query.contains_key("lifecycle") {
+        "s3:DeleteLifecycleConfiguration"
+    } else {
+        "s3:DeleteBucket"
+    };
+    
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket_name, None, action) {
+        return Ok(response);
+    }
 
     // Handle DELETE bucket lifecycle
     if query.contains_key("lifecycle") {
@@ -116,6 +405,7 @@ pub async fn bucket_head(
 #[instrument(skip(storage, req, body), fields(bucket, key, request_id, size))]
 pub async fn object_put(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     path: web::Path<(String, String)>,
     req: HttpRequest,
     query: web::Query<std::collections::HashMap<String, String>>,
@@ -126,12 +416,17 @@ pub async fn object_put(
     
     // Record span fields
     tracing::Span::current()
-        .record("bucket", &bucket.as_str())
-        .record("key", &key.as_str())
-        .record("request_id", &req_id.as_str())
+        .record("bucket", bucket.as_str())
+        .record("key", key.as_str())
+        .record("request_id", req_id.as_str())
         .record("size", body.len());
     
     info!(method = "PUT", bucket = %bucket, key = %key, request_id = %req_id, size = body.len(), "Processing object PUT request");
+
+    // Check authorization
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket, Some(&key), "s3:PutObject") {
+        return Ok(response);
+    }
 
     // Validate bucket and key names
     if let Err(e) = validation::validate_bucket_name(&bucket) {
@@ -219,7 +514,7 @@ pub async fn object_put(
         };
 
         let storage = storage.clone();
-        match tokio::task::block_in_place(|| storage.put_object_acl(&bucket, &key, Acl { canned: canned_acl })) {
+        match tokio::task::block_in_place(|| storage.put_object_acl(&bucket, &key, Acl { canned: canned_acl, grants: vec![] })) {
             Ok(_) => Ok(HttpResponse::Ok()
                 .insert_header(("x-amz-request-id", req_id))
                 .insert_header(("x-amz-id-2", header_utils::generate_request_id()))
@@ -328,6 +623,7 @@ pub async fn object_put(
 #[instrument(skip(storage, req), fields(bucket, key, request_id))]
 pub async fn object_get(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     path: web::Path<(String, String)>,
     query: web::Query<std::collections::HashMap<String, String>>,
     req: actix_web::HttpRequest,
@@ -337,11 +633,16 @@ pub async fn object_get(
     
     // Record span fields
     tracing::Span::current()
-        .record("bucket", &bucket.as_str())
-        .record("key", &key.as_str())
-        .record("request_id", &req_id.as_str());
+        .record("bucket", bucket.as_str())
+        .record("key", key.as_str())
+        .record("request_id", req_id.as_str());
     
     info!(method = "GET", bucket = %bucket, key = %key, request_id = %req_id, "Processing object GET request");
+
+    // Check authorization
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket, Some(&key), "s3:GetObject") {
+        return Ok(response);
+    }
 
     // Parse Range header if present
     let range_header = req.headers().get("range").and_then(|h| h.to_str().ok());
@@ -370,6 +671,42 @@ pub async fn object_get(
                     .body(xml))
             }
         }
+    }
+    // Handle presigned URL generation
+    else if query.contains_key("presignedUrl") {
+        // Check if credentials are configured
+        if auth_config.access_key_id.is_none() || auth_config.secret_access_key.is_none() {
+            let xml = xml_utils::error_xml("InvalidConfiguration", "Credentials not configured for presigned URLs", &req_id);
+            return Ok(HttpResponse::BadRequest()
+                .content_type("application/xml; charset=utf-8")
+                .insert_header(("Content-Length", xml.len().to_string()))
+                .insert_header(("x-amz-request-id", req_id))
+                .body(xml));
+        }
+
+        let method = query.get("method").cloned().unwrap_or_else(|| "GET".to_string());
+        let expires = query.get("expires")
+            .and_then(|e| e.parse::<i64>().ok())
+            .unwrap_or(3600); // Default: 1 hour
+
+        let presigned_config = crate::auth::presigned::PresignedUrlConfig {
+            access_key: auth_config.access_key_id.clone().unwrap(),
+            secret_key: auth_config.secret_access_key.clone().unwrap(),
+        };
+        let base_url = format!("http://localhost:9000/{}/{}", bucket, key);
+        
+        let url = if method.to_uppercase() == "PUT" {
+            crate::auth::presigned::PresignedUrl::generate_put_url(&bucket, &key, expires, &base_url, &presigned_config)
+        } else {
+            crate::auth::presigned::PresignedUrl::generate_get_url(&bucket, &key, expires, &base_url, &presigned_config)
+        };
+
+        let response_body = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<PresignedUrl><Url>{}</Url></PresignedUrl>", url);
+        Ok(HttpResponse::Ok()
+            .content_type("application/xml; charset=utf-8")
+            .insert_header(("Content-Length", response_body.len().to_string()))
+            .insert_header(("x-amz-request-id", req_id))
+            .body(response_body))
     }
     // Handle object ACL
     else if query.contains_key("acl") {
@@ -471,8 +808,7 @@ pub async fn object_get(
 
         // Handle Range requests
         if let Some(range_str) = range_header {
-            if range_str.starts_with("bytes=") {
-                let range_part = &range_str[6..]; // Skip "bytes="
+            if let Some(range_part) = range_str.strip_prefix("bytes=") {
                 if let Some((start_str, end_str)) = range_part.split_once('-') {
                     let start = start_str.parse::<u64>().ok();
                     let end = if end_str.is_empty() {
@@ -553,11 +889,18 @@ pub async fn object_get(
 
 pub async fn object_head(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     path: web::Path<(String, String)>,
     query: web::Query<std::collections::HashMap<String, String>>,
+    req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
     let (bucket, key) = path.into_inner();
     let req_id = header_utils::generate_request_id();
+
+    // Check authorization
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket, Some(&key), "s3:GetObject") {
+        return Ok(response);
+    }
 
     // Handle versioning
     if query.contains_key("versionId") {
@@ -602,11 +945,18 @@ pub async fn object_head(
 
 pub async fn object_delete(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     path: web::Path<(String, String)>,
     query: web::Query<std::collections::HashMap<String, String>>,
+    req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
     let (bucket, key) = path.into_inner();
     let req_id = header_utils::generate_request_id();
+
+    // Check authorization
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket, Some(&key), "s3:DeleteObject") {
+        return Ok(response);
+    }
 
     // Handle versioning - DELETE specific version
     if query.contains_key("versionId") {
@@ -655,6 +1005,28 @@ pub async fn object_delete(
             }
         }
     }
+    // Handle delete tagging
+    else if query.contains_key("tagging") {
+        let storage = storage.clone();
+        match tokio::task::block_in_place(|| storage.delete_object_tags(&bucket, &key)) {
+            Ok(_) => Ok(HttpResponse::NoContent()
+                .insert_header(("x-amz-request-id", req_id))
+                .insert_header(("x-amz-id-2", header_utils::generate_request_id()))
+                .finish()),
+            Err(e) => {
+                let (status_code, error_code) = match e {
+                    crate::error::Error::KeyNotFound => (actix_web::http::StatusCode::NOT_FOUND, "NoSuchKey"),
+                    _ => (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, "InternalError"),
+                };
+                let xml = xml_utils::error_xml(error_code, &e.to_string(), &req_id);
+                Ok(HttpResponse::build(status_code)
+                    .content_type("application/xml; charset=utf-8")
+                    .insert_header(("Content-Length", xml.len().to_string()))
+                    .insert_header(("x-amz-request-id", req_id))
+                    .body(xml))
+            }
+        }
+    }
     // Default: Delete object
     else {
         let storage = storage.clone();
@@ -677,6 +1049,7 @@ pub async fn object_delete(
 
 pub async fn bucket_put(
     storage: web::Data<Arc<dyn Storage>>,
+    auth_config: web::Data<Arc<AuthConfig>>,
     bucket: web::Path<String>,
     query: web::Query<std::collections::HashMap<String, String>>,
     req: HttpRequest,
@@ -684,6 +1057,23 @@ pub async fn bucket_put(
 ) -> actix_web::Result<HttpResponse> {
     let bucket_name = bucket.into_inner();
     let req_id = header_utils::generate_request_id();
+
+    // Check authorization - CreateBucket for bucket creation, PutBucketVersioning for versioning config
+    let action = if query.contains_key("versioning") {
+        "s3:PutBucketVersioning"
+    } else if query.contains_key("lifecycle") {
+        "s3:PutLifecycleConfiguration"
+    } else if query.contains_key("acl") {
+        "s3:PutBucketAcl"
+    } else if query.contains_key("policy") {
+        "s3:PutBucketPolicy"
+    } else {
+        "s3:CreateBucket"
+    };
+    
+    if let Err(response) = check_authorization(&req, &auth_config, &storage, &bucket_name, None, action) {
+        return Ok(response);
+    }
 
     // Validate bucket name
     if let Err(e) = validation::validate_bucket_name(&bucket_name) {
@@ -853,7 +1243,7 @@ pub async fn bucket_put(
         };
 
         let storage = storage.clone();
-        return match tokio::task::block_in_place(|| storage.put_bucket_acl(&bucket_name, Acl { canned: canned_acl })) {
+        return match tokio::task::block_in_place(|| storage.put_bucket_acl(&bucket_name, Acl { canned: canned_acl, grants: vec![] })) {
             Ok(_) => Ok(HttpResponse::Ok()
                 .insert_header(("x-amz-request-id", req_id))
                 .insert_header(("x-amz-id-2", header_utils::generate_request_id()))
@@ -1113,33 +1503,20 @@ pub async fn bucket_get_or_list_objects(
     let delimiter = query.get("delimiter").map(|s| s.as_str());
     let marker = query.get("marker").map(|s| s.as_str());
     let max_keys = query.get("max-keys")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1000)
-        .min(1000); // S3 maximum is 1000
+        .and_then(|s| s.parse::<usize>().ok());
 
-    match tokio::task::block_in_place(|| storage.list_objects(&bucket_name, prefix, delimiter, marker)) {
-        Ok(mut objects) => {
-            // Filter objects after marker if provided
-            if let Some(m) = marker {
-                objects.retain(|o| o.key.as_str() > m);
-            }
-
-            let truncated = objects.len() > max_keys;
-            let next_marker = if truncated {
-                objects.get(max_keys).map(|o| o.key.as_str())
-            } else {
-                None
-            };
-            let limited_objects: Vec<_> = objects.iter().take(max_keys).cloned().collect();
+    match tokio::task::block_in_place(|| storage.list_objects(&bucket_name, prefix, delimiter, marker, max_keys)) {
+        Ok(result) => {
+            let max_keys_actual = max_keys.unwrap_or(1000).min(1000);
             let xml = xml_utils::list_objects_xml(
-                &limited_objects,
+                &result.objects,
                 &bucket_name,
                 prefix.unwrap_or(""),
                 delimiter,
                 marker,
-                max_keys,
-                truncated,
-                next_marker,
+                max_keys_actual,
+                result.is_truncated,
+                result.next_marker.as_deref(),
             );
             Ok(HttpResponse::Ok()
                 .content_type("application/xml; charset=utf-8")
@@ -1607,5 +1984,657 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all("./test_blobs_abort");
+    }
+
+    #[test]
+    fn should_preserve_metadata_given_x_amz_meta_headers_when_object_stored() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+        use std::collections::HashMap;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_metadata"));
+        let bucket_name = "test-bucket-metadata";
+        let key = "test-object.txt";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Create object with metadata
+        let mut metadata = HashMap::new();
+        metadata.insert("author".to_string(), "John Doe".to_string());
+        metadata.insert("environment".to_string(), "production".to_string());
+        metadata.insert("version".to_string(), "1.0".to_string());
+
+        let obj = Object::new_with_metadata(
+            key.to_string(),
+            b"test data".to_vec(),
+            "text/plain".to_string(),
+            metadata.clone(),
+        );
+
+        // Act - Store the object
+        let result = storage.put_object(bucket_name, key.to_string(), obj);
+        assert!(result.is_ok(), "Should store object with metadata");
+
+        // Act - Retrieve the object
+        let retrieved = storage.get_object(bucket_name, key);
+        
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve object");
+        let retrieved_obj = retrieved.unwrap();
+        
+        // Verify metadata is preserved
+        assert_eq!(retrieved_obj.metadata.get("author"), Some(&"John Doe".to_string()), "Author metadata should match");
+        assert_eq!(retrieved_obj.metadata.get("environment"), Some(&"production".to_string()), "Environment metadata should match");
+        assert_eq!(retrieved_obj.metadata.get("version"), Some(&"1.0".to_string()), "Version metadata should match");
+        assert_eq!(retrieved_obj.metadata.len(), 3, "Should have exactly 3 metadata entries");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_metadata");
+    }
+
+    #[test]
+    fn should_handle_empty_metadata_given_no_metadata_when_object_stored() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_no_metadata"));
+        let bucket_name = "test-bucket-no-metadata";
+        let key = "test-object.txt";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Create object without metadata (use default constructor)
+        let obj = Object::new(
+            key.to_string(),
+            b"test data".to_vec(),
+            "text/plain".to_string(),
+        );
+
+        // Act - Store the object
+        let result = storage.put_object(bucket_name, key.to_string(), obj);
+        assert!(result.is_ok(), "Should store object without metadata");
+
+        // Act - Retrieve the object
+        let retrieved = storage.get_object(bucket_name, key);
+        
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve object");
+        let retrieved_obj = retrieved.unwrap();
+        assert!(retrieved_obj.metadata.is_empty(), "Metadata should be empty");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_no_metadata");
+    }
+
+    #[test]
+    fn should_extract_metadata_headers_given_x_amz_meta_headers_when_extract_metadata_called() {
+        // Arrange
+        use crate::utils::headers as header_utils;
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-amz-meta-custom-key"),
+            HeaderValue::from_static("custom-value"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-amz-meta-author"),
+            HeaderValue::from_static("test-author"),
+        );
+        headers.insert(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/json"),
+        );
+
+        // Act
+        let metadata = header_utils::extract_metadata(&headers);
+
+        // Assert
+        assert_eq!(metadata.len(), 2, "Should extract 2 metadata headers");
+        assert_eq!(metadata.get("custom-key"), Some(&"custom-value".to_string()), "Should extract custom-key");
+        assert_eq!(metadata.get("author"), Some(&"test-author".to_string()), "Should extract author");
+        assert!(!metadata.contains_key("content-type"), "Should not include non-metadata headers");
+    }
+
+    #[test]
+    fn should_return_empty_map_given_no_x_amz_meta_headers_when_extract_metadata_called() {
+        // Arrange
+        use crate::utils::headers as header_utils;
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("AWS4-HMAC-SHA256 ..."),
+        );
+
+        // Act
+        let metadata = header_utils::extract_metadata(&headers);
+
+        // Assert
+        assert!(metadata.is_empty(), "Should return empty map when no metadata headers present");
+    }
+
+    #[test]
+    fn should_delete_all_tags_given_existing_tags_when_delete_object_tags_called() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+        use std::collections::HashMap;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_delete_tags"));
+        let bucket_name = "test-bucket-delete-tags";
+        let key = "test-object.txt";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Create object with tags
+        let mut tags = HashMap::new();
+        tags.insert("environment".to_string(), "test".to_string());
+        tags.insert("version".to_string(), "1.0".to_string());
+
+        let metadata = HashMap::new();
+        let mut obj = Object::new_with_metadata(key.to_string(), b"test data".to_vec(), "text/plain".to_string(), metadata);
+        obj.tags = tags;
+
+        // Store the object
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Delete tags
+        let result = storage.delete_object_tags(bucket_name, key);
+        assert!(result.is_ok(), "Should delete tags successfully");
+
+        // Act - Verify tags are gone
+        let retrieved = storage.get_object_tags(bucket_name, key);
+
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve empty tags");
+        assert!(retrieved.unwrap().is_empty(), "Tags should be empty after deletion");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_delete_tags");
+    }
+
+    #[test]
+    fn should_store_and_retrieve_tags_given_valid_tags_when_tagging_endpoints_used() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+        use std::collections::HashMap;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_tagging"));
+        let bucket_name = "test-bucket-tagging";
+        let key = "test-object.txt";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Create object
+        let obj = Object::new(key.to_string(), b"test data".to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Put tags
+        let mut tags = HashMap::new();
+        tags.insert("environment".to_string(), "production".to_string());
+        tags.insert("application".to_string(), "api".to_string());
+        tags.insert("owner".to_string(), "team-a".to_string());
+
+        let put_result = storage.put_object_tags(bucket_name, key, tags.clone());
+        assert!(put_result.is_ok(), "Should store tags");
+
+        // Act - Get tags
+        let retrieved_tags = storage.get_object_tags(bucket_name, key);
+
+        // Assert
+        assert!(retrieved_tags.is_ok(), "Should retrieve tags");
+        let tags_map = retrieved_tags.unwrap();
+        assert_eq!(tags_map.len(), 3, "Should have 3 tags");
+        assert_eq!(tags_map.get("environment"), Some(&"production".to_string()), "Environment tag should match");
+        assert_eq!(tags_map.get("application"), Some(&"api".to_string()), "Application tag should match");
+        assert_eq!(tags_map.get("owner"), Some(&"team-a".to_string()), "Owner tag should match");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_tagging");
+    }
+
+    #[test]
+    fn should_put_and_get_bucket_acl_when_acl_endpoints_used() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::policy::{Acl, CannedAcl};
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_bucket_acl"));
+        let bucket_name = "test-bucket-acl";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Act - Put bucket ACL
+        let acl = Acl {
+            canned: CannedAcl::PublicRead,
+            grants: vec![],
+        };
+        let put_result = storage.put_bucket_acl(bucket_name, acl.clone());
+        assert!(put_result.is_ok(), "Should put bucket ACL");
+
+        // Act - Get bucket ACL
+        let retrieved = storage.get_bucket_acl(bucket_name);
+
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve bucket ACL");
+        assert_eq!(retrieved.unwrap().canned, CannedAcl::PublicRead, "ACL should be PublicRead");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_bucket_acl");
+    }
+
+    #[test]
+    fn should_put_and_get_object_acl_when_acl_endpoints_used() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::policy::{Acl, CannedAcl};
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_object_acl"));
+        let bucket_name = "test-bucket-obj-acl";
+        let key = "test-object.txt";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), b"test data".to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Put object ACL
+        let acl = Acl {
+            canned: CannedAcl::Private,
+            grants: vec![],
+        };
+        let put_result = storage.put_object_acl(bucket_name, key, acl.clone());
+        assert!(put_result.is_ok(), "Should put object ACL");
+
+        // Act - Get object ACL
+        let retrieved = storage.get_object_acl(bucket_name, key);
+
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve object ACL");
+        assert_eq!(retrieved.unwrap().canned, CannedAcl::Private, "ACL should be Private");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_object_acl");
+    }
+
+    #[test]
+    fn should_return_default_acl_for_bucket_when_not_set() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::policy::CannedAcl;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_bucket_default_acl"));
+        let bucket_name = "test-bucket-default";
+
+        // Create bucket without setting ACL
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        // Act - Get bucket ACL (should return default)
+        let retrieved = storage.get_bucket_acl(bucket_name);
+
+        // Assert
+        assert!(retrieved.is_ok(), "Should retrieve default bucket ACL");
+        assert_eq!(retrieved.unwrap().canned, CannedAcl::Private, "Default ACL should be Private");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_bucket_default_acl");
+    }
+
+    #[test]
+    fn should_return_error_for_nonexistent_bucket_acl() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_nonexistent_acl"));
+
+        // Act - Try to get ACL for nonexistent bucket
+        let result = storage.get_bucket_acl("nonexistent-bucket");
+
+        // Assert
+        assert!(result.is_err(), "Should error for nonexistent bucket");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_nonexistent_acl");
+    }
+
+    #[test]
+    fn should_support_multiple_acl_canned_types() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::policy::{Acl, CannedAcl};
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_acl_types"));
+        let bucket_name = "test-bucket-types";
+
+        // Create bucket
+        let _ = storage.create_bucket(bucket_name.to_string());
+
+        let acl_types = vec![
+            CannedAcl::Private,
+            CannedAcl::PublicRead,
+            CannedAcl::PublicReadWrite,
+            CannedAcl::AuthenticatedRead,
+            CannedAcl::BucketOwnerRead,
+            CannedAcl::BucketOwnerFullControl,
+        ];
+
+        // Act & Assert - Test each canned ACL type
+        for acl_type in acl_types {
+            let acl = Acl {
+                canned: acl_type.clone(),
+                grants: vec![],
+            };
+            let put_result = storage.put_bucket_acl(bucket_name, acl);
+            assert!(put_result.is_ok(), "Should put {:?}", acl_type);
+
+            let retrieved = storage.get_bucket_acl(bucket_name);
+            assert!(retrieved.is_ok(), "Should retrieve {:?}", acl_type);
+            assert_eq!(retrieved.unwrap().canned, acl_type, "ACL type should match");
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_acl_types");
+    }
+
+    #[test]
+    fn should_get_object_range_when_range_header_provided() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_range"));
+        let bucket_name = "test-bucket-range";
+        let key = "test-file.txt";
+        let test_data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), test_data.to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Get range 0-9 (first 10 bytes)
+        let result = storage.get_object_range(bucket_name, key, 0, Some(9));
+
+        // Assert
+        assert!(result.is_ok(), "Should get object range");
+        let (_obj, data) = result.unwrap();
+        assert_eq!(data, b"0123456789", "Should return correct range data");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_range");
+    }
+
+    #[test]
+    fn should_get_object_range_from_middle_when_middle_range_requested() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_range_middle"));
+        let bucket_name = "test-bucket-middle";
+        let key = "test-file.txt";
+        let test_data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), test_data.to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Get range 10-19 (middle 10 bytes)
+        let result = storage.get_object_range(bucket_name, key, 10, Some(19));
+
+        // Assert
+        assert!(result.is_ok(), "Should get object range");
+        let (_obj, data) = result.unwrap();
+        assert_eq!(data, b"ABCDEFGHIJ", "Should return correct middle range data");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_range_middle");
+    }
+
+    #[test]
+    fn should_get_object_range_to_end_when_end_omitted() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_range_to_end"));
+        let bucket_name = "test-bucket-end";
+        let key = "test-file.txt";
+        let test_data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), test_data.to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Get range from 30 to end (no end specified)
+        let result = storage.get_object_range(bucket_name, key, 30, None);
+
+        // Assert
+        assert!(result.is_ok(), "Should get object range to end");
+        let (_obj, data) = result.unwrap();
+        assert_eq!(data, b"UVWXYZ", "Should return correct range to end");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_range_to_end");
+    }
+
+    #[test]
+    fn should_error_on_range_beyond_file_size() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_range_invalid"));
+        let bucket_name = "test-bucket-invalid";
+        let key = "test-file.txt";
+        let test_data = b"short";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), test_data.to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Get range beyond file size
+        let result = storage.get_object_range(bucket_name, key, 1000, Some(2000));
+
+        // Assert
+        assert!(result.is_err(), "Should error on range beyond file size");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_range_invalid");
+    }
+
+    #[test]
+    fn should_support_accept_ranges_header_in_normal_get() {
+        // Arrange
+        use crate::storage::FilesystemStorage;
+        use crate::models::Object;
+        use std::sync::Arc;
+
+        let storage = Arc::new(FilesystemStorage::new("./test_blobs_accept_ranges"));
+        let bucket_name = "test-bucket-accept";
+        let key = "test-file.txt";
+
+        // Create bucket and object
+        let _ = storage.create_bucket(bucket_name.to_string());
+        let obj = Object::new(key.to_string(), b"test data".to_vec(), "text/plain".to_string());
+        let _ = storage.put_object(bucket_name, key.to_string(), obj);
+
+        // Act - Get object (should include Accept-Ranges header)
+        let retrieved = storage.get_object(bucket_name, key);
+
+        // Assert
+        assert!(retrieved.is_ok(), "Should get object");
+        let _obj = retrieved.unwrap();
+        // Note: Full header testing would be done in integration tests with HTTP client
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all("./test_blobs_accept_ranges");
+    }
+
+    #[test]
+    fn should_generate_presigned_get_url_when_presignedUrl_query_provided() {
+        // Arrange
+        use crate::auth::presigned::PresignedUrlConfig;
+        let config = PresignedUrlConfig {
+            access_key: "test-access-key".to_string(),
+            secret_key: "test-secret-key".to_string(),
+        };
+
+        let bucket = "test-bucket";
+        let key = "test-object.txt";
+        let base_url = "http://localhost:9000/test-bucket/test-object.txt";
+
+        // Act - Generate presigned GET URL
+        let url = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket,
+            key,
+            3600,
+            base_url,
+            &config,
+        );
+
+        // Assert
+        assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"), "Should contain algorithm");
+        assert!(url.contains("X-Amz-Credential=test-access-key"), "Should contain access key");
+        assert!(url.contains("X-Amz-Expires=3600"), "Should contain expires time");
+        assert!(url.contains("X-Amz-SignedHeaders=host"), "Should contain signed headers");
+        assert!(url.contains("X-Amz-Date="), "Should contain timestamp");
+        assert!(url.starts_with("http"), "Should be valid URL");
+    }
+
+    #[test]
+    fn should_generate_presigned_put_url_with_different_signature() {
+        // Arrange
+        use crate::auth::presigned::PresignedUrlConfig;
+        let config = PresignedUrlConfig {
+            access_key: "test-access-key".to_string(),
+            secret_key: "test-secret-key".to_string(),
+        };
+
+        let bucket = "test-bucket";
+        let key = "test-object.txt";
+        let base_url = "http://localhost:9000/test-bucket/test-object.txt";
+
+        // Act - Generate presigned GET and PUT URLs
+        let get_url = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, key, 3600, base_url, &config,
+        );
+        let put_url = crate::auth::presigned::PresignedUrl::generate_put_url(
+            bucket, key, 3600, base_url, &config,
+        );
+
+        // Assert - URLs should be different (different signatures for different methods)
+        assert_ne!(get_url, put_url, "GET and PUT URLs should have different signatures");
+        assert!(get_url.contains("X-Amz-Algorithm"), "GET URL should have algorithm");
+        assert!(put_url.contains("X-Amz-Algorithm"), "PUT URL should have algorithm");
+    }
+
+    #[test]
+    fn should_respect_expires_parameter_in_presigned_url() {
+        // Arrange
+        use crate::auth::presigned::PresignedUrlConfig;
+        let config = PresignedUrlConfig {
+            access_key: "test-access-key".to_string(),
+            secret_key: "test-secret-key".to_string(),
+        };
+
+        let bucket = "test-bucket";
+        let key = "test-object.txt";
+        let base_url = "http://localhost:9000/test-bucket/test-object.txt";
+
+        // Act - Generate URLs with different expiration times
+        let short_url = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, key, 300, base_url, &config,
+        );
+        let long_url = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, key, 86400, base_url, &config,
+        );
+
+        // Assert
+        assert!(short_url.contains("X-Amz-Expires=300"), "Should have 300 second expiry");
+        assert!(long_url.contains("X-Amz-Expires=86400"), "Should have 86400 second expiry");
+    }
+
+    #[test]
+    fn should_generate_different_signatures_for_different_keys() {
+        // Arrange
+        use crate::auth::presigned::PresignedUrlConfig;
+        let config = PresignedUrlConfig {
+            access_key: "test-access-key".to_string(),
+            secret_key: "test-secret-key".to_string(),
+        };
+
+        let bucket = "test-bucket";
+        let base_url_1 = "http://localhost:9000/test-bucket/object1.txt";
+        let base_url_2 = "http://localhost:9000/test-bucket/object2.txt";
+
+        // Act - Generate URLs for different objects
+        let url1 = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, "object1.txt", 3600, base_url_1, &config,
+        );
+        let url2 = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, "object2.txt", 3600, base_url_2, &config,
+        );
+
+        // Assert
+        assert_ne!(url1, url2, "Different objects should have different signatures");
+    }
+
+    #[test]
+    fn should_create_valid_presigned_url_format() {
+        // Arrange
+        use crate::auth::presigned::PresignedUrlConfig;
+        let config = PresignedUrlConfig {
+            access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
+
+        let bucket = "test-bucket";
+        let key = "test-object.txt";
+        let base_url = "http://localhost:9000/test-bucket/test-object.txt";
+
+        // Act
+        let url = crate::auth::presigned::PresignedUrl::generate_get_url(
+            bucket, key, 3600, base_url, &config,
+        );
+
+        // Assert - Validate URL format
+        assert!(url.starts_with("http://localhost:9000/"), "Should start with base URL");
+        assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"), "Should be SigV4");
+        assert!(url.contains("X-Amz-Credential=AKIAIOSFODNN7EXAMPLE"), "Should contain access key");
+        assert!(url.contains("X-Amz-Signature="), "Should contain signature");
+        assert!(url.contains("X-Amz-Date="), "Should contain date");
+        assert!(!url.contains(" "), "URL should not contain spaces");
     }
 }

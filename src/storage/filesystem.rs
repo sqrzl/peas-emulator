@@ -546,44 +546,81 @@ impl Storage for FilesystemStorage {
         Ok(())
     }
 
-    fn list_objects(&self, bucket: &str, prefix: Option<&str>, _delimiter: Option<&str>, _marker: Option<&str>) -> Result<Vec<Object>> {
+    fn delete_object_tags(&self, bucket: &str, key: &str) -> Result<()> {
+        let object_id = Self::compute_object_id(bucket, key);
+        let metadata_path = self.object_metadata_path(bucket, &object_id);
+
+        if !metadata_path.exists() {
+            return Err(Error::KeyNotFound);
+        }
+
+        let metadata_json = fs::read_to_string(&metadata_path)
+            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
+
+        let mut object: Object = serde_json::from_str(&metadata_json)
+            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+
+        // Clear all tags
+        object.tags.clear();
+
+        let updated_json = serde_json::to_string(&object)
+            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
+
+        fs::write(&metadata_path, updated_json)
+            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn list_objects(&self, bucket: &str, prefix: Option<&str>, _delimiter: Option<&str>, marker: Option<&str>, max_keys: Option<usize>) -> Result<crate::models::ListObjectsResult> {
         let bucket_dir = self.bucket_dir(bucket);
-        
         if !bucket_dir.exists() {
             return Err(Error::BucketNotFound);
         }
 
-        let mut objects = Vec::new();
-        let entries = fs::read_dir(&bucket_dir)
-            .map_err(|e| Error::InternalError(format!("Failed to read bucket: {}", e)))?;
+        let mut all_objects = Vec::new();
         
-        for entry in entries {
-            let entry = entry
-                .map_err(|e| Error::InternalError(format!("Failed to read entry: {}", e)))?;
-            
-            let metadata = entry.metadata()
-                .map_err(|e| Error::InternalError(format!("Failed to get metadata: {}", e)))?;
-            
-            if metadata.is_file() {
-                let file_name = entry.file_name();
-                if let Some(name) = file_name.to_str() {
-                    if !name.ends_with(".meta.json") {
-                        if let Ok(obj) = self.get_object(bucket, name) {
-                            if let Some(p) = prefix {
-                                if obj.key.starts_with(p) {
-                                    objects.push(obj);
-                                }
-                            } else {
-                                objects.push(obj);
-                            }
-                        }
-                    }
-                }
+        // Use index to get all keys in bucket
+        let keys = self.index.list(bucket, prefix);
+        
+        // Load objects for each key
+        for obj_key in keys {
+            if let Ok(obj) = self.get_object(bucket, &obj_key) {
+                all_objects.push(obj);
             }
         }
 
-        objects.sort_by(|a, b| a.key.cmp(&b.key));
-        Ok(objects)
+        // Sort by key (S3 lexicographic order)
+        all_objects.sort_by(|a, b| a.key.cmp(&b.key));
+        
+        // Apply marker filter - skip objects until we find the marker
+        if let Some(m) = marker {
+            all_objects.retain(|obj| obj.key.as_str() > m);
+        }
+        
+        // Apply pagination
+        let max_keys = max_keys.unwrap_or(1000); // S3 default is 1000
+        let is_truncated = all_objects.len() > max_keys;
+        
+        let mut objects = all_objects;
+        let next_marker = if is_truncated {
+            // Take max_keys + 1 to get the next marker
+            if objects.len() > max_keys {
+                let next_key = objects[max_keys].key.clone();
+                objects.truncate(max_keys);
+                Some(next_key)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(crate::models::ListObjectsResult {
+            objects,
+            is_truncated,
+            next_marker,
+        })
     }
 
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload> {

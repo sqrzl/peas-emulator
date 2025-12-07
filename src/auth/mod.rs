@@ -1,6 +1,8 @@
 // Authentication and SigV4 verification
+pub mod authenticator;
 pub mod sigv4;
 pub mod presigned;
 
-pub use sigv4::SignatureVerifier;
+pub use authenticator::{AuthConfig, AuthInfo};
+pub use sigv4::{SignatureVerifier, SigV4Config};
 pub use presigned::PresignedUrl;

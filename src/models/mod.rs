@@ -14,6 +14,14 @@ pub use multipart::{MultipartUpload, Part};
 pub use policy::{BucketPolicy, Acl, CannedAcl, Owner};
 pub use lifecycle::{LifecycleConfiguration, Rule, Status, Filter, Expiration, Transition, StorageClass};
 
+/// Paginated list results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListObjectsResult {
+    pub objects: Vec<Object>,
+    pub is_truncated: bool,
+    pub next_marker: Option<String>,
+}
+
 /// S3 Object metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectMetadata {

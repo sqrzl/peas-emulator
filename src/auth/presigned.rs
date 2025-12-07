@@ -1,10 +1,15 @@
 use chrono::{DateTime, Utc, Duration, NaiveDateTime};
 use std::collections::HashMap;
 
-const ACCESS_KEY: &str = "AKIAIOSFODNN7EXAMPLE";
-const SECRET_KEY: &str = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
 const REGION: &str = "us-east-1";
 const SERVICE: &str = "s3";
+
+/// Configuration for presigned URL generation
+#[derive(Clone)]
+pub struct PresignedUrlConfig {
+    pub access_key: String,
+    pub secret_key: String,
+}
 
 /// Presigned URL for temporary access to S3 resources
 #[derive(Debug, Clone)]
@@ -25,8 +30,9 @@ impl PresignedUrl {
         key: &str,
         expires_in_seconds: i64,
         base_url: &str,
+        config: &PresignedUrlConfig,
     ) -> String {
-        Self::generate_url(bucket, key, "GET", expires_in_seconds, base_url)
+        Self::generate_url(bucket, key, "GET", expires_in_seconds, base_url, config)
     }
 
     /// Generate a presigned URL for PUT access using AWS Signature Version 4
@@ -35,8 +41,9 @@ impl PresignedUrl {
         key: &str,
         expires_in_seconds: i64,
         base_url: &str,
+        config: &PresignedUrlConfig,
     ) -> String {
-        Self::generate_url(bucket, key, "PUT", expires_in_seconds, base_url)
+        Self::generate_url(bucket, key, "PUT", expires_in_seconds, base_url, config)
     }
 
     fn generate_url(
@@ -45,19 +52,20 @@ impl PresignedUrl {
         method: &str,
         expires_in_seconds: i64,
         base_url: &str,
+        config: &PresignedUrlConfig,
     ) -> String {
         let now = Utc::now();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = now.format("%Y%m%d").to_string();
         let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, REGION, SERVICE);
-        let credential = format!("{}/{}", ACCESS_KEY, credential_scope);
+        let credential = format!("{}/{}", config.access_key, credential_scope);
 
         // Canonical URI (path component)
         let canonical_uri = format!("/{}/{}", bucket, key);
 
         // Canonical query string (must be sorted)
         let expires_str = expires_in_seconds.to_string();
-        let mut query_params = vec![
+        let mut query_params = [
             ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
             ("X-Amz-Credential", &credential),
             ("X-Amz-Date", &amz_date),
@@ -94,7 +102,7 @@ impl PresignedUrl {
         );
 
         // Signing key
-        let signing_key = get_signature_key(SECRET_KEY, &date_stamp, REGION, SERVICE);
+        let signing_key = get_signature_key(&config.secret_key, &date_stamp, REGION, SERVICE);
         let signature = hmac_sha256_hex(&signing_key, string_to_sign.as_bytes());
 
         format!(
@@ -142,7 +150,7 @@ impl PresignedUrl {
     }
 
     /// Validate the presigned URL signature and expiration
-    pub fn validate(&self, host: &str) -> Result<(), String> {
+    pub fn validate(&self, host: &str, config: &PresignedUrlConfig) -> Result<(), String> {
         // Check expiration
         let expires_at = self.date + Duration::seconds(self.expires_in);
         if Utc::now() > expires_at {
@@ -159,7 +167,7 @@ impl PresignedUrl {
 
         // Canonical query string (without signature)
         let expires_str = self.expires_in.to_string();
-        let mut query_params = vec![
+        let mut query_params = [
             ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
             ("X-Amz-Credential", &self.credential),
             ("X-Amz-Date", &amz_date),
@@ -195,7 +203,7 @@ impl PresignedUrl {
         );
 
         // Signing key and signature
-        let signing_key = get_signature_key(SECRET_KEY, &date_stamp, REGION, SERVICE);
+        let signing_key = get_signature_key(&config.secret_key, &date_stamp, REGION, SERVICE);
         let expected_sig = hmac_sha256_hex(&signing_key, string_to_sign.as_bytes());
 
         if self.signature != expected_sig {
@@ -258,7 +266,11 @@ mod tests {
 
     #[test]
     fn should_generate_valid_get_url() {
-        let url = PresignedUrl::generate_get_url("test-bucket", "test-key.txt", 3600, "http://localhost:9000");
+        let config = PresignedUrlConfig {
+            access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
+        let url = PresignedUrl::generate_get_url("test-bucket", "test-key.txt", 3600, "http://localhost:9000", &config);
         assert!(url.contains("test-bucket"));
         assert!(url.contains("test-key.txt"));
         assert!(url.contains("X-Amz-Expires=3600"));
@@ -267,7 +279,11 @@ mod tests {
 
     #[test]
     fn should_generate_valid_put_url() {
-        let url = PresignedUrl::generate_put_url("test-bucket", "upload.txt", 1800, "http://localhost:9000");
+        let config = PresignedUrlConfig {
+            access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
+        let url = PresignedUrl::generate_put_url("test-bucket", "upload.txt", 1800, "http://localhost:9000", &config);
         assert!(url.contains("test-bucket"));
         assert!(url.contains("upload.txt"));
         assert!(url.contains("X-Amz-Expires=1800"));
@@ -275,10 +291,11 @@ mod tests {
 
     #[test]
     fn should_parse_presigned_url_from_params() {
+        let access_key = "AKIAIOSFODNN7EXAMPLE";
         let now = Utc::now();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = now.format("%Y%m%d").to_string();
-        let credential = format!("{}/{}/{}/{}/aws4_request", ACCESS_KEY, date_stamp, REGION, SERVICE);
+        let credential = format!("{}/{}/{}/{}/aws4_request", access_key, date_stamp, REGION, SERVICE);
 
         let mut params = HashMap::new();
         params.insert("X-Amz-Signature".to_string(), "abc123".to_string());
@@ -297,10 +314,15 @@ mod tests {
 
     #[test]
     fn should_reject_expired_url() {
+        let config = PresignedUrlConfig {
+            access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
+        let access_key = &config.access_key;
         let now = Utc::now();
         let past_date = (now - Duration::seconds(7200)).format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = (now - Duration::seconds(7200)).format("%Y%m%d").to_string();
-        let credential = format!("{}/{}/{}/{}/aws4_request", ACCESS_KEY, date_stamp, REGION, SERVICE);
+        let credential = format!("{}/{}/{}/{}/aws4_request", access_key, date_stamp, REGION, SERVICE);
 
         let mut params = HashMap::new();
         params.insert("X-Amz-Signature".to_string(), "abc123".to_string());
@@ -310,13 +332,17 @@ mod tests {
 
         let presigned = PresignedUrl::from_query_params("bucket", "key", "GET", &params);
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
-        assert!(presigned.unwrap().validate("localhost:9000").is_err());
+        assert!(presigned.unwrap().validate("localhost:9000", &config).is_err());
     }
 
     #[test]
     fn should_validate_signature_correctly() {
+        let config = PresignedUrlConfig {
+            access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
         // Generate a URL and extract its signature
-        let url = PresignedUrl::generate_get_url("test-bucket", "test-key", 3600, "http://localhost:9000");
+        let url = PresignedUrl::generate_get_url("test-bucket", "test-key", 3600, "http://localhost:9000", &config);
         
         // Extract parameters from URL - need to URL decode them
         let query_start = url.find('?').unwrap();
@@ -334,6 +360,6 @@ mod tests {
         // Parse and validate
         let presigned = PresignedUrl::from_query_params("test-bucket", "test-key", "GET", &params);
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
-        assert!(presigned.unwrap().validate("localhost:9000").is_ok());
+        assert!(presigned.unwrap().validate("localhost:9000", &config).is_ok());
     }
 }

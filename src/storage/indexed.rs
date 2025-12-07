@@ -122,9 +122,29 @@ impl Storage for IndexedStorage {
         self.inner.object_exists(bucket, key)
     }
 
-    fn list_objects(&self, bucket: &str, prefix: Option<&str>, _delimiter: Option<&str>, _marker: Option<&str>) -> Result<Vec<Object>> {
+    fn list_objects(&self, bucket: &str, prefix: Option<&str>, _delimiter: Option<&str>, marker: Option<&str>, max_keys: Option<usize>) -> Result<crate::models::ListObjectsResult> {
         // Get keys from index without disk access
-        let keys = self.get_indexed_objects(bucket, prefix);
+        let mut keys = self.get_indexed_objects(bucket, prefix);
+        
+        // Sort keys
+        keys.sort();
+        
+        // Apply marker filter
+        if let Some(m) = marker {
+            keys.retain(|key| key.as_str() > m);
+        }
+        
+        // Apply pagination
+        let max_keys = max_keys.unwrap_or(1000);
+        let is_truncated = keys.len() > max_keys;
+        
+        let next_marker = if is_truncated && keys.len() > max_keys {
+            let next_key = keys[max_keys].clone();
+            keys.truncate(max_keys);
+            Some(next_key)
+        } else {
+            None
+        };
         
         // Fetch full objects from storage
         let mut objects = Vec::new();
@@ -134,7 +154,11 @@ impl Storage for IndexedStorage {
             }
         }
         
-        Ok(objects)
+        Ok(crate::models::ListObjectsResult {
+            objects,
+            is_truncated,
+            next_marker,
+        })
     }
 
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload> {
@@ -187,6 +211,10 @@ impl Storage for IndexedStorage {
 
     fn put_object_tags(&self, bucket: &str, key: &str, tags: std::collections::HashMap<String, String>) -> Result<()> {
         self.inner.put_object_tags(bucket, key, tags)
+    }
+
+    fn delete_object_tags(&self, bucket: &str, key: &str) -> Result<()> {
+        self.inner.delete_object_tags(bucket, key)
     }
 
     fn get_bucket_acl(&self, name: &str) -> Result<Acl> {

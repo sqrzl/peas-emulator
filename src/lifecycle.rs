@@ -13,17 +13,9 @@ pub struct LifecycleExecutor {
 }
 
 impl LifecycleExecutor {
-    pub fn new(storage: Arc<dyn Storage>) -> Self {
-        // Default: run every hour
-        let interval_hours = std::env::var("LIFECYCLE_INTERVAL_HOURS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        
-        Self {
-            storage,
-            interval: Duration::from_secs(interval_hours * 3600),
-        }
+    /// Create a new lifecycle executor with the specified interval.
+    pub fn new(storage: Arc<dyn Storage>, interval: Duration) -> Self {
+        Self { storage, interval }
     }
 
     /// Start the lifecycle executor as a background task
@@ -84,10 +76,11 @@ impl LifecycleExecutor {
                 "Applying lifecycle rule"
             );
 
-            // List all objects in the bucket (would need pagination in real implementation)
-            let objects = tokio::task::block_in_place(|| {
-                self.storage.list_objects(bucket_name, None, None, None)
+            // List all objects in the bucket (using pagination)
+            let result = tokio::task::block_in_place(|| {
+                self.storage.list_objects(bucket_name, None, None, None, None)
             })?;
+            let objects = result.objects;
 
             for object in objects {
                 // Get object tags
