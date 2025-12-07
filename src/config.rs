@@ -44,7 +44,8 @@ impl Config {
     pub fn from_env() -> Self {
         let access_key_id = env::var(ENV_ACCESS_KEY_ID).ok();
         let secret_access_key = env::var(ENV_SECRET_ACCESS_KEY).ok();
-        let blobs_path = env::var(ENV_BLOBS_PATH).unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string());
+        let blobs_path =
+            env::var(ENV_BLOBS_PATH).unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string());
 
         let lifecycle_interval_hours = env::var(ENV_LIFECYCLE_HOURS)
             .ok()

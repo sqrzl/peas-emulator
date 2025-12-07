@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use peas_emulator::api::server::start_ui_server;
-use peas_emulator::Config;
 use peas_emulator::server::Server;
 use peas_emulator::storage::FilesystemStorage;
+use peas_emulator::Config;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,7 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Arc::new(FilesystemStorage::new(&config.blobs_path));
 
     // Start lifecycle executor
-    let lifecycle_executor = peas_emulator::LifecycleExecutor::new(storage.clone(), config.lifecycle_interval);
+    let lifecycle_executor =
+        peas_emulator::LifecycleExecutor::new(storage.clone(), config.lifecycle_interval);
     let _lifecycle_handle = lifecycle_executor.start();
     tracing::info!("Lifecycle executor started");
 

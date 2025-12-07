@@ -1,5 +1,5 @@
-use crate::models::{Acl, Bucket, Object, MultipartUpload};
 use crate::error::Result;
+use crate::models::{Acl, Bucket, MultipartUpload, Object};
 use crate::storage::Storage;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -29,7 +29,9 @@ impl IndexedStorage {
 
     fn update_index_put(&self, bucket: &str, key: String) {
         if let Ok(mut index) = self.index.write() {
-            index.buckets.entry(bucket.to_string())
+            index
+                .buckets
+                .entry(bucket.to_string())
                 .or_default()
                 .push(key);
         }
@@ -105,7 +107,13 @@ impl Storage for IndexedStorage {
         self.inner.get_object(bucket, key)
     }
 
-    fn get_object_range(&self, bucket: &str, key: &str, start: u64, end: Option<u64>) -> Result<(Object, Vec<u8>)> {
+    fn get_object_range(
+        &self,
+        bucket: &str,
+        key: &str,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<(Object, Vec<u8>)> {
         self.inner.get_object_range(bucket, key, start, end)
     }
 
@@ -129,22 +137,29 @@ impl Storage for IndexedStorage {
         self.inner.object_exists(bucket, key)
     }
 
-    fn list_objects(&self, bucket: &str, prefix: Option<&str>, _delimiter: Option<&str>, marker: Option<&str>, max_keys: Option<usize>) -> Result<crate::models::ListObjectsResult> {
+    fn list_objects(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+        _delimiter: Option<&str>,
+        marker: Option<&str>,
+        max_keys: Option<usize>,
+    ) -> Result<crate::models::ListObjectsResult> {
         // Get keys from index without disk access
         let mut keys = self.get_indexed_objects(bucket, prefix);
-        
+
         // Sort keys
         keys.sort();
-        
+
         // Apply marker filter
         if let Some(m) = marker {
             keys.retain(|key| key.as_str() > m);
         }
-        
+
         // Apply pagination
         let max_keys = max_keys.unwrap_or(1000);
         let is_truncated = keys.len() > max_keys;
-        
+
         let next_marker = if is_truncated && keys.len() > max_keys {
             let next_key = keys[max_keys].clone();
             keys.truncate(max_keys);
@@ -152,7 +167,7 @@ impl Storage for IndexedStorage {
         } else {
             None
         };
-        
+
         // Fetch full objects from storage
         let mut objects = Vec::new();
         for key in keys {
@@ -160,7 +175,7 @@ impl Storage for IndexedStorage {
                 objects.push(obj);
             }
         }
-        
+
         Ok(crate::models::ListObjectsResult {
             objects,
             is_truncated,
@@ -172,7 +187,13 @@ impl Storage for IndexedStorage {
         self.inner.create_multipart_upload(bucket, key)
     }
 
-    fn upload_part(&self, bucket: &str, upload_id: &str, part_number: u32, data: Vec<u8>) -> Result<String> {
+    fn upload_part(
+        &self,
+        bucket: &str,
+        upload_id: &str,
+        part_number: u32,
+        data: Vec<u8>,
+    ) -> Result<String> {
         self.inner.upload_part(bucket, upload_id, part_number, data)
     }
 
@@ -200,11 +221,20 @@ impl Storage for IndexedStorage {
         self.inner.suspend_versioning(bucket)
     }
 
-    fn get_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<crate::models::Object> {
+    fn get_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<crate::models::Object> {
         self.inner.get_object_version(bucket, key, version_id)
     }
 
-    fn list_object_versions(&self, bucket: &str, prefix: Option<&str>) -> Result<Vec<crate::models::Object>> {
+    fn list_object_versions(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+    ) -> Result<Vec<crate::models::Object>> {
         self.inner.list_object_versions(bucket, prefix)
     }
 
@@ -212,11 +242,20 @@ impl Storage for IndexedStorage {
         self.inner.delete_object_version(bucket, key, version_id)
     }
 
-    fn get_object_tags(&self, bucket: &str, key: &str) -> Result<std::collections::HashMap<String, String>> {
+    fn get_object_tags(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
         self.inner.get_object_tags(bucket, key)
     }
 
-    fn put_object_tags(&self, bucket: &str, key: &str, tags: std::collections::HashMap<String, String>) -> Result<()> {
+    fn put_object_tags(
+        &self,
+        bucket: &str,
+        key: &str,
+        tags: std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         self.inner.put_object_tags(bucket, key, tags)
     }
 
@@ -240,11 +279,18 @@ impl Storage for IndexedStorage {
         self.inner.put_object_acl(bucket, key, acl)
     }
 
-    fn get_bucket_lifecycle(&self, bucket: &str) -> Result<crate::models::lifecycle::LifecycleConfiguration> {
+    fn get_bucket_lifecycle(
+        &self,
+        bucket: &str,
+    ) -> Result<crate::models::lifecycle::LifecycleConfiguration> {
         self.inner.get_bucket_lifecycle(bucket)
     }
 
-    fn put_bucket_lifecycle(&self, bucket: &str, config: crate::models::lifecycle::LifecycleConfiguration) -> Result<()> {
+    fn put_bucket_lifecycle(
+        &self,
+        bucket: &str,
+        config: crate::models::lifecycle::LifecycleConfiguration,
+    ) -> Result<()> {
         self.inner.put_bucket_lifecycle(bucket, config)
     }
 
@@ -252,11 +298,18 @@ impl Storage for IndexedStorage {
         self.inner.delete_bucket_lifecycle(bucket)
     }
 
-    fn get_bucket_policy(&self, bucket: &str) -> Result<crate::models::policy::BucketPolicyDocument> {
+    fn get_bucket_policy(
+        &self,
+        bucket: &str,
+    ) -> Result<crate::models::policy::BucketPolicyDocument> {
         self.inner.get_bucket_policy(bucket)
     }
 
-    fn put_bucket_policy(&self, bucket: &str, policy: crate::models::policy::BucketPolicyDocument) -> Result<()> {
+    fn put_bucket_policy(
+        &self,
+        bucket: &str,
+        policy: crate::models::policy::BucketPolicyDocument,
+    ) -> Result<()> {
         self.inner.put_bucket_policy(bucket, policy)
     }
 

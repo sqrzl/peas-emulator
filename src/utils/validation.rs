@@ -11,20 +11,26 @@ pub fn validate_bucket_name(name: &str) -> Result<(), String> {
     if name.len() > 63 {
         return Err("Bucket name cannot exceed 63 characters".to_string());
     }
-    
+
     if name.starts_with('-') || name.ends_with('-') {
         return Err("Bucket name cannot start or end with a hyphen".to_string());
     }
-    
-    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.') {
-        return Err("Bucket name can only contain lowercase letters, numbers, hyphens, and dots".to_string());
+
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+    {
+        return Err(
+            "Bucket name can only contain lowercase letters, numbers, hyphens, and dots"
+                .to_string(),
+        );
     }
-    
+
     // Check if it looks like an IP address
     if name.split('.').all(|part| part.parse::<u8>().is_ok()) {
         return Err("Bucket name cannot be formatted as IP address".to_string());
     }
-    
+
     Ok(())
 }
 
@@ -33,11 +39,14 @@ pub fn validate_bucket_name(name: &str) -> Result<(), String> {
 /// - Can contain any Unicode character
 pub fn validate_object_key(key: &str) -> Result<(), String> {
     let byte_len = key.len();
-    
+
     if byte_len > 1024 {
-        return Err(format!("Object key cannot exceed 1024 bytes (got {})", byte_len));
+        return Err(format!(
+            "Object key cannot exceed 1024 bytes (got {})",
+            byte_len
+        ));
     }
-    
+
     // Object keys can be empty (but we might want to reject this in practice)
     // For now, allow 0-1024 bytes as per S3 spec
     Ok(())
@@ -61,14 +70,14 @@ pub fn validate_part_number(part_num: u32) -> Result<(), String> {
 pub fn validate_content_length(content_length: u64) -> Result<(), String> {
     // S3 allows objects up to 5TB, but we'll be more conservative (5GB)
     let max_size = 5 * 1024 * 1024 * 1024u64;
-    
+
     if content_length > max_size {
         return Err(format!(
             "Content-Length ({} bytes) exceeds maximum allowed size",
             content_length
         ));
     }
-    
+
     Ok(())
 }
 
@@ -78,11 +87,11 @@ pub fn validate_upload_id(upload_id: &str) -> Result<(), String> {
     if upload_id.is_empty() {
         return Err("Upload ID cannot be empty".to_string());
     }
-    
+
     if upload_id.len() > 1024 {
         return Err("Upload ID is too long".to_string());
     }
-    
+
     Ok(())
 }
 
@@ -91,7 +100,7 @@ pub fn validate_upload_id(upload_id: &str) -> Result<(), String> {
 pub fn validate_part_sequence(part_numbers: &[u32]) -> Result<(), String> {
     for (i, &part_num) in part_numbers.iter().enumerate() {
         validate_part_number(part_num)?;
-        
+
         // Check that parts are in order and contiguous from start
         if i > 0 {
             let prev = part_numbers[i - 1];
@@ -106,7 +115,7 @@ pub fn validate_part_sequence(part_numbers: &[u32]) -> Result<(), String> {
             return Err("Part sequence must start with part number 1".to_string());
         }
     }
-    
+
     Ok(())
 }
 

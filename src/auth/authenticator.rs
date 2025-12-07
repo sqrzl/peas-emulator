@@ -25,7 +25,6 @@ pub trait HttpRequestLike {
     fn query(&self) -> Option<&str>;
 }
 
-
 /// Authentication information extracted from a request.
 ///
 /// Represents either an authenticated principal or an anonymous request.
@@ -230,11 +229,7 @@ mod tests {
 
     #[test]
     fn should_extract_sigv4_principal_from_auth_header() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let auth_header = "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=xyz";
         let principal = AuthInfo::extract_sigv4_principal(auth_header, &config);
@@ -245,14 +240,9 @@ mod tests {
 
     #[test]
     fn should_reject_sigv4_with_wrong_access_key() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
-        let auth_header =
-            "AWS4-HMAC-SHA256 Credential=WRONGKEY/20130524/us-east-1/s3/aws4_request";
+        let auth_header = "AWS4-HMAC-SHA256 Credential=WRONGKEY/20130524/us-east-1/s3/aws4_request";
         let principal = AuthInfo::extract_sigv4_principal(auth_header, &config);
 
         assert!(principal.is_none());
@@ -260,11 +250,7 @@ mod tests {
 
     #[test]
     fn should_extract_v2_principal_from_auth_header() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let auth_header = "AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo5+fyQLFro=";
         let principal = AuthInfo::extract_v2_principal(auth_header, &config);
@@ -275,11 +261,7 @@ mod tests {
 
     #[test]
     fn should_reject_v2_with_wrong_access_key() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let auth_header = "AWS WRONGKEY:signature";
         let principal = AuthInfo::extract_v2_principal(auth_header, &config);
@@ -289,11 +271,7 @@ mod tests {
 
     #[test]
     fn should_extract_presigned_principal_from_x_amz_credential() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request&X-Amz-Date=20130524T000000Z";
         let principal = AuthInfo::extract_presigned_principal(query, &config);
@@ -304,11 +282,7 @@ mod tests {
 
     #[test]
     fn should_extract_presigned_principal_from_aws_access_key_id() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let query = "AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=xyz&Expires=86400";
         let principal = AuthInfo::extract_presigned_principal(query, &config);
@@ -319,11 +293,7 @@ mod tests {
 
     #[test]
     fn should_reject_presigned_with_wrong_access_key() {
-        let config = test_config(
-            Some("AKIAIOSFODNN7EXAMPLE"),
-            Some("secret"),
-            true,
-        );
+        let config = test_config(Some("AKIAIOSFODNN7EXAMPLE"), Some("secret"), true);
 
         let query = "X-Amz-Credential=WRONGKEY/20130524/us-east-1/s3/aws4_request";
         let principal = AuthInfo::extract_presigned_principal(query, &config);

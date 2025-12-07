@@ -1,18 +1,20 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod bucket;
-pub mod object;
-pub mod multipart;
-pub mod policy;
 pub mod lifecycle;
+pub mod multipart;
+pub mod object;
+pub mod policy;
 
 pub use bucket::Bucket;
-pub use object::Object;
+pub use lifecycle::{
+    Expiration, Filter, LifecycleConfiguration, Rule, Status, StorageClass, Transition,
+};
 pub use multipart::{MultipartUpload, Part};
-pub use policy::{BucketPolicy, Acl, CannedAcl, Owner};
-pub use lifecycle::{LifecycleConfiguration, Rule, Status, Filter, Expiration, Transition, StorageClass};
+pub use object::Object;
+pub use policy::{Acl, BucketPolicy, CannedAcl, Owner};
 
 /// Paginated list results
 #[derive(Debug, Clone, Serialize, Deserialize)]

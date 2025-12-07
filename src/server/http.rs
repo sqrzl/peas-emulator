@@ -1,9 +1,9 @@
+use crate::auth::HttpRequestLike;
 use bytes::Bytes;
-use http::{Method, StatusCode, Uri, Response as HttpResponse};
+use http::{Method, Response as HttpResponse, StatusCode, Uri};
 use hyper::{Body, Request as HyperRequest};
 use std::collections::HashMap;
 use std::str::FromStr;
-use crate::auth::HttpRequestLike;
 
 /// Parsed HTTP request with extracted components
 pub struct Request {
@@ -17,9 +17,7 @@ pub struct Request {
 
 impl HttpRequestLike for Request {
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(name)
-            .and_then(|h| h.to_str().ok())
+        self.headers.get(name).and_then(|h| h.to_str().ok())
     }
 
     fn query(&self) -> Option<&str> {
@@ -30,7 +28,9 @@ impl HttpRequestLike for Request {
 impl Request {
     pub async fn from_hyper(req: HyperRequest<Body>) -> Result<Self, String> {
         let (parts, body) = req.into_parts();
-        let body_bytes = hyper::body::to_bytes(body).await.map_err(|e| e.to_string())?;
+        let body_bytes = hyper::body::to_bytes(body)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let mut query_params = HashMap::new();
         if let Some(query) = parts.uri.query() {
@@ -62,9 +62,7 @@ impl Request {
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(name)
-            .and_then(|h| h.to_str().ok())
+        self.headers.get(name).and_then(|h| h.to_str().ok())
     }
 
     pub fn query_param(&self, name: &str) -> Option<&str> {
@@ -116,9 +114,8 @@ impl ResponseBuilder {
 
     pub fn build(self) -> HttpResponse<Body> {
         let content_length = self.body.len();
-        
-        let mut response = HttpResponse::builder()
-            .status(self.status);
+
+        let mut response = HttpResponse::builder().status(self.status);
 
         for (name, value) in self.headers.iter() {
             response = response.header(name.clone(), value.clone());
@@ -128,28 +125,23 @@ impl ResponseBuilder {
             response = response.header("content-length", content_length.to_string());
         }
 
-        response
-            .body(Body::from(self.body))
-            .unwrap_or_else(|_| {
-                // Last resort fallback - should never fail
-                HttpResponse::new(Body::from("Internal Server Error"))
-            })
+        response.body(Body::from(self.body)).unwrap_or_else(|_| {
+            // Last resort fallback - should never fail
+            HttpResponse::new(Body::from("Internal Server Error"))
+        })
     }
 
     pub fn empty(self) -> HttpResponse<Body> {
-        let mut response = HttpResponse::builder()
-            .status(self.status);
+        let mut response = HttpResponse::builder().status(self.status);
 
         for (name, value) in self.headers.iter() {
             response = response.header(name.clone(), value.clone());
         }
 
-        response
-            .body(Body::empty())
-            .unwrap_or_else(|_| {
-                // Last resort fallback - should never fail
-                HttpResponse::new(Body::empty())
-            })
+        response.body(Body::empty()).unwrap_or_else(|_| {
+            // Last resort fallback - should never fail
+            HttpResponse::new(Body::empty())
+        })
     }
 }
 

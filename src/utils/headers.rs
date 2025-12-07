@@ -1,4 +1,3 @@
-
 /// HTTP header handling for S3 responses
 use chrono::Utc;
 use md5;
@@ -21,7 +20,9 @@ pub fn format_last_modified() -> String {
 }
 
 /// Extract user-defined metadata headers (x-amz-meta-*) from HTTP headers
-pub fn extract_metadata_from_http_headers(_req: &dyn crate::auth::HttpRequestLike) -> HashMap<String, String> {
+pub fn extract_metadata_from_http_headers(
+    _req: &dyn crate::auth::HttpRequestLike,
+) -> HashMap<String, String> {
     // Note: This is a simplified version. In a full implementation, we'd need access to all headers.
     // For now, returning empty map - should be extended based on actual header handling
     HashMap::new()
@@ -41,7 +42,11 @@ mod tests {
         let etag = compute_etag(data);
 
         // Assert
-        assert_eq!(etag.len(), expected_length, "ETag should be 32 hex characters (MD5 hash)");
+        assert_eq!(
+            etag.len(),
+            expected_length,
+            "ETag should be 32 hex characters (MD5 hash)"
+        );
     }
 
     #[test]
@@ -53,7 +58,10 @@ mod tests {
         let etag = compute_etag(data);
 
         // Assert
-        assert!(etag.chars().all(|c| c.is_ascii_hexdigit()), "ETag should only contain hex digits");
+        assert!(
+            etag.chars().all(|c| c.is_ascii_hexdigit()),
+            "ETag should only contain hex digits"
+        );
     }
 
     #[test]
@@ -67,7 +75,10 @@ mod tests {
         let etag2 = compute_etag(data2);
 
         // Assert
-        assert_ne!(etag1, etag2, "Different data should produce different ETags");
+        assert_ne!(
+            etag1, etag2,
+            "Different data should produce different ETags"
+        );
     }
 
     #[test]
@@ -80,7 +91,10 @@ mod tests {
         let etag2 = compute_etag(data);
 
         // Assert
-        assert_eq!(etag1, etag2, "Identical data should always produce identical ETags");
+        assert_eq!(
+            etag1, etag2,
+            "Identical data should always produce identical ETags"
+        );
     }
 
     #[test]
@@ -92,7 +106,11 @@ mod tests {
         let id = generate_request_id();
 
         // Assert
-        assert_eq!(id.len(), expected_length, "Request ID should be UUID v4 format (36 chars)");
+        assert_eq!(
+            id.len(),
+            expected_length,
+            "Request ID should be UUID v4 format (36 chars)"
+        );
     }
 
     #[test]
@@ -118,7 +136,10 @@ mod tests {
         let formatted = format_last_modified();
 
         // Assert
-        assert!(formatted.contains(rfc2822_separator), "Formatted date should be RFC2822 format");
+        assert!(
+            formatted.contains(rfc2822_separator),
+            "Formatted date should be RFC2822 format"
+        );
     }
 
     #[test]

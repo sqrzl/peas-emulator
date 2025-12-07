@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc, Duration, NaiveDateTime};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use std::collections::HashMap;
 
 const REGION: &str = "us-east-1";
@@ -80,18 +80,16 @@ impl PresignedUrl {
             .join("&");
 
         // Canonical headers
-        let host = base_url.trim_start_matches("http://").trim_start_matches("https://");
+        let host = base_url
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
         let canonical_headers = format!("host:{}\n", host);
         let signed_headers = "host";
 
         // Canonical request
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\nUNSIGNED-PAYLOAD",
-            method,
-            canonical_uri,
-            canonical_query_string,
-            canonical_headers,
-            signed_headers
+            method, canonical_uri, canonical_query_string, canonical_headers, signed_headers
         );
 
         // String to sign
@@ -107,7 +105,10 @@ impl PresignedUrl {
 
         format!(
             "{}/{}?{}&X-Amz-Signature={}",
-            base_url, canonical_uri.trim_start_matches('/'), canonical_query_string, signature
+            base_url,
+            canonical_uri.trim_start_matches('/'),
+            canonical_query_string,
+            signature
         )
     }
 
@@ -118,19 +119,23 @@ impl PresignedUrl {
         method: &str,
         params: &HashMap<String, String>,
     ) -> Result<Self, String> {
-        let signature = params.get("X-Amz-Signature")
+        let signature = params
+            .get("X-Amz-Signature")
             .or_else(|| params.get("Signature"))
             .ok_or("Missing signature")?;
 
-        let expires_in = params.get("X-Amz-Expires")
+        let expires_in = params
+            .get("X-Amz-Expires")
             .or_else(|| params.get("Expires"))
             .and_then(|s| s.parse::<i64>().ok())
             .ok_or("Missing or invalid expires parameter")?;
 
-        let amz_date = params.get("X-Amz-Date")
+        let amz_date = params
+            .get("X-Amz-Date")
             .ok_or("Missing X-Amz-Date parameter")?;
 
-        let credential = params.get("X-Amz-Credential")
+        let credential = params
+            .get("X-Amz-Credential")
             .ok_or("Missing X-Amz-Credential parameter")?;
 
         // Parse date from X-Amz-Date (format: 20240101T120000Z)
@@ -188,11 +193,7 @@ impl PresignedUrl {
         // Canonical request
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\nUNSIGNED-PAYLOAD",
-            self.method,
-            canonical_uri,
-            canonical_query_string,
-            canonical_headers,
-            signed_headers
+            self.method, canonical_uri, canonical_query_string, canonical_headers, signed_headers
         );
 
         // String to sign
@@ -217,7 +218,7 @@ impl PresignedUrl {
 // AWS SigV4 cryptographic helpers
 
 fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();
@@ -227,10 +228,9 @@ fn sha256_hex(data: &[u8]) -> String {
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
-    
+
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(key)
-        .expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
@@ -270,7 +270,13 @@ mod tests {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
-        let url = PresignedUrl::generate_get_url("test-bucket", "test-key.txt", 3600, "http://localhost:9000", &config);
+        let url = PresignedUrl::generate_get_url(
+            "test-bucket",
+            "test-key.txt",
+            3600,
+            "http://localhost:9000",
+            &config,
+        );
         assert!(url.contains("test-bucket"));
         assert!(url.contains("test-key.txt"));
         assert!(url.contains("X-Amz-Expires=3600"));
@@ -283,7 +289,13 @@ mod tests {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
-        let url = PresignedUrl::generate_put_url("test-bucket", "upload.txt", 1800, "http://localhost:9000", &config);
+        let url = PresignedUrl::generate_put_url(
+            "test-bucket",
+            "upload.txt",
+            1800,
+            "http://localhost:9000",
+            &config,
+        );
         assert!(url.contains("test-bucket"));
         assert!(url.contains("upload.txt"));
         assert!(url.contains("X-Amz-Expires=1800"));
@@ -295,7 +307,10 @@ mod tests {
         let now = Utc::now();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = now.format("%Y%m%d").to_string();
-        let credential = format!("{}/{}/{}/{}/aws4_request", access_key, date_stamp, REGION, SERVICE);
+        let credential = format!(
+            "{}/{}/{}/{}/aws4_request",
+            access_key, date_stamp, REGION, SERVICE
+        );
 
         let mut params = HashMap::new();
         params.insert("X-Amz-Signature".to_string(), "abc123".to_string());
@@ -305,7 +320,7 @@ mod tests {
 
         let result = PresignedUrl::from_query_params("bucket", "key", "GET", &params);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
-        
+
         let presigned = result.unwrap();
         assert_eq!(presigned.bucket, "bucket");
         assert_eq!(presigned.key, "key");
@@ -320,9 +335,14 @@ mod tests {
         };
         let access_key = &config.access_key;
         let now = Utc::now();
-        let past_date = (now - Duration::seconds(7200)).format("%Y%m%dT%H%M%SZ").to_string();
+        let past_date = (now - Duration::seconds(7200))
+            .format("%Y%m%dT%H%M%SZ")
+            .to_string();
         let date_stamp = (now - Duration::seconds(7200)).format("%Y%m%d").to_string();
-        let credential = format!("{}/{}/{}/{}/aws4_request", access_key, date_stamp, REGION, SERVICE);
+        let credential = format!(
+            "{}/{}/{}/{}/aws4_request",
+            access_key, date_stamp, REGION, SERVICE
+        );
 
         let mut params = HashMap::new();
         params.insert("X-Amz-Signature".to_string(), "abc123".to_string());
@@ -332,7 +352,10 @@ mod tests {
 
         let presigned = PresignedUrl::from_query_params("bucket", "key", "GET", &params);
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
-        assert!(presigned.unwrap().validate("localhost:9000", &config).is_err());
+        assert!(presigned
+            .unwrap()
+            .validate("localhost:9000", &config)
+            .is_err());
     }
 
     #[test]
@@ -342,8 +365,14 @@ mod tests {
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
         // Generate a URL and extract its signature
-        let url = PresignedUrl::generate_get_url("test-bucket", "test-key", 3600, "http://localhost:9000", &config);
-        
+        let url = PresignedUrl::generate_get_url(
+            "test-bucket",
+            "test-key",
+            3600,
+            "http://localhost:9000",
+            &config,
+        );
+
         // Extract parameters from URL - need to URL decode them
         let query_start = url.find('?').unwrap();
         let query_str = &url[query_start + 1..];
@@ -360,6 +389,9 @@ mod tests {
         // Parse and validate
         let presigned = PresignedUrl::from_query_params("test-bucket", "test-key", "GET", &params);
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
-        assert!(presigned.unwrap().validate("localhost:9000", &config).is_ok());
+        assert!(presigned
+            .unwrap()
+            .validate("localhost:9000", &config)
+            .is_ok());
     }
 }

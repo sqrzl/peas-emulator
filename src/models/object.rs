@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ impl Object {
     ) -> Self {
         let size = data.len() as u64;
         let etag = compute_etag(&data);
-        
+
         Self {
             key,
             data,
@@ -54,7 +54,7 @@ impl Object {
 pub fn compute_etag(data: &[u8]) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     // Simple hash for now - in real implementation use MD5
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);

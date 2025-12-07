@@ -1,6 +1,6 @@
 use crate::storage::Storage;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, StatusCode, Server as HyperServer};
+use hyper::{Body, Request, Response, Server as HyperServer, StatusCode};
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,7 +24,9 @@ pub async fn start_ui_server(storage: Arc<dyn Storage>, ui_port: u16) -> crate::
     let server = HyperServer::bind(&addr).serve(make_svc);
     tracing::info!("UI server listening on http://0.0.0.0:{}", ui_port);
 
-    server.await.map_err(|e| crate::error::Error::InternalError(e.to_string()))
+    server
+        .await
+        .map_err(|e| crate::error::Error::InternalError(e.to_string()))
 }
 
 async fn handle_ui_request(
@@ -64,7 +66,8 @@ async fn handle_ui_request(
                 })),
         }
     } else {
-        let default_content = "<html><body><h1>Peas Emulator</h1><p>Running in headless mode</p></body></html>";
+        let default_content =
+            "<html><body><h1>Peas Emulator</h1><p>Running in headless mode</p></body></html>";
         Ok(Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")

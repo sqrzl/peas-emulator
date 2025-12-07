@@ -4,49 +4,49 @@ use thiserror::Error;
 pub enum Error {
     #[error("Bucket already exists")]
     BucketAlreadyExists,
-    
+
     #[error("Bucket not found")]
     BucketNotFound,
-    
+
     #[error("Bucket not empty")]
     BucketNotEmpty,
-    
+
     #[error("Key not found")]
     KeyNotFound,
-    
+
     #[error("Invalid request")]
     InvalidRequest(String),
-    
+
     #[error("Access denied")]
     AccessDenied,
-    
+
     #[error("Invalid multipart upload ID")]
     InvalidUploadId,
-    
+
     #[error("No such upload")]
     NoSuchUpload,
-    
+
     #[error("Invalid part number")]
     InvalidPartNumber,
-    
+
     #[error("Invalid part order")]
     InvalidPartOrder,
-    
+
     #[error("Incomplete multipart upload")]
     IncompleteMultipartUpload,
-    
+
     #[error("No such version")]
     NoSuchVersion,
-    
+
     #[error("No such lifecycle configuration")]
     NoSuchLifecycleConfiguration,
-    
+
     #[error("Invalid policy")]
     InvalidPolicy(String),
-    
+
     #[error("Internal server error")]
     InternalError(String),
-    
+
     #[error("Signature does not match")]
     SignatureDoesNotMatch,
 }

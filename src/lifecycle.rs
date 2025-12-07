@@ -1,10 +1,10 @@
 use crate::error::Error;
 use crate::models::{LifecycleConfiguration, Status};
 use crate::storage::Storage;
-use chrono::{DateTime, Utc, NaiveDate};
+use chrono::{DateTime, NaiveDate, Utc};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 /// Background job that executes lifecycle rules periodically
 pub struct LifecycleExecutor {
@@ -21,11 +21,14 @@ impl LifecycleExecutor {
     /// Start the lifecycle executor as a background task
     pub fn start(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            info!("Lifecycle executor started with interval: {:?}", self.interval);
-            
+            info!(
+                "Lifecycle executor started with interval: {:?}",
+                self.interval
+            );
+
             loop {
                 tokio::time::sleep(self.interval).await;
-                
+
                 if let Err(e) = self.execute_lifecycle_rules().await {
                     error!("Failed to execute lifecycle rules: {}", e);
                 }
@@ -36,24 +39,30 @@ impl LifecycleExecutor {
     async fn execute_lifecycle_rules(&self) -> Result<(), Error> {
         debug!("Executing lifecycle rules...");
         let now = Utc::now();
-        
+
         // Get all buckets
         let buckets = tokio::task::block_in_place(|| self.storage.list_buckets())?;
-        
+
         for bucket in buckets {
             // Get lifecycle configuration for this bucket
-            let config = match tokio::task::block_in_place(|| self.storage.get_bucket_lifecycle(&bucket.name)) {
+            let config = match tokio::task::block_in_place(|| {
+                self.storage.get_bucket_lifecycle(&bucket.name)
+            }) {
                 Ok(cfg) => cfg,
                 Err(Error::KeyNotFound) => continue, // No lifecycle config
                 Err(e) => {
-                    error!("Failed to get lifecycle config for bucket {}: {}", bucket.name, e);
+                    error!(
+                        "Failed to get lifecycle config for bucket {}: {}",
+                        bucket.name, e
+                    );
                     continue;
                 }
             };
-            
-            self.apply_lifecycle_rules(&bucket.name, &config, now).await?;
+
+            self.apply_lifecycle_rules(&bucket.name, &config, now)
+                .await?;
         }
-        
+
         debug!("Lifecycle rules execution completed");
         Ok(())
     }
@@ -78,7 +87,8 @@ impl LifecycleExecutor {
 
             // List all objects in the bucket (using pagination)
             let result = tokio::task::block_in_place(|| {
-                self.storage.list_objects(bucket_name, None, None, None, None)
+                self.storage
+                    .list_objects(bucket_name, None, None, None, None)
             })?;
             let objects = result.objects;
 
@@ -86,7 +96,8 @@ impl LifecycleExecutor {
                 // Get object tags
                 let tags = tokio::task::block_in_place(|| {
                     self.storage.get_object_tags(bucket_name, &object.key)
-                }).unwrap_or_default();
+                })
+                .unwrap_or_default();
 
                 // Check if filter matches
                 if let Some(filter) = &rule.filter {
@@ -104,7 +115,7 @@ impl LifecycleExecutor {
                             rule_id = rule.id.as_deref().unwrap_or("unnamed"),
                             "Expiring object"
                         );
-                        
+
                         let _ = tokio::task::block_in_place(|| {
                             self.storage.delete_object(bucket_name, &object.key)
                         });
@@ -138,9 +149,8 @@ impl LifecycleExecutor {
         // Check date-based expiration (ISO 8601 format: YYYY-MM-DD)
         if let Some(date_str) = &expiration.date {
             if let Ok(expire_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                let expire_datetime = expire_date.and_hms_opt(0, 0, 0)
-                    .map(|dt| dt.and_utc());
-                
+                let expire_datetime = expire_date.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc());
+
                 if let Some(expire_dt) = expire_datetime {
                     if now >= expire_dt {
                         return true;

@@ -130,7 +130,7 @@ mod tests {
         tags.insert("type".to_string(), "access".to_string());
         assert!(filter.matches("logs/access.log", &tags));
         assert!(!filter.matches("data/access.log", &tags));
-        
+
         // Wrong tags - should not match even though prefix matches
         let mut wrong_tags = HashMap::new();
         wrong_tags.insert("type".to_string(), "error".to_string());

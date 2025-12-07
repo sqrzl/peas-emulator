@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,9 +22,9 @@ pub struct BucketPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyStatement {
-    pub effect: String, // "Allow" or "Deny"
-    pub principal: String, // "*" or specific principal
-    pub action: Vec<String>, // e.g., ["s3:GetObject", "s3:PutObject"]
+    pub effect: String,        // "Allow" or "Deny"
+    pub principal: String,     // "*" or specific principal
+    pub action: Vec<String>,   // e.g., ["s3:GetObject", "s3:PutObject"]
     pub resource: Vec<String>, // e.g., ["arn:aws:s3:::bucket/*"]
     pub condition: Option<HashMap<String, HashMap<String, Vec<String>>>>,
 }
