@@ -1,6 +1,4 @@
 use thiserror::Error;
-use actix_web::{http::StatusCode, HttpResponse, ResponseError};
-use serde_json::json;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -55,56 +53,52 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl ResponseError for Error {
-    fn status_code(&self) -> StatusCode {
+impl Error {
+    pub fn status_code(&self) -> http::StatusCode {
         match self {
-            Error::BucketAlreadyExists => StatusCode::CONFLICT,
-            Error::BucketNotFound => StatusCode::NOT_FOUND,
-            Error::BucketNotEmpty => StatusCode::CONFLICT,
-            Error::KeyNotFound => StatusCode::NOT_FOUND,
-            Error::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            Error::AccessDenied => StatusCode::FORBIDDEN,
-            Error::InvalidUploadId => StatusCode::NOT_FOUND,
-            Error::NoSuchUpload => StatusCode::NOT_FOUND,
-            Error::InvalidPartNumber => StatusCode::BAD_REQUEST,
-            Error::InvalidPartOrder => StatusCode::BAD_REQUEST,
-            Error::IncompleteMultipartUpload => StatusCode::BAD_REQUEST,
-            Error::NoSuchVersion => StatusCode::NOT_FOUND,
-            Error::NoSuchLifecycleConfiguration => StatusCode::NOT_FOUND,
-            Error::InvalidPolicy(_) => StatusCode::BAD_REQUEST,
-            Error::SignatureDoesNotMatch => StatusCode::FORBIDDEN,
-            Error::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::BucketAlreadyExists => http::StatusCode::CONFLICT,
+            Error::BucketNotFound => http::StatusCode::NOT_FOUND,
+            Error::BucketNotEmpty => http::StatusCode::CONFLICT,
+            Error::KeyNotFound => http::StatusCode::NOT_FOUND,
+            Error::InvalidRequest(_) => http::StatusCode::BAD_REQUEST,
+            Error::AccessDenied => http::StatusCode::FORBIDDEN,
+            Error::InvalidUploadId => http::StatusCode::NOT_FOUND,
+            Error::NoSuchUpload => http::StatusCode::NOT_FOUND,
+            Error::InvalidPartNumber => http::StatusCode::BAD_REQUEST,
+            Error::InvalidPartOrder => http::StatusCode::BAD_REQUEST,
+            Error::IncompleteMultipartUpload => http::StatusCode::BAD_REQUEST,
+            Error::NoSuchVersion => http::StatusCode::NOT_FOUND,
+            Error::NoSuchLifecycleConfiguration => http::StatusCode::NOT_FOUND,
+            Error::InvalidPolicy(_) => http::StatusCode::BAD_REQUEST,
+            Error::SignatureDoesNotMatch => http::StatusCode::FORBIDDEN,
+            Error::InternalError(_) => http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    fn error_response(&self) -> HttpResponse {
-        let code = self.status_code();
-        let body = json!({
-            "Code": error_code(self),
-            "Message": self.to_string(),
-        });
-        
-        HttpResponse::build(code).json(body)
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Error::BucketAlreadyExists => "BucketAlreadyExists",
+            Error::BucketNotFound => "NoSuchBucket",
+            Error::BucketNotEmpty => "BucketNotEmpty",
+            Error::KeyNotFound => "NoSuchKey",
+            Error::InvalidRequest(_) => "InvalidRequest",
+            Error::AccessDenied => "AccessDenied",
+            Error::InvalidUploadId => "NoSuchUpload",
+            Error::NoSuchUpload => "NoSuchUpload",
+            Error::InvalidPartNumber => "InvalidPartNumber",
+            Error::InvalidPartOrder => "InvalidPartOrder",
+            Error::IncompleteMultipartUpload => "IncompleteMultipartUpload",
+            Error::NoSuchVersion => "NoSuchVersion",
+            Error::NoSuchLifecycleConfiguration => "NoSuchLifecycleConfiguration",
+            Error::InvalidPolicy(_) => "MalformedPolicy",
+            Error::SignatureDoesNotMatch => "SignatureDoesNotMatch",
+            Error::InternalError(_) => "InternalError",
+        }
     }
 }
 
-fn error_code(error: &Error) -> &'static str {
-    match error {
-        Error::BucketAlreadyExists => "BucketAlreadyExists",
-        Error::BucketNotFound => "NoSuchBucket",
-        Error::BucketNotEmpty => "BucketNotEmpty",
-        Error::KeyNotFound => "NoSuchKey",
-        Error::InvalidRequest(_) => "InvalidRequest",
-        Error::AccessDenied => "AccessDenied",
-        Error::InvalidUploadId => "NoSuchUpload",
-        Error::NoSuchUpload => "NoSuchUpload",
-        Error::InvalidPartNumber => "InvalidPartNumber",
-        Error::InvalidPartOrder => "InvalidPartOrder",
-        Error::IncompleteMultipartUpload => "IncompleteMultipartUpload",
-        Error::NoSuchVersion => "NoSuchVersion",
-        Error::NoSuchLifecycleConfiguration => "NoSuchLifecycleConfiguration",
-        Error::InvalidPolicy(_) => "MalformedPolicy",
-        Error::SignatureDoesNotMatch => "SignatureDoesNotMatch",
-        Error::InternalError(_) => "InternalError",
+impl From<Error> for String {
+    fn from(err: Error) -> Self {
+        err.to_string()
     }
 }

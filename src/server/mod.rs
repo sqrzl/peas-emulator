@@ -1,9 +1,15 @@
 use crate::auth::AuthConfig;
 use crate::storage::Storage;
-use actix_web::{web, App, HttpServer};
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server as HyperServer, StatusCode};
+use std::convert::Infallible;
 use std::sync::Arc;
+use tracing::error;
 
 mod handlers;
+mod http;
+
+pub use http::{Request as RequestExt, ResponseBuilder, RouteMatch, Router};
 
 pub struct Server {
     storage: Arc<dyn Storage>,
@@ -13,38 +19,65 @@ pub struct Server {
 
 impl Server {
     pub fn new(storage: Arc<dyn Storage>, auth_config: Arc<AuthConfig>, api_port: u16) -> Self {
-        Self { storage, auth_config, api_port }
+        Self {
+            storage,
+            auth_config,
+            api_port,
+        }
     }
 
-    pub async fn start(self) -> std::io::Result<()> {
-        let storage_api = self.storage.clone();
-        let auth_config_api = self.auth_config.clone();
+    pub async fn start(self) -> crate::error::Result<()> {
+        let storage = self.storage.clone();
+        let auth_config = self.auth_config.clone();
         let api_port = self.api_port;
 
-        HttpServer::new(move || {
-            App::new()
-                .app_data(web::Data::new(storage_api.clone()))
-                .app_data(web::Data::new(auth_config_api.clone()))
-                // S3-compatible endpoints (port 9000)
-                .route("/", web::get().to(handlers::list_buckets))
-                .service(
-                    web::scope("")
-                        // Bucket operations (with query routing)
-                        .route("/{bucket}", web::get().to(handlers::bucket_get_or_list_objects))
-                        .route("/{bucket}", web::put().to(handlers::bucket_put))
-                        .route("/{bucket}", web::delete().to(handlers::bucket_delete))
-                        .route("/{bucket}", web::head().to(handlers::bucket_head))
-                        .route("/{bucket}", web::post().to(handlers::bucket_post))
-                        // Object operations
-                        .route("/{bucket}/{key:.*}", web::put().to(handlers::object_put))
-                        .route("/{bucket}/{key:.*}", web::get().to(handlers::object_get))
-                        .route("/{bucket}/{key:.*}", web::head().to(handlers::object_head))
-                        .route("/{bucket}/{key:.*}", web::delete().to(handlers::object_delete))
-                        .route("/{bucket}/{key:.*}", web::post().to(handlers::object_post))
-                )
-        })
-        .bind(("0.0.0.0", api_port))?
-        .run()
-        .await
+        let addr = ([0, 0, 0, 0], api_port).into();
+
+        let make_svc = make_service_fn(move |_conn| {
+            let storage = storage.clone();
+            let auth_config = auth_config.clone();
+
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req| {
+                    let storage = storage.clone();
+                    let auth_config = auth_config.clone();
+                    handle_request(storage, auth_config, req)
+                }))
+            }
+        });
+
+        let server = HyperServer::bind(&addr).serve(make_svc);
+        tracing::info!("S3 API listening on http://0.0.0.0:{}", api_port);
+
+        server
+            .await
+            .map_err(|e| crate::error::Error::InternalError(e.to_string()))?;
+        Ok(())
+    }
+}
+
+async fn handle_request(
+    storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
+    req: Request<Body>,
+) -> Result<Response<Body>, Infallible> {
+    match http::Request::from_hyper(req).await {
+        Ok(parsed_req) => match handlers::handle_request(storage, auth_config, parsed_req).await {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!("Handler error: {}", e);
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from("Internal Server Error"))
+                    .unwrap_or_else(|_| Response::new(Body::from("Internal Server Error"))))
+            }
+        },
+        Err(e) => {
+            error!("Failed to parse request: {}", e);
+            Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("Bad Request"))
+                .unwrap_or_else(|_| Response::new(Body::from("Bad Request"))))
+        }
     }
 }

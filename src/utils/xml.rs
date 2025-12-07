@@ -162,6 +162,7 @@ pub fn tagging_xml(tags: &HashMap<String, String>) -> String {
 }
 
 /// ListBucketResult response (list objects)
+#[allow(clippy::too_many_arguments)]
 pub fn list_objects_xml(
     objects: &[Object],
     bucket: &str,
@@ -255,6 +256,7 @@ pub fn versioning_status_xml(status: Option<&str>) -> String {
 }
 
 /// List object versions response
+#[allow(clippy::too_many_arguments)]
 pub fn list_versions_xml(
     bucket: &str,
     versions: &[crate::models::Object],

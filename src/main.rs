@@ -5,8 +5,8 @@ use peas_emulator::Config;
 use peas_emulator::server::Server;
 use peas_emulator::storage::FilesystemStorage;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment variables
     let config = Config::from_env();
 
@@ -48,8 +48,9 @@ async fn main() -> std::io::Result<()> {
     let ui_server = start_ui_server(storage, 9001);
 
     // Run both servers concurrently
-    tokio::select! {
+    let result = tokio::select! {
         result = api_server => result,
         result = ui_server => result,
-    }
+    };
+    Ok(result?)
 }

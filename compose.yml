@@ -1,13 +1,15 @@
 services:
   peas:
+    container_name: peas
+    hostname: peas
     build: .
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
       BLOBS_PATH: /app/blobs
-      ACCESS_KEY: developer
-      SECRET_KEY: developer
+      ACCESS_KEY_ID: peas
+      SECRET_ACCESS_KEY: peas
     volumes:
       - peas-blobs:/app/blobs
 

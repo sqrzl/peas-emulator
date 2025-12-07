@@ -28,31 +28,37 @@ impl IndexedStorage {
     }
 
     fn update_index_put(&self, bucket: &str, key: String) {
-        let mut index = self.index.write().unwrap();
-        index.buckets.entry(bucket.to_string())
-            .or_default()
-            .push(key);
+        if let Ok(mut index) = self.index.write() {
+            index.buckets.entry(bucket.to_string())
+                .or_default()
+                .push(key);
+        }
     }
 
     fn update_index_delete(&self, bucket: &str, key: &str) {
-        let mut index = self.index.write().unwrap();
-        if let Some(keys) = index.buckets.get_mut(bucket) {
-            keys.retain(|k| k != key);
+        if let Ok(mut index) = self.index.write() {
+            if let Some(keys) = index.buckets.get_mut(bucket) {
+                keys.retain(|k| k != key);
+            }
         }
     }
 
     fn update_index_create_bucket(&self, bucket: String) {
-        let mut index = self.index.write().unwrap();
-        index.buckets.entry(bucket).or_default();
+        if let Ok(mut index) = self.index.write() {
+            index.buckets.entry(bucket).or_default();
+        }
     }
 
     fn update_index_delete_bucket(&self, bucket: &str) {
-        let mut index = self.index.write().unwrap();
-        index.buckets.remove(bucket);
+        if let Ok(mut index) = self.index.write() {
+            index.buckets.remove(bucket);
+        }
     }
 
     fn get_indexed_objects(&self, bucket: &str, prefix: Option<&str>) -> Vec<String> {
-        let index = self.index.read().unwrap();
+        let Ok(index) = self.index.read() else {
+            return Vec::new();
+        };
         if let Some(keys) = index.buckets.get(bucket) {
             keys.iter()
                 .filter(|k| prefix.is_none_or(|p| k.starts_with(p)))
@@ -111,14 +117,15 @@ impl Storage for IndexedStorage {
 
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool> {
         // Fast path: check index first
-        let index = self.index.read().unwrap();
-        if let Some(keys) = index.buckets.get(bucket) {
-            if keys.contains(&key.to_string()) {
-                return Ok(true);
+        if let Ok(index) = self.index.read() {
+            if let Some(keys) = index.buckets.get(bucket) {
+                if keys.contains(&key.to_string()) {
+                    return Ok(true);
+                }
             }
+            drop(index);
         }
         // Fallback to storage
-        drop(index);
         self.inner.object_exists(bucket, key)
     }
 

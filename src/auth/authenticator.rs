@@ -13,12 +13,17 @@
 //! If both variables are not set, authentication is disabled and all requests
 //! are treated as anonymous.
 
-use actix_web::HttpRequest;
 use crate::config::Config;
 
 /// Type alias for backward compatibility.
 /// Use `Config` directly instead.
 pub type AuthConfig = Config;
+
+/// Trait for HTTP request abstraction
+pub trait HttpRequestLike {
+    fn header(&self, name: &str) -> Option<&str>;
+    fn query(&self) -> Option<&str>;
+}
 
 
 /// Authentication information extracted from a request.
@@ -57,32 +62,30 @@ impl AuthInfo {
     ///
     /// Returns an anonymous context if no valid credentials are found
     /// or if authentication is disabled.
-    pub fn from_request(req: &HttpRequest, config: &Config) -> Self {
+    pub fn from_request(req: &dyn HttpRequestLike, config: &Config) -> Self {
         if !config.enforce_auth {
             // Auth is disabled, treat as authenticated with default principal
             return Self::authenticated("peas-emulator".to_string());
         }
 
         // Try to extract credentials from Authorization header
-        if let Some(auth_header) = req.headers().get("authorization") {
-            if let Ok(auth_str) = auth_header.to_str() {
-                // Check for AWS4-HMAC-SHA256 (SigV4)
-                if auth_str.starts_with("AWS4-HMAC-SHA256") {
-                    if let Some(principal) = Self::extract_sigv4_principal(auth_str, config) {
-                        return Self::authenticated(principal);
-                    }
+        if let Some(auth_str) = req.header("authorization") {
+            // Check for AWS4-HMAC-SHA256 (SigV4)
+            if auth_str.starts_with("AWS4-HMAC-SHA256") {
+                if let Some(principal) = Self::extract_sigv4_principal(auth_str, config) {
+                    return Self::authenticated(principal);
                 }
-                // Check for AWS Signature Version 2
-                else if auth_str.starts_with("AWS ") {
-                    if let Some(principal) = Self::extract_v2_principal(auth_str, config) {
-                        return Self::authenticated(principal);
-                    }
+            }
+            // Check for AWS Signature Version 2
+            else if auth_str.starts_with("AWS ") {
+                if let Some(principal) = Self::extract_v2_principal(auth_str, config) {
+                    return Self::authenticated(principal);
                 }
             }
         }
 
         // Check query parameters for presigned URLs
-        if let Some(query) = req.uri().query() {
+        if let Some(query) = req.query() {
             if query.contains("X-Amz-Credential") || query.contains("AWSAccessKeyId") {
                 if let Some(principal) = Self::extract_presigned_principal(query, config) {
                     return Self::authenticated(principal);

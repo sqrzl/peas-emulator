@@ -48,8 +48,8 @@ COPY --from=rust-builder /tmp/blobs /app/blobs
 
 # Environment variables
 ENV BLOBS_PATH=/app/blobs
-ENV ACCESS_KEY=minioadmin
-ENV SECRET_KEY=minioadmin
+ENV ACCESS_KEY_ID=peas
+ENV SECRET_ACCESS_KEY=peas
 
 # Expose both S3 API and UI ports
 EXPOSE 9000 9001

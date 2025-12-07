@@ -8,8 +8,8 @@ use std::env;
 use std::time::Duration;
 
 // Environment variable names
-const ENV_ACCESS_KEY: &str = "ACCESS_KEY";
-const ENV_SECRET_KEY: &str = "SECRET_KEY";
+const ENV_ACCESS_KEY_ID: &str = "ACCESS_KEY_ID";
+const ENV_SECRET_ACCESS_KEY: &str = "SECRET_ACCESS_KEY";
 const ENV_BLOBS_PATH: &str = "BLOBS_PATH";
 const ENV_LIFECYCLE_HOURS: &str = "LIFECYCLE_HOURS";
 
@@ -37,13 +37,13 @@ impl Config {
     ///
     /// # Environment Variables
     ///
-    /// - `ACCESS_KEY`: AWS access key ID (optional)
-    /// - `SECRET_KEY`: AWS secret access key (optional)
+    /// - `ACCESS_KEY_ID`: AWS access key ID (optional)
+    /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
     /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
     /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
     pub fn from_env() -> Self {
-        let access_key_id = env::var(ENV_ACCESS_KEY).ok();
-        let secret_access_key = env::var(ENV_SECRET_KEY).ok();
+        let access_key_id = env::var(ENV_ACCESS_KEY_ID).ok();
+        let secret_access_key = env::var(ENV_SECRET_ACCESS_KEY).ok();
         let blobs_path = env::var(ENV_BLOBS_PATH).unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string());
 
         let lifecycle_interval_hours = env::var(ENV_LIFECYCLE_HOURS)

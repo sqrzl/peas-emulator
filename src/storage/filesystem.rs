@@ -127,7 +127,8 @@ impl FilesystemStorage {
 
     fn save_uploads(&self, bucket: &str, uploads: &std::collections::HashMap<String, MultipartUpload>) -> Result<()> {
         let uploads_path = self.uploads_index_path(bucket);
-        let uploads_dir = uploads_path.parent().unwrap();
+        let uploads_dir = uploads_path.parent()
+            .ok_or_else(|| Error::InternalError("Invalid uploads path".to_string()))?;
         
         fs::create_dir_all(uploads_dir)
             .map_err(|e| Error::InternalError(format!("Failed to create multipart dir: {}", e)))?;
