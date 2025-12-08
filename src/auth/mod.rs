@@ -4,5 +4,5 @@ pub mod presigned;
 pub mod sigv4;
 
 pub use authenticator::{AuthConfig, AuthInfo, HttpRequestLike};
-pub use presigned::PresignedUrl;
+pub use presigned::{PresignedUrl, PresignedUrlConfig};
 pub use sigv4::{SigV4Config, SignatureVerifier};

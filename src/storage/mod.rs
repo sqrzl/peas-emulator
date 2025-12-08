@@ -49,6 +49,7 @@ pub trait Storage: Send + Sync {
         part_number: u32,
         data: Vec<u8>,
     ) -> Result<String>;
+    fn list_multipart_uploads(&self, bucket: &str) -> Result<Vec<MultipartUpload>>;
     fn list_parts(&self, bucket: &str, upload_id: &str) -> Result<Vec<crate::models::Part>>;
     fn get_multipart_upload(&self, bucket: &str, upload_id: &str) -> Result<MultipartUpload>;
     fn complete_multipart_upload(&self, bucket: &str, upload_id: &str) -> Result<String>;

@@ -67,6 +67,14 @@ impl FilesystemStorage {
         self.bucket_dir(bucket).join("bucket.acl.json")
     }
 
+    fn versioning_marker(&self, bucket: &str) -> PathBuf {
+        self.bucket_dir(bucket).join(".versioning-enabled")
+    }
+
+    fn versioning_enabled(&self, bucket: &str) -> bool {
+        self.versioning_marker(bucket).exists()
+    }
+
     fn compute_object_id(bucket: &str, key: &str) -> String {
         let mut hasher = DefaultHasher::new();
         (bucket, key).hash(&mut hasher);
@@ -205,7 +213,9 @@ impl Storage for FilesystemStorage {
             return Err(Error::BucketNotFound);
         }
 
-        Ok(Bucket::new(name.to_string()))
+        let mut bucket = Bucket::new(name.to_string());
+        bucket.versioning_enabled = self.versioning_enabled(name);
+        Ok(bucket)
     }
 
     fn list_buckets(&self) -> Result<Vec<Bucket>> {
@@ -224,7 +234,9 @@ impl Storage for FilesystemStorage {
             if metadata.is_dir() {
                 let name = entry.file_name();
                 if let Some(bucket_name) = name.to_str() {
-                    buckets.push(Bucket::new(bucket_name.to_string()));
+                    let mut bucket = Bucket::new(bucket_name.to_string());
+                    bucket.versioning_enabled = self.versioning_enabled(bucket_name);
+                    buckets.push(bucket);
                 }
             }
         }
@@ -745,6 +757,15 @@ impl Storage for FilesystemStorage {
         Ok(etag)
     }
 
+    fn list_multipart_uploads(&self, bucket: &str) -> Result<Vec<MultipartUpload>> {
+        if !self.bucket_exists(bucket)? {
+            return Err(Error::BucketNotFound);
+        }
+
+        let uploads = self.load_uploads(bucket)?;
+        Ok(uploads.into_values().collect())
+    }
+
     fn list_parts(&self, bucket: &str, upload_id: &str) -> Result<Vec<crate::models::Part>> {
         if !self.bucket_exists(bucket)? {
             return Err(Error::BucketNotFound);
@@ -855,7 +876,7 @@ impl Storage for FilesystemStorage {
         }
 
         // Mark bucket as versioning-enabled by creating a marker file
-        let versioning_marker = self.bucket_dir(bucket).join(".versioning-enabled");
+        let versioning_marker = self.versioning_marker(bucket);
         fs::write(&versioning_marker, "")
             .map_err(|e| Error::InternalError(format!("Failed to enable versioning: {}", e)))?;
         Ok(())
@@ -867,7 +888,7 @@ impl Storage for FilesystemStorage {
         }
 
         // Remove the versioning marker
-        let versioning_marker = self.bucket_dir(bucket).join(".versioning-enabled");
+        let versioning_marker = self.versioning_marker(bucket);
         let _ = fs::remove_file(versioning_marker);
         Ok(())
     }

@@ -6,6 +6,98 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
+/// Check if an object should be deleted due to lifecycle rules
+/// This is called eagerly when accessing objects to enforce expiration immediately
+pub fn check_object_expiration(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+) -> Result<bool, Error> {
+    let now = Utc::now();
+
+    // Get lifecycle configuration for this bucket
+    let config = match storage.get_bucket_lifecycle(bucket) {
+        Ok(cfg) => cfg,
+        Err(Error::KeyNotFound) => return Ok(false), // No lifecycle config
+        Err(e) => {
+            error!(
+                "Failed to get lifecycle config for bucket {}: {}",
+                bucket, e
+            );
+            return Err(e);
+        }
+    };
+
+    // Get the object to check expiration
+    let object = storage.get_object(bucket, key)?;
+
+    // Get object tags
+    let tags = storage.get_object_tags(bucket, key).unwrap_or_default();
+
+    for rule in &config.rules {
+        // Skip disabled rules
+        if rule.status != Status::Enabled {
+            continue;
+        }
+
+        // Check if filter matches
+        if let Some(filter) = &rule.filter {
+            if !filter.matches(key, &tags) {
+                continue;
+            }
+        }
+
+        // Apply expiration action
+        if let Some(expiration) = &rule.expiration {
+            if should_expire(object.last_modified, expiration, now) {
+                info!(
+                    bucket = bucket,
+                    key = key,
+                    rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                    "Expiring object (eager check)"
+                );
+
+                // Delete the object
+                storage.delete_object(bucket, key)?;
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn should_expire(
+    last_modified: DateTime<Utc>,
+    expiration: &crate::models::lifecycle::Expiration,
+    now: DateTime<Utc>,
+) -> bool {
+    let object_date = last_modified;
+
+    // Check days-based expiration
+    if let Some(days) = expiration.days {
+        let age_days = (now - object_date).num_days();
+        if age_days >= days as i64 {
+            return true;
+        }
+    }
+
+    // Check date-based expiration (ISO 8601 format: YYYY-MM-DD)
+    if let Some(date_str) = &expiration.date {
+        if let Ok(expire_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            let expire_datetime = expire_date.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc());
+
+            if let Some(expire_dt) = expire_datetime {
+                if now >= expire_dt {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// Background job that executes lifecycle rules periodically
 pub struct LifecycleExecutor {
     storage: Arc<dyn Storage>,
@@ -108,7 +200,7 @@ impl LifecycleExecutor {
 
                 // Apply expiration action
                 if let Some(expiration) = &rule.expiration {
-                    if self.should_expire(object.last_modified, expiration, now) {
+                    if should_expire(object.last_modified, expiration, now) {
                         info!(
                             bucket = bucket_name,
                             key = object.key,
@@ -128,37 +220,5 @@ impl LifecycleExecutor {
         }
 
         Ok(())
-    }
-
-    fn should_expire(
-        &self,
-        last_modified: DateTime<Utc>,
-        expiration: &crate::models::lifecycle::Expiration,
-        now: DateTime<Utc>,
-    ) -> bool {
-        let object_date = last_modified;
-
-        // Check days-based expiration
-        if let Some(days) = expiration.days {
-            let age_days = (now - object_date).num_days();
-            if age_days >= days as i64 {
-                return true;
-            }
-        }
-
-        // Check date-based expiration (ISO 8601 format: YYYY-MM-DD)
-        if let Some(date_str) = &expiration.date {
-            if let Ok(expire_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                let expire_datetime = expire_date.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc());
-
-                if let Some(expire_dt) = expire_datetime {
-                    if now >= expire_dt {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
     }
 }

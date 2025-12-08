@@ -21,11 +21,17 @@ pub fn format_last_modified() -> String {
 
 /// Extract user-defined metadata headers (x-amz-meta-*) from HTTP headers
 pub fn extract_metadata_from_http_headers(
-    _req: &dyn crate::auth::HttpRequestLike,
+    req: &dyn crate::auth::HttpRequestLike,
 ) -> HashMap<String, String> {
-    // Note: This is a simplified version. In a full implementation, we'd need access to all headers.
-    // For now, returning empty map - should be extended based on actual header handling
-    HashMap::new()
+    let mut metadata = HashMap::new();
+
+    for (name, value) in req.headers() {
+        if let Some(key) = name.strip_prefix("x-amz-meta-") {
+            metadata.insert(key.to_string(), value);
+        }
+    }
+
+    metadata
 }
 
 #[cfg(test)]

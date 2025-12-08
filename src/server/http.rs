@@ -23,6 +23,30 @@ impl HttpRequestLike for Request {
     fn query(&self) -> Option<&str> {
         self.uri.query()
     }
+
+    fn method(&self) -> &str {
+        self.method.as_str()
+    }
+
+    fn path(&self) -> &str {
+        self.uri.path()
+    }
+
+    fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    fn headers(&self) -> Vec<(String, String)> {
+        self.headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_lowercase(), v.to_string()))
+            })
+            .collect()
+    }
 }
 
 impl Request {
@@ -150,7 +174,11 @@ pub struct Router;
 
 impl Router {
     pub fn route(method: &Method, path: &str) -> RouteMatch {
-        let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let parts: Vec<&str> = path
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
 
         match parts.as_slice() {
             // List buckets: GET /

@@ -13,8 +13,12 @@ pub fn xml_declaration() -> String {
 pub fn list_buckets_xml(buckets: &[Bucket]) -> String {
     let mut xml = format!(
         r#"{}
-<ListBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-  <Buckets>"#,
+<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Owner>
+        <ID>peas-emulator</ID>
+        <DisplayName>Peas Emulator</DisplayName>
+    </Owner>
+    <Buckets>"#,
         xml_declaration()
     );
 
@@ -22,10 +26,10 @@ pub fn list_buckets_xml(buckets: &[Bucket]) -> String {
         let created = bucket.created_at.to_rfc3339();
         xml.push_str(&format!(
             r#"
-    <Bucket>
-      <Name>{}</Name>
-      <CreationDate>{}</CreationDate>
-    </Bucket>"#,
+        <Bucket>
+            <Name>{}</Name>
+            <CreationDate>{}</CreationDate>
+        </Bucket>"#,
             escape_xml(&bucket.name),
             created
         ));
@@ -33,12 +37,8 @@ pub fn list_buckets_xml(buckets: &[Bucket]) -> String {
 
     xml.push_str(
         r#"
-  </Buckets>
-  <Owner>
-    <ID>peas-emulator</ID>
-    <DisplayName>Peas Emulator</DisplayName>
-  </Owner>
-</ListBucketsResult>"#,
+    </Buckets>
+</ListAllMyBucketsResult>"#,
     );
 
     xml

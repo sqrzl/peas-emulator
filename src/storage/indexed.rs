@@ -197,6 +197,10 @@ impl Storage for IndexedStorage {
         self.inner.upload_part(bucket, upload_id, part_number, data)
     }
 
+    fn list_multipart_uploads(&self, bucket: &str) -> Result<Vec<MultipartUpload>> {
+        self.inner.list_multipart_uploads(bucket)
+    }
+
     fn list_parts(&self, bucket: &str, upload_id: &str) -> Result<Vec<crate::models::Part>> {
         self.inner.list_parts(bucket, upload_id)
     }

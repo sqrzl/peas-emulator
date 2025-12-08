@@ -14,6 +14,7 @@
 //! are treated as anonymous.
 
 use crate::config::Config;
+use urlencoding::decode;
 
 /// Type alias for backward compatibility.
 /// Use `Config` directly instead.
@@ -23,6 +24,10 @@ pub type AuthConfig = Config;
 pub trait HttpRequestLike {
     fn header(&self, name: &str) -> Option<&str>;
     fn query(&self) -> Option<&str>;
+    fn method(&self) -> &str;
+    fn path(&self) -> &str;
+    fn body(&self) -> &[u8];
+    fn headers(&self) -> Vec<(String, String)>;
 }
 
 /// Authentication information extracted from a request.
@@ -141,7 +146,9 @@ impl AuthInfo {
     /// - `AWSAccessKeyId=AKID`
     pub(crate) fn extract_presigned_principal(query: &str, config: &Config) -> Option<String> {
         for param in query.split('&') {
-            let (key, value) = param.split_once('=')?;
+            let (key, raw_value) = param.split_once('=')?;
+            let decoded = decode(raw_value).unwrap_or_else(|_| raw_value.into());
+            let value = decoded.as_ref();
 
             if key == "X-Amz-Credential" {
                 // Extract access key from credential (before first /)
