@@ -1,5 +1,7 @@
 use crate::error::{Error, Result};
-use crate::services::{json_error_response, json_response};
+use crate::services::{
+    bucket as bucket_service, json_error_response, json_response, object as object_service,
+};
 use crate::storage::Storage;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
@@ -103,10 +105,6 @@ fn decode_component(input: &str) -> String {
         .unwrap_or_else(|_| input.to_string())
 }
 
-fn bucket_versioning_enabled(bucket: &crate::models::Bucket) -> bool {
-    bucket.versioning_enabled
-}
-
 fn object_to_metadata(obj: crate::models::Object) -> crate::api::models::ObjectMetadata {
     crate::api::models::ObjectMetadata {
         key: obj.key,
@@ -158,12 +156,13 @@ async fn handle_api_request(
     if path == "/api/buckets" {
         match method {
             Method::GET => {
-                let buckets = tokio::task::block_in_place(|| storage.list_buckets())?;
+                let buckets =
+                    tokio::task::block_in_place(|| bucket_service::list_buckets(storage.as_ref()))?;
                 let resp = crate::api::models::ListBucketsResponse {
                     buckets: buckets
                         .into_iter()
                         .map(|b| {
-                            let versioning_enabled = bucket_versioning_enabled(&b);
+                            let versioning_enabled = bucket_service::versioning_enabled(&b);
                             crate::api::models::BucketInfo {
                                 name: b.name,
                                 created_at: b.created_at.to_rfc3339(),
@@ -180,7 +179,9 @@ async fn handle_api_request(
                     name: String,
                 }
                 let payload: CreateReq = read_json(req).await?;
-                tokio::task::block_in_place(|| storage.create_bucket(payload.name))?;
+                tokio::task::block_in_place(|| {
+                    bucket_service::create_bucket(storage.as_ref(), payload.name)
+                })?;
                 let resp = crate::api::models::SuccessResponse { success: true };
                 return Ok(json_response(StatusCode::OK, &resp));
             }
@@ -199,8 +200,10 @@ async fn handle_api_request(
         match segments.next() {
             None => match method {
                 Method::GET => {
-                    let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
-                    let versioning_enabled = bucket_versioning_enabled(&bucket);
+                    let bucket = tokio::task::block_in_place(|| {
+                        bucket_service::get_bucket(storage.as_ref(), &bucket)
+                    })?;
+                    let versioning_enabled = bucket_service::versioning_enabled(&bucket);
                     let resp = crate::api::models::BucketDetails {
                         name: bucket.name,
                         created_at: bucket.created_at.to_rfc3339(),
@@ -209,7 +212,9 @@ async fn handle_api_request(
                     return Ok(json_response(StatusCode::OK, &resp));
                 }
                 Method::DELETE => {
-                    tokio::task::block_in_place(|| storage.delete_bucket(&bucket))?;
+                    tokio::task::block_in_place(|| {
+                        bucket_service::delete_bucket(storage.as_ref(), &bucket)
+                    })?;
                     return Ok(json_response(
                         StatusCode::OK,
                         &crate::api::models::SuccessResponse { success: true },
@@ -219,9 +224,11 @@ async fn handle_api_request(
             },
             Some("versioning") => match method {
                 Method::GET => {
-                    let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
+                    let bucket = tokio::task::block_in_place(|| {
+                        bucket_service::get_bucket(storage.as_ref(), &bucket)
+                    })?;
                     let resp = crate::api::models::VersioningStatus {
-                        enabled: bucket_versioning_enabled(&bucket),
+                        enabled: bucket_service::versioning_enabled(&bucket),
                     };
                     return Ok(json_response(StatusCode::OK, &resp));
                 }
@@ -231,11 +238,9 @@ async fn handle_api_request(
                         enabled: bool,
                     }
                     let body: VersioningReq = read_json(req).await?;
-                    if body.enabled {
-                        tokio::task::block_in_place(|| storage.enable_versioning(&bucket))?;
-                    } else {
-                        tokio::task::block_in_place(|| storage.suspend_versioning(&bucket))?;
-                    }
+                    tokio::task::block_in_place(|| {
+                        bucket_service::set_versioning(storage.as_ref(), &bucket, body.enabled)
+                    })?;
                     return Ok(json_response(
                         StatusCode::OK,
                         &crate::api::models::SuccessResponse { success: true },
@@ -259,7 +264,8 @@ async fn handle_api_request(
                     let max_keys = params.get("max-keys").and_then(|s| s.parse::<usize>().ok());
 
                     let list = tokio::task::block_in_place(|| {
-                        storage.list_objects(
+                        object_service::list_objects(
+                            storage.as_ref(),
                             &bucket,
                             prefix.as_deref(),
                             delimiter.as_deref(),
@@ -286,14 +292,16 @@ async fn handle_api_request(
 
                 match action {
                     Some("metadata") if method == Method::GET => {
-                        let obj =
-                            tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
+                        let obj = tokio::task::block_in_place(|| {
+                            object_service::get_object(storage.as_ref(), &bucket, &key)
+                        })?;
                         let resp = object_to_metadata(obj);
                         return Ok(json_response(StatusCode::OK, &resp));
                     }
                     Some("download") if method == Method::GET => {
-                        let obj =
-                            tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
+                        let obj = tokio::task::block_in_place(|| {
+                            object_service::get_object(storage.as_ref(), &bucket, &key)
+                        })?;
                         let builder = Response::builder()
                             .status(StatusCode::OK)
                             .header("content-type", obj.content_type);
@@ -303,7 +311,11 @@ async fn handle_api_request(
                     }
                     Some("versions") if method == Method::GET => {
                         let versions = tokio::task::block_in_place(|| {
-                            storage.list_object_versions(&bucket, Some(&key))
+                            object_service::list_object_versions(
+                                storage.as_ref(),
+                                &bucket,
+                                Some(&key),
+                            )
                         })?;
                         let resp = crate::api::models::ListVersionsResponse {
                             versions: versions
@@ -321,8 +333,9 @@ async fn handle_api_request(
                         return Ok(json_response(StatusCode::OK, &resp));
                     }
                     Some("tags") if method == Method::GET => {
-                        let tags =
-                            tokio::task::block_in_place(|| storage.get_object_tags(&bucket, &key))?;
+                        let tags = tokio::task::block_in_place(|| {
+                            object_service::get_object_tags(storage.as_ref(), &bucket, &key)
+                        })?;
                         return Ok(json_response(
                             StatusCode::OK,
                             &crate::api::models::TagsResponse { tags },
@@ -335,7 +348,12 @@ async fn handle_api_request(
                         }
                         let body: TagsReq = read_json(req).await?;
                         tokio::task::block_in_place(|| {
-                            storage.put_object_tags(&bucket, &key, body.tags)
+                            object_service::put_object_tags(
+                                storage.as_ref(),
+                                &bucket,
+                                &key,
+                                body.tags,
+                            )
                         })?;
                         return Ok(json_response(
                             StatusCode::OK,
@@ -378,7 +396,12 @@ async fn handle_api_request(
                                     metadata,
                                 );
                                 tokio::task::block_in_place(|| {
-                                    storage.put_object(&bucket, key_to_use.clone(), obj)
+                                    object_service::put_object(
+                                        storage.as_ref(),
+                                        &bucket,
+                                        key_to_use.clone(),
+                                        obj,
+                                    )
                                 })?;
                                 return Ok(json_response(
                                     StatusCode::OK,
@@ -387,7 +410,7 @@ async fn handle_api_request(
                             }
                             Method::DELETE => {
                                 tokio::task::block_in_place(|| {
-                                    storage.delete_object(&bucket, &key)
+                                    object_service::delete_object(storage.as_ref(), &bucket, &key)
                                 })?;
                                 return Ok(json_response(
                                     StatusCode::OK,

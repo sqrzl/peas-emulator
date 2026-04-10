@@ -5,6 +5,9 @@ use http::StatusCode;
 use hyper::{Body, Response};
 use serde::Serialize;
 
+pub mod bucket;
+pub mod object;
+
 pub fn xml_error_response(
     status: StatusCode,
     error_code: &str,
