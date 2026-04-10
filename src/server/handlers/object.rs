@@ -9,15 +9,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use urlencoding::decode;
 
-fn not_implemented(req_id: &str, message: &str) -> Response<Body> {
-    let xml = xml_utils::error_xml("NotImplemented", message, req_id);
-    ResponseBuilder::new(StatusCode::NOT_IMPLEMENTED)
-        .content_type("application/xml; charset=utf-8")
-        .header("x-amz-request-id", req_id)
-        .body(xml.into_bytes())
-        .build()
-}
-
 fn parse_range(range_header: &str) -> Option<(u64, Option<u64>)> {
     // Expect formats like "bytes=start-end" or "bytes=start-"
     let range = range_header.strip_prefix("bytes=")?;
@@ -49,6 +40,36 @@ fn parse_tagging_header(tag_header: &str) -> Result<HashMap<String, String>, Str
         tags.insert(key, value);
     }
     Ok(tags)
+}
+
+fn copy_source_range_data(
+    source_obj: &crate::models::Object,
+    range_header: &str,
+) -> Result<Vec<u8>, String> {
+    let (start, end_opt) = parse_range(range_header)
+        .ok_or_else(|| "Invalid copy source range".to_string())?;
+
+    let source_len = source_obj.data.len() as u64;
+    if source_len == 0 || start >= source_len {
+        return Err("Invalid copy source range".to_string());
+    }
+
+    let end = end_opt.unwrap_or(source_len - 1).min(source_len - 1);
+    if end < start {
+        return Err("Invalid copy source range".to_string());
+    }
+
+    let start_idx = start as usize;
+    let end_idx = end as usize;
+    Ok(source_obj.data[start_idx..=end_idx].to_vec())
+}
+
+fn add_version_header(builder: ResponseBuilder, version_id: Option<&str>) -> ResponseBuilder {
+    if let Some(version_id) = version_id {
+        builder.header("x-amz-version-id", version_id)
+    } else {
+        builder
+    }
 }
 
 fn check_copy_conditionals(
@@ -241,8 +262,9 @@ pub async fn object_get(
                     .header("x-amz-request-id", &req_id)
                     .header("x-amz-id-2", &header_utils::generate_request_id())
                     .header("x-amz-storage-class", "STANDARD")
-                    .header("Accept-Ranges", "bytes")
-                    .header("x-amz-version-id", version_id);
+                    .header("Accept-Ranges", "bytes");
+
+                builder = add_version_header(builder, obj.version_id.as_deref());
 
                 for (k, v) in obj.metadata.iter() {
                     builder = builder.header(&format!("x-amz-meta-{}", k), v);
@@ -318,6 +340,8 @@ pub async fn object_get(
                             .header("x-amz-storage-class", "STANDARD")
                             .header("Accept-Ranges", "bytes");
 
+                        builder = add_version_header(builder, obj.version_id.as_deref());
+
                         for (k, v) in obj.metadata.iter() {
                             builder = builder.header(&format!("x-amz-meta-{}", k), v);
                         }
@@ -356,6 +380,8 @@ pub async fn object_get(
                     .header("x-amz-id-2", &header_utils::generate_request_id())
                     .header("x-amz-storage-class", "STANDARD")
                     .header("Accept-Ranges", "bytes");
+
+                builder = add_version_header(builder, obj.version_id.as_deref());
 
                 for (k, v) in obj.metadata.iter() {
                     builder = builder.header(&format!("x-amz-meta-{}", k), v);
@@ -537,6 +563,22 @@ pub async fn object_put(
                     return Ok(response);
                 }
 
+                let copy_data = if let Some(range_header) = req.header("x-amz-copy-source-range") {
+                    match copy_source_range_data(&src_obj, range_header) {
+                        Ok(data) => data,
+                        Err(msg) => {
+                            let xml = xml_utils::error_xml("InvalidRange", &msg, &req_id);
+                            return Ok(ResponseBuilder::new(StatusCode::RANGE_NOT_SATISFIABLE)
+                                .content_type("application/xml; charset=utf-8")
+                                .header("x-amz-request-id", &req_id)
+                                .body(xml.into_bytes())
+                                .build());
+                        }
+                    }
+                } else {
+                    src_obj.data.clone()
+                };
+
                 let metadata = if metadata_directive == "REPLACE" {
                     header_utils::extract_metadata_from_http_headers(req)
                 } else {
@@ -560,7 +602,7 @@ pub async fn object_put(
 
                 let mut dest_obj = crate::models::Object::new_with_metadata(
                     key.to_string(),
-                    src_obj.data.clone(),
+                    copy_data,
                     src_obj.content_type.clone(),
                     metadata,
                 );
@@ -576,6 +618,12 @@ pub async fn object_put(
                 match tokio::task::block_in_place(|| storage.put_object(bucket, dest_key, dest_obj))
                 {
                     Ok(_) => {
+                        let stored_version_id = tokio::task::block_in_place(|| {
+                            storage.get_object(bucket, key)
+                        })
+                        .ok()
+                        .and_then(|obj| obj.version_id);
+
                         let xml = format!(
                             r#"<?xml version="1.0" encoding="UTF-8"?>
 <CopyObjectResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -585,11 +633,11 @@ pub async fn object_put(
                             etag,
                             header_utils::format_last_modified()
                         );
-                        return Ok(ResponseBuilder::new(StatusCode::OK)
+                        let mut builder = ResponseBuilder::new(StatusCode::OK)
                             .content_type("application/xml; charset=utf-8")
-                            .header("x-amz-request-id", &req_id)
-                            .body(xml.into_bytes())
-                            .build());
+                            .header("x-amz-request-id", &req_id);
+                        builder = add_version_header(builder, stored_version_id.as_deref());
+                        return Ok(builder.body(xml.into_bytes()).build());
                     }
                     Err(e) => {
                         let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
@@ -674,12 +722,21 @@ pub async fn object_put(
     let etag = obj.etag.clone();
 
     match tokio::task::block_in_place(|| storage.put_object(bucket, obj_key, obj)) {
-        Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
-            .header("Content-Length", "0")
-            .header("ETag", &etag.to_string())
-            .header("x-amz-request-id", &req_id)
-            .header("x-amz-id-2", &header_utils::generate_request_id())
-            .empty()),
+        Ok(_) => {
+            let stored_version_id = tokio::task::block_in_place(|| storage.get_object(bucket, key))
+                .ok()
+                .and_then(|obj| obj.version_id);
+
+            let mut builder = ResponseBuilder::new(StatusCode::OK)
+                .header("Content-Length", "0")
+                .header("ETag", &etag.to_string())
+                .header("x-amz-request-id", &req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id());
+
+            builder = add_version_header(builder, stored_version_id.as_deref());
+
+            Ok(builder.empty())
+        }
         Err(e) => {
             let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
             Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
@@ -688,6 +745,142 @@ pub async fn object_put(
                 .body(xml.into_bytes())
                 .build())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthConfig;
+    use crate::models::Object;
+    use crate::server::RequestExt;
+    use crate::storage::FilesystemStorage;
+    use hyper::{Body, Request as HyperRequest, StatusCode};
+    use std::fs;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn temp_storage() -> Arc<dyn Storage> {
+        let dir = std::env::temp_dir().join(format!("peas-copy-range-test-{}", uuid::Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        Arc::new(FilesystemStorage::new(dir))
+    }
+
+    fn auth_disabled_config() -> Arc<AuthConfig> {
+        Arc::new(AuthConfig {
+            access_key_id: None,
+            secret_access_key: None,
+            enforce_auth: false,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: Duration::from_secs(3600),
+        })
+    }
+
+    async fn parsed_request(headers: &[(&str, &str)]) -> RequestExt {
+        let mut builder = HyperRequest::builder().method("PUT").uri("http://localhost/");
+
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+
+        RequestExt::from_hyper(builder.body(Body::empty()).expect("request should build"))
+            .await
+            .expect("request should parse")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_copy_only_requested_range_when_copy_source_range_is_provided() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("source".to_string()).unwrap();
+        storage.create_bucket("dest".to_string()).unwrap();
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("owner".to_string(), "alice".to_string());
+        storage
+            .put_object(
+                "source",
+                "source.txt".to_string(),
+                Object::new_with_metadata(
+                    "source.txt".to_string(),
+                    b"abcdefghij".to_vec(),
+                    "text/plain".to_string(),
+                    metadata,
+                ),
+            )
+            .unwrap();
+
+        // Act
+        let req = parsed_request(&[
+            ("x-amz-copy-source", "source/source.txt"),
+            ("x-amz-copy-source-range", "bytes=2-5"),
+        ])
+        .await;
+
+        let resp = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "dest",
+            "copied.txt",
+            &req,
+            "req-123".to_string(),
+        )
+        .await
+        .expect("copy should complete");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let copied = storage.get_object("dest", "copied.txt").unwrap();
+        assert_eq!(copied.data, b"cdef".to_vec());
+        assert_eq!(copied.size, 4);
+        assert_eq!(copied.content_type, "text/plain");
+        assert_eq!(copied.metadata.get("owner"), Some(&"alice".to_string()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_reject_invalid_copy_source_range_when_range_exceeds_source_size() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("source".to_string()).unwrap();
+        storage.create_bucket("dest".to_string()).unwrap();
+
+        storage
+            .put_object(
+                "source",
+                "source.txt".to_string(),
+                Object::new(
+                    "source.txt".to_string(),
+                    b"abcdefghij".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        // Act
+        let req = parsed_request(&[
+            ("x-amz-copy-source", "source/source.txt"),
+            ("x-amz-copy-source-range", "bytes=20-30"),
+        ])
+        .await;
+
+        let resp = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "dest",
+            "copied.txt",
+            &req,
+            "req-124".to_string(),
+        )
+        .await
+        .expect("copy should return a response");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+
+        let body = hyper::body::to_bytes(resp.into_body()).await.expect("body should read");
+        let body = String::from_utf8(body.to_vec()).expect("body should be utf8");
+        assert!(body.contains("InvalidRange"));
     }
 }
 
@@ -818,16 +1011,18 @@ pub async fn object_head(
         match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id))
         {
             Ok(obj) => {
-                return Ok(ResponseBuilder::new(StatusCode::OK)
+                let mut builder = ResponseBuilder::new(StatusCode::OK)
                     .content_type(&obj.content_type)
                     .header("Content-Length", &obj.size.to_string())
                     .header("ETag", &obj.etag.to_string())
                     .header("Last-Modified", &header_utils::format_last_modified())
                     .header("x-amz-request-id", &req_id)
                     .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .header("x-amz-storage-class", "STANDARD")
-                    .header("x-amz-version-id", version_id)
-                    .empty());
+                    .header("x-amz-storage-class", "STANDARD");
+
+                builder = add_version_header(builder, obj.version_id.as_deref());
+
+                return Ok(builder.empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
                 let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
@@ -849,15 +1044,20 @@ pub async fn object_head(
     }
 
     match tokio::task::block_in_place(|| storage.get_object(bucket, key)) {
-        Ok(obj) => Ok(ResponseBuilder::new(StatusCode::OK)
-            .content_type(&obj.content_type)
-            .header("Content-Length", &obj.size.to_string())
-            .header("ETag", &obj.etag.to_string())
-            .header("Last-Modified", &header_utils::format_last_modified())
-            .header("x-amz-request-id", &req_id)
-            .header("x-amz-id-2", &header_utils::generate_request_id())
-            .header("x-amz-storage-class", "STANDARD")
-            .empty()),
+        Ok(obj) => {
+            let mut builder = ResponseBuilder::new(StatusCode::OK)
+                .content_type(&obj.content_type)
+                .header("Content-Length", &obj.size.to_string())
+                .header("ETag", &obj.etag.to_string())
+                .header("Last-Modified", &header_utils::format_last_modified())
+                .header("x-amz-request-id", &req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id())
+                .header("x-amz-storage-class", "STANDARD");
+
+            builder = add_version_header(builder, obj.version_id.as_deref());
+
+            Ok(builder.empty())
+        }
         Err(e) => {
             let xml = xml_utils::error_xml("NoSuchKey", &e.to_string(), &req_id);
             Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
@@ -884,12 +1084,18 @@ pub async fn object_post(
         }) {
             Ok(etag) => {
                 let xml = xml_utils::complete_multipart_upload_xml(bucket, key, &etag);
-                return Ok(ResponseBuilder::new(StatusCode::OK)
+                let stored_version_id = tokio::task::block_in_place(|| storage.get_object(bucket, key))
+                    .ok()
+                    .and_then(|obj| obj.version_id);
+
+                let mut builder = ResponseBuilder::new(StatusCode::OK)
                     .content_type("application/xml; charset=utf-8")
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .body(xml.into_bytes())
-                    .build());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+
+                builder = add_version_header(builder, stored_version_id.as_deref());
+
+                return Ok(builder.body(xml.into_bytes()).build());
             }
             Err(crate::error::Error::NoSuchUpload) => {
                 let xml = xml_utils::error_xml("NoSuchUpload", "Upload not found", &req_id);

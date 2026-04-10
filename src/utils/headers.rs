@@ -37,141 +37,87 @@ pub fn extract_metadata_from_http_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::RequestExt as ParsedRequest;
+    use chrono::{Duration as ChronoDuration, Utc};
+    use hyper::{Body, Request as HyperRequest};
+    use uuid::{Variant, Version, Uuid};
 
     #[test]
-    fn should_compute_32_char_hex_string_given_arbitrary_bytes_when_compute_etag_called() {
+    fn should_compute_known_md5_vectors_when_compute_etag_called() {
         // Arrange
-        let data = b"test data";
-        let expected_length = 32; // MD5 hash produces 32 hex characters
-
         // Act
-        let etag = compute_etag(data);
-
         // Assert
-        assert_eq!(
-            etag.len(),
-            expected_length,
-            "ETag should be 32 hex characters (MD5 hash)"
-        );
+        assert_eq!(compute_etag(b""), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(compute_etag(b"test data"), "eb733a00c0c9d336e65691a37ab54293");
+        assert_eq!(compute_etag(b"hello world"), "5eb63bbbe01eeed093cb22bb8f5acdc3");
     }
 
     #[test]
-    fn should_produce_hex_characters_given_arbitrary_bytes_when_compute_etag_called() {
+    fn should_generate_parseable_uuid_v4_when_generate_request_id_called() {
         // Arrange
-        let data = b"test data";
-
         // Act
-        let etag = compute_etag(data);
+        let request_id = generate_request_id();
+        let uuid = Uuid::parse_str(&request_id).expect("request id should parse as a UUID");
 
         // Assert
-        assert!(
-            etag.chars().all(|c| c.is_ascii_hexdigit()),
-            "ETag should only contain hex digits"
-        );
+        assert_eq!(uuid.to_string(), request_id);
+        assert_eq!(uuid.get_variant(), Variant::RFC4122);
+        assert_eq!(uuid.get_version(), Some(Version::Random));
     }
 
     #[test]
-    fn should_produce_different_etags_given_different_data_when_compute_etag_called() {
+    fn should_format_parseable_rfc2822_timestamp_in_utc_when_format_last_modified_called() {
         // Arrange
-        let data1 = b"test data";
-        let data2 = b"different data";
-
-        // Act
-        let etag1 = compute_etag(data1);
-        let etag2 = compute_etag(data2);
-
-        // Assert
-        assert_ne!(
-            etag1, etag2,
-            "Different data should produce different ETags"
-        );
-    }
-
-    #[test]
-    fn should_produce_identical_etags_given_identical_data_when_compute_etag_called() {
-        // Arrange
-        let data = b"test data";
-
-        // Act
-        let etag1 = compute_etag(data);
-        let etag2 = compute_etag(data);
-
-        // Assert
-        assert_eq!(
-            etag1, etag2,
-            "Identical data should always produce identical ETags"
-        );
-    }
-
-    #[test]
-    fn should_generate_36_char_uuid_given_no_input_when_generate_request_id_called() {
-        // Arrange
-        let expected_length = 36; // UUID v4 format: 8-4-4-4-12 = 36 chars
-
-        // Act
-        let id = generate_request_id();
-
-        // Assert
-        assert_eq!(
-            id.len(),
-            expected_length,
-            "Request ID should be UUID v4 format (36 chars)"
-        );
-    }
-
-    #[test]
-    fn should_generate_unique_ids_given_called_multiple_times_when_generate_request_id_called() {
-        // Arrange
-        let id_count = 10;
-
-        // Act
-        let ids: Vec<String> = (0..id_count).map(|_| generate_request_id()).collect();
-
-        // Assert
-        let unique_ids: std::collections::HashSet<_> = ids.iter().cloned().collect();
-        assert_eq!(unique_ids.len(), id_count, "Request IDs should be unique");
-    }
-
-    #[test]
-    fn should_format_rfc2822_date_given_no_input_when_format_last_modified_called() {
-        // Arrange
-        // RFC2822 format includes ", " in the timestamp (e.g., "Fri, 06 Dec 2024 12:30:45 +0000")
-        let rfc2822_separator = ", ";
+        let before = Utc::now();
 
         // Act
         let formatted = format_last_modified();
+        let parsed = chrono::DateTime::parse_from_rfc2822(&formatted)
+            .expect("formatted timestamp should parse as RFC2822");
+        let after = Utc::now();
 
         // Assert
-        assert!(
-            formatted.contains(rfc2822_separator),
-            "Formatted date should be RFC2822 format"
-        );
+        assert!(formatted.ends_with("+0000"));
+
+        let parsed_utc = parsed.with_timezone(&Utc);
+        let tolerance = ChronoDuration::seconds(10);
+        assert!(parsed_utc >= before - tolerance);
+        assert!(parsed_utc <= after + tolerance);
     }
 
-    #[test]
-    fn should_not_be_empty_given_no_input_when_format_last_modified_called() {
+    async fn build_parsed_request(headers: &[(&str, &str)]) -> ParsedRequest {
+        let mut builder = HyperRequest::builder()
+            .method("PUT")
+            .uri("http://localhost/example/object");
+
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+
+        let request: HyperRequest<Body> = builder.body(Body::empty()).expect("request should build");
+
+        ParsedRequest::from_hyper(request).await.expect("request should parse")
+    }
+
+    #[tokio::test]
+    async fn should_extract_only_metadata_headers_from_real_request() {
         // Arrange
-        // No setup needed
+        let request = build_parsed_request(&[
+            ("X-Amz-Meta-Owner", "alice"),
+            ("x-amz-meta-environment", "prod"),
+            ("Content-Type", "text/plain"),
+            ("X-Custom-Header", "ignored"),
+        ])
+        .await;
 
         // Act
-        let formatted = format_last_modified();
+        let metadata = extract_metadata_from_http_headers(&request);
 
         // Assert
-        assert!(!formatted.is_empty(), "Formatted date should not be empty");
-    }
-
-    #[test]
-    fn should_extract_single_metadata_header() {
-        // Tests would be updated to work with new abstraction
-    }
-
-    #[test]
-    fn should_ignore_non_metadata_headers() {
-        // Tests would be updated to work with new abstraction
-    }
-
-    #[test]
-    fn should_handle_mixed_case_metadata_header_names() {
-        // Tests would be updated to work with new abstraction
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata.get("owner"), Some(&"alice".to_string()));
+        assert_eq!(metadata.get("environment"), Some(&"prod".to_string()));
+        assert!(!metadata.contains_key("content-type"));
+        assert!(!metadata.contains_key("x-custom-header"));
     }
 }

@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+﻿use crate::error::{Error, Result};
 use crate::storage::Storage;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
@@ -423,10 +423,13 @@ async fn handle_api_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::models::{BucketDetails, ObjectMetadata, SuccessResponse};
     use crate::storage::FilesystemStorage;
+    use hyper::body::to_bytes;
     use hyper::Request;
     use std::fs;
     use std::sync::Arc;
+    use serde::de::DeserializeOwned;
 
     fn temp_storage() -> Arc<dyn Storage> {
         let dir = std::env::temp_dir().join(format!("peas-test-{}", uuid::Uuid::new_v4()));
@@ -438,69 +441,161 @@ mod tests {
         handle_ui_request(storage, api_req).await.unwrap()
     }
 
-    #[tokio::test]
+    async fn json_body<T: DeserializeOwned>(resp: Response<Body>) -> T {
+        let bytes = to_bytes(resp.into_body()).await.expect("response body should read");
+        serde_json::from_slice(&bytes).expect("response body should deserialize")
+    }
+
+    fn assert_json_content_type(resp: &Response<Body>) {
+        assert_eq!(
+            resp.headers().get("content-type").and_then(|value| value.to_str().ok()),
+            Some("application/json; charset=utf-8")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn bucket_crud_json() {
         let storage = temp_storage();
 
-        // Create bucket
+        // Arrange
         let req = Request::builder()
             .method(Method::POST)
             .uri("/api/buckets")
             .header("content-type", "application/json")
             .body(Body::from("{\"name\":\"demo\"}"))
             .unwrap();
-        let resp = call(req, storage.clone()).await;
-        assert_eq!(resp.status(), StatusCode::OK);
 
-        // Get bucket
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let created: SuccessResponse = json_body(resp).await;
+        assert!(created.success);
+
+        // Arrange
         let req = Request::builder()
             .method(Method::GET)
             .uri("/api/buckets/demo")
             .body(Body::empty())
             .unwrap();
-        let resp = call(req, storage.clone()).await;
-        assert_eq!(resp.status(), StatusCode::OK);
 
-        // Delete bucket
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let bucket: BucketDetails = json_body(resp).await;
+        assert_eq!(bucket.name, "demo");
+        assert!(!bucket.versioning_enabled);
+
+        // Arrange
         let req = Request::builder()
             .method(Method::DELETE)
             .uri("/api/buckets/demo")
             .body(Body::empty())
             .unwrap();
+
+        // Act
         let resp = call(req, storage.clone()).await;
+
+        // Assert
         assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let deleted: SuccessResponse = json_body(resp).await;
+        assert!(deleted.success);
+
+        // Arrange
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/buckets/demo")
+            .body(Body::empty())
+            .unwrap();
+
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn object_upload_download() {
         let storage = temp_storage();
 
-        // Create bucket
+        // Arrange
         let req = Request::builder()
             .method(Method::POST)
             .uri("/api/buckets")
             .header("content-type", "application/json")
             .body(Body::from("{\"name\":\"demo\"}"))
             .unwrap();
-        let _ = call(req, storage.clone()).await;
 
-        // Upload object
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let created: SuccessResponse = json_body(resp).await;
+        assert!(created.success);
+
+        // Arrange
         let req = Request::builder()
             .method(Method::POST)
-            .uri("/api/buckets/demo/objects?key=hello.txt")
+            .uri("/api/buckets/demo/objects/path-placeholder?key=hello.txt")
             .header("content-type", "text/plain")
+            .header("x-amz-meta-owner", "alice")
+            .header("X-Amz-Meta-Environment", "dev")
             .body(Body::from("hello"))
             .unwrap();
-        let resp = call(req, storage.clone()).await;
-        assert_eq!(resp.status(), StatusCode::OK);
 
-        // Download object
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let uploaded: SuccessResponse = json_body(resp).await;
+        assert!(uploaded.success);
+
+        // Arrange
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/buckets/demo/objects/hello.txt/metadata")
+            .body(Body::empty())
+            .unwrap();
+
+        // Act
+        let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let metadata: ObjectMetadata = json_body(resp).await;
+        assert_eq!(metadata.key, "hello.txt");
+        assert_eq!(metadata.content_type.as_deref(), Some("text/plain"));
+        assert_eq!(metadata.metadata.get("owner"), Some(&"alice".to_string()));
+        assert_eq!(metadata.metadata.get("environment"), Some(&"dev".to_string()));
+
+        // Arrange
         let req = Request::builder()
             .method(Method::GET)
             .uri("/api/buckets/demo/objects/hello.txt/download")
             .body(Body::empty())
             .unwrap();
+
+        // Act
         let resp = call(req, storage.clone()).await;
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
         let bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(&bytes[..], b"hello");
     }

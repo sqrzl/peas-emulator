@@ -143,13 +143,14 @@ pub fn parse_tagging_xml(body: &str) -> Result<HashMap<String, String>, String> 
 /// Build Tagging XML response from key/value pairs
 pub fn tagging_xml(tags: &HashMap<String, String>) -> String {
     let mut xml = format!(
-        r#"{} 
-<Tagging xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"> 
-  <TagSet>"#,
+        "{}\n<Tagging xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <TagSet>",
         xml_declaration()
     );
 
-    for (k, v) in tags.iter() {
+    let mut entries: Vec<_> = tags.iter().collect();
+    entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+
+    for (k, v) in entries {
         xml.push_str(&format!(
             "\n    <Tag><Key>{}</Key><Value>{}</Value></Tag>",
             escape_xml(k),
@@ -833,6 +834,20 @@ fn escape_xml(s: &str) -> String {
 mod tests {
     use super::*;
 
+    fn fixed_bucket(name: &str, created_at: &str) -> Bucket {
+        Bucket {
+            name: name.to_string(),
+            created_at: chrono::DateTime::parse_from_rfc3339(created_at)
+                .expect("timestamp should parse")
+                .with_timezone(&chrono::Utc),
+            versioning_enabled: false,
+            policy: None,
+            lifecycle_rules: Vec::new(),
+            metadata: HashMap::new(),
+            acl: None,
+        }
+    }
+
     #[test]
     fn should_escape_ampersand_given_string_with_ampersand_when_escape_xml_called() {
         // Arrange
@@ -875,213 +890,196 @@ mod tests {
     #[test]
     fn should_include_xml_declaration_given_any_input_when_list_buckets_xml_called() {
         // Arrange
-        let buckets = vec![];
-
         // Act
-        let xml = list_buckets_xml(&buckets);
+        let xml = list_buckets_xml(&[]);
 
         // Assert
-        assert!(
-            xml.starts_with("<?xml version="),
-            "XML should start with declaration"
+        let expected = format!(
+            "{}\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n    <Owner>\n        <ID>peas-emulator</ID>\n        <DisplayName>Peas Emulator</DisplayName>\n    </Owner>\n    <Buckets>\n    </Buckets>\n</ListAllMyBucketsResult>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_bucket_name_given_bucket_list_when_list_buckets_xml_called() {
         // Arrange
-        let buckets = vec![];
+        let buckets = vec![
+            fixed_bucket("alpha", "2024-01-02T03:04:05Z"),
+            fixed_bucket("beta", "2024-02-03T04:05:06Z"),
+        ];
 
         // Act
         let xml = list_buckets_xml(&buckets);
-
         // Assert
-        assert!(
-            xml.contains("<ListBucketsResult"),
-            "XML should contain ListBucketsResult element"
+        let expected = format!(
+            "{}\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n    <Owner>\n        <ID>peas-emulator</ID>\n        <DisplayName>Peas Emulator</DisplayName>\n    </Owner>\n    <Buckets>\n        <Bucket>\n            <Name>alpha</Name>\n            <CreationDate>2024-01-02T03:04:05+00:00</CreationDate>\n        </Bucket>\n        <Bucket>\n            <Name>beta</Name>\n            <CreationDate>2024-02-03T04:05:06+00:00</CreationDate>\n        </Bucket>\n    </Buckets>\n</ListAllMyBucketsResult>",
+            xml_declaration()
         );
-        assert!(
-            xml.contains("</ListBucketsResult>"),
-            "XML should close ListBucketsResult element"
-        );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_error_code_given_error_parameters_when_error_xml_called() {
         // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
         // Act
-        let xml = error_xml(code, message, request_id);
-
+        let xml = error_xml("NoSuchBucket", "Bucket not found", "req-12345");
         // Assert
-        assert!(
-            xml.contains("<Code>NoSuchBucket</Code>"),
-            "XML should contain error code"
+        let expected = format!(
+            "{}\n<Error>\n  <Code>NoSuchBucket</Code>\n  <Message>Bucket not found</Message>\n  <RequestId>req-12345</RequestId>\n</Error>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_error_message_given_error_parameters_when_error_xml_called() {
         // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
         // Act
-        let xml = error_xml(code, message, request_id);
-
+        let xml = error_xml("NoSuchBucket", "Bucket not found", "req-12345");
         // Assert
-        assert!(
-            xml.contains("<Message>Bucket not found</Message>"),
-            "XML should contain error message"
+        let expected = format!(
+            "{}\n<Error>\n  <Code>NoSuchBucket</Code>\n  <Message>Bucket not found</Message>\n  <RequestId>req-12345</RequestId>\n</Error>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_request_id_given_request_id_when_error_xml_called() {
         // Arrange
-        let code = "NoSuchBucket";
-        let message = "Bucket not found";
-        let request_id = "req-12345";
-
         // Act
-        let xml = error_xml(code, message, request_id);
-
+        let xml = error_xml("NoSuchBucket", "Bucket not found", "req-12345");
         // Assert
-        assert!(
-            xml.contains("<RequestId>req-12345</RequestId>"),
-            "XML should contain request ID"
+        let expected = format!(
+            "{}\n<Error>\n  <Code>NoSuchBucket</Code>\n  <Message>Bucket not found</Message>\n  <RequestId>req-12345</RequestId>\n</Error>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_enabled_status_given_enabled_string_when_versioning_status_xml_called() {
         // Arrange
-        let status = Some("Enabled");
-
         // Act
-        let xml = versioning_status_xml(status);
-
+        let xml = versioning_status_xml(Some("Enabled"));
         // Assert
-        assert!(
-            xml.contains("<Status>Enabled</Status>"),
-            "XML should contain Enabled status"
+        let expected = format!(
+            "{}\n<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <Status>Enabled</Status>\n</VersioningConfiguration>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
-    fn should_include_suspended_status_given_suspended_string_when_versioning_status_xml_called() {
+    fn should_default_to_suspended_status_when_no_status_is_provided() {
         // Arrange
-        let status = Some("Suspended");
-
         // Act
-        let xml = versioning_status_xml(status);
-
+        let xml = versioning_status_xml(None);
         // Assert
-        assert!(
-            xml.contains("<Status>Suspended</Status>"),
-            "XML should contain Suspended status"
+        let expected = format!(
+            "{}\n<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <Status>Suspended</Status>\n</VersioningConfiguration>",
+            xml_declaration()
         );
-    }
 
-    #[test]
-    fn should_include_versioning_configuration_element_given_any_status_when_versioning_status_xml_called(
-    ) {
-        // Arrange
-        let status = Some("Enabled");
-
-        // Act
-        let xml = versioning_status_xml(status);
-
-        // Assert
-        assert!(
-            xml.contains("<VersioningConfiguration"),
-            "XML should contain VersioningConfiguration element"
-        );
-        assert!(
-            xml.contains("</VersioningConfiguration>"),
-            "XML should close VersioningConfiguration element"
-        );
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_empty_constraint_given_us_east_1_when_location_xml_called() {
         // Arrange
-        let region = "us-east-1";
-
         // Act
-        let xml = location_xml(region);
-
+        let xml = location_xml("us-east-1");
         // Assert
-        assert!(
-            xml.contains("<LocationConstraint"),
-            "XML should contain LocationConstraint element"
+        let expected = format!(
+            "{}\n<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n</LocationConstraint>",
+            xml_declaration()
         );
-        // US-east-1 returns empty constraint in S3
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_include_region_given_non_us_east_1_when_location_xml_called() {
         // Arrange
-        let region = "eu-central-1";
-
         // Act
-        let xml = location_xml(region);
-
+        let xml = location_xml("eu-central-1");
         // Assert
-        assert!(
-            xml.contains("eu-central-1"),
-            "XML should contain region name"
+        let expected = format!(
+            "{}\n<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  eu-central-1\n</LocationConstraint>",
+            xml_declaration()
         );
+
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_parse_tagging_xml_into_map() {
+        // Arrange
         let body = r#"<?xml version="1.0" encoding="UTF-8"?>
 <Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag><Tag><Key>owner</Key><Value>alice</Value></Tag></TagSet></Tagging>"#;
 
+        // Act
         let tags = parse_tagging_xml(body).expect("parse tagging xml");
 
+        // Assert
         assert_eq!(tags.get("env"), Some(&"dev".to_string()));
         assert_eq!(tags.get("owner"), Some(&"alice".to_string()));
     }
 
     #[test]
     fn should_render_tagging_xml_with_entries() {
+        // Arrange
         let mut tags = std::collections::HashMap::new();
         tags.insert("env".to_string(), "prod".to_string());
 
+        // Act
         let xml = tagging_xml(&tags);
+        // Assert
+        let expected = format!(
+            "{}\n<Tagging xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <TagSet>\n    <Tag><Key>env</Key><Value>prod</Value></Tag>\n  </TagSet>\n</Tagging>",
+            xml_declaration()
+        );
 
-        assert!(xml.contains("<Tag>"));
-        assert!(xml.contains("<Key>env</Key>"));
-        assert!(xml.contains("<Value>prod</Value>"));
+        assert_eq!(xml, expected);
     }
 
     #[test]
     fn should_error_when_more_than_ten_tags() {
+        // Arrange
         let mut body = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet>");
         for i in 0..11 {
             body.push_str(&format!("<Tag><Key>k{i}</Key><Value>v{i}</Value></Tag>"));
         }
         body.push_str("</TagSet></Tagging>");
 
+        // Act
         let result = parse_tagging_xml(&body);
-        assert!(result.is_err());
+
+        // Assert
+        assert_eq!(result.unwrap_err(), "TooManyTags");
     }
 
     #[test]
     fn should_error_on_empty_tag_key() {
+        // Arrange
         let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Tagging><TagSet><Tag><Key></Key><Value>v</Value></Tag></TagSet></Tagging>";
+        // Act
         let result = parse_tagging_xml(body);
-        assert!(result.is_err());
+
+        // Assert
+        assert_eq!(result.unwrap_err(), "InvalidTagKey");
     }
 
     #[test]
     fn should_render_owner_grant_in_acl_xml() {
+        // Arrange
         let owner = Owner {
             id: "owner-id".to_string(),
             display_name: "Owner".to_string(),
@@ -1091,15 +1089,20 @@ mod tests {
             grants: Vec::new(),
         };
 
+        // Act
         let xml = acl_xml(&owner, &acl);
 
+        // Assert
         assert!(xml.contains("<AccessControlPolicy"));
         assert!(xml.contains("<Permission>FULL_CONTROL</Permission>"));
         assert!(xml.contains("owner-id"));
+        assert_eq!(xml.matches("<Grant>").count(), 1);
+        assert_eq!(xml.matches("<Permission>FULL_CONTROL</Permission>").count(), 1);
         assert!(!xml.contains("AllUsers"));
     }
     #[test]
     fn should_render_public_read_grant_in_acl_xml() {
+        // Arrange
         let owner = Owner {
             id: "owner-id".to_string(),
             display_name: "Owner".to_string(),
@@ -1109,9 +1112,13 @@ mod tests {
             grants: Vec::new(),
         };
 
+        // Act
         let xml = acl_xml(&owner, &acl);
 
+        // Assert
         assert!(xml.contains("AllUsers"));
         assert!(xml.contains("<Permission>READ</Permission>"));
+        assert_eq!(xml.matches("<Grant>").count(), 2);
+        assert_eq!(xml.matches("<Permission>READ</Permission>").count(), 1);
     }
 }

@@ -98,6 +98,7 @@ mod tests {
 
     #[test]
     fn should_verify_valid_sigv4_signature() {
+        // Arrange
         let config = SigV4Config {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
@@ -120,7 +121,10 @@ mod tests {
             SignatureVerifier::get_signature_key(&config.secret_key, "20240101", "us-east-1", "s3");
         let signature = SignatureVerifier::hmac_sha256_hex(&signing_key, string_to_sign.as_bytes());
 
+        // Act
         // Verify the signature
+
+        // Assert
         assert!(SignatureVerifier::verify(
             &signature,
             canonical_request,
@@ -132,6 +136,7 @@ mod tests {
 
     #[test]
     fn should_reject_invalid_signature() {
+        // Arrange
         let config = SigV4Config {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
@@ -142,9 +147,10 @@ mod tests {
         let amz_date = "20240101T120000Z";
         let credential_scope = "20240101/us-east-1/s3/aws4_request";
 
-        // Use a wrong signature
+        // Act
         let invalid_signature = "invalid_signature_here";
 
+        // Assert
         assert!(!SignatureVerifier::verify(
             invalid_signature,
             canonical_request,
@@ -156,6 +162,7 @@ mod tests {
 
     #[test]
     fn should_reject_modified_canonical_request() {
+        // Arrange
         let config = SigV4Config {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
@@ -177,10 +184,12 @@ mod tests {
             SignatureVerifier::get_signature_key(&config.secret_key, "20240101", "us-east-1", "s3");
         let signature = SignatureVerifier::hmac_sha256_hex(&signing_key, string_to_sign.as_bytes());
 
+        // Act
         // Try to verify with modified request
         let modified_request =
             "GET\n/test-bucket/different-key\n\nhost:s3.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD";
 
+        // Assert
         assert!(!SignatureVerifier::verify(
             &signature,
             modified_request,

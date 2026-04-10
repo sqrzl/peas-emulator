@@ -266,10 +266,13 @@ mod tests {
 
     #[test]
     fn should_generate_valid_get_url() {
+        // Arrange
         let config = PresignedUrlConfig {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
+
+        // Act
         let url = PresignedUrl::generate_get_url(
             "test-bucket",
             "test-key.txt",
@@ -277,6 +280,8 @@ mod tests {
             "http://localhost:9000",
             &config,
         );
+
+        // Assert
         assert!(url.contains("test-bucket"));
         assert!(url.contains("test-key.txt"));
         assert!(url.contains("X-Amz-Expires=3600"));
@@ -285,10 +290,13 @@ mod tests {
 
     #[test]
     fn should_generate_valid_put_url() {
+        // Arrange
         let config = PresignedUrlConfig {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
+
+        // Act
         let url = PresignedUrl::generate_put_url(
             "test-bucket",
             "upload.txt",
@@ -296,6 +304,8 @@ mod tests {
             "http://localhost:9000",
             &config,
         );
+
+        // Assert
         assert!(url.contains("test-bucket"));
         assert!(url.contains("upload.txt"));
         assert!(url.contains("X-Amz-Expires=1800"));
@@ -303,6 +313,7 @@ mod tests {
 
     #[test]
     fn should_parse_presigned_url_from_params() {
+        // Arrange
         let access_key = "AKIAIOSFODNN7EXAMPLE";
         let now = Utc::now();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -318,7 +329,10 @@ mod tests {
         params.insert("X-Amz-Date".to_string(), amz_date);
         params.insert("X-Amz-Credential".to_string(), credential);
 
+        // Act
         let result = PresignedUrl::from_query_params("bucket", "key", "GET", &params);
+
+        // Assert
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let presigned = result.unwrap();
@@ -329,6 +343,7 @@ mod tests {
 
     #[test]
     fn should_reject_expired_url() {
+        // Arrange
         let config = PresignedUrlConfig {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
@@ -346,11 +361,14 @@ mod tests {
 
         let mut params = HashMap::new();
         params.insert("X-Amz-Signature".to_string(), "abc123".to_string());
-        params.insert("X-Amz-Expires".to_string(), "3600".to_string()); // 1 hour, but date is 2 hours ago
+        params.insert("X-Amz-Expires".to_string(), "3600".to_string());
         params.insert("X-Amz-Date".to_string(), past_date);
         params.insert("X-Amz-Credential".to_string(), credential);
 
+        // Act
         let presigned = PresignedUrl::from_query_params("bucket", "key", "GET", &params);
+
+        // Assert
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
         assert!(presigned
             .unwrap()
@@ -360,11 +378,13 @@ mod tests {
 
     #[test]
     fn should_validate_signature_correctly() {
+        // Arrange
         let config = PresignedUrlConfig {
             access_key: "AKIAIOSFODNN7EXAMPLE".to_string(),
             secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
         };
-        // Generate a URL and extract its signature
+
+        // Act
         let url = PresignedUrl::generate_get_url(
             "test-bucket",
             "test-key",
@@ -373,21 +393,20 @@ mod tests {
             &config,
         );
 
-        // Extract parameters from URL - need to URL decode them
         let query_start = url.find('?').unwrap();
         let query_str = &url[query_start + 1..];
         let mut params = HashMap::new();
         for param in query_str.split('&') {
             let parts: Vec<&str> = param.split('=').collect();
             if parts.len() == 2 {
-                // Decode URL-encoded values (simplified - only handles %2F for /)
                 let decoded = parts[1].replace("%2F", "/");
                 params.insert(parts[0].to_string(), decoded);
             }
         }
 
-        // Parse and validate
         let presigned = PresignedUrl::from_query_params("test-bucket", "test-key", "GET", &params);
+
+        // Assert
         assert!(presigned.is_ok(), "Failed to parse: {:?}", presigned.err());
         assert!(presigned
             .unwrap()

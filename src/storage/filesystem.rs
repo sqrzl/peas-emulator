@@ -8,6 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct FilesystemStorage {
     base_path: PathBuf,
@@ -163,6 +164,75 @@ impl FilesystemStorage {
         fs::write(&uploads_path, json_str)
             .map_err(|e| Error::InternalError(format!("Failed to write uploads index: {}", e)))
     }
+
+    fn write_object_files(&self, bucket: &str, object_id: &str, object: &Object) -> Result<()> {
+        let object_id_dir = self.object_id_dir(bucket, object_id);
+        fs::create_dir_all(&object_id_dir)
+            .map_err(|e| Error::InternalError(format!("Failed to create object directory: {}", e)))?;
+
+        let object_data_path = self.object_data_path(bucket, object_id);
+        let mut file = fs::File::create(&object_data_path)
+            .map_err(|e| Error::InternalError(format!("Failed to create object file: {}", e)))?;
+
+        file.write_all(&object.data)
+            .map_err(|e| Error::InternalError(format!("Failed to write object data: {}", e)))?;
+
+        let metadata_path = self.object_metadata_path(bucket, object_id);
+        let metadata_json = serde_json::to_string(object)
+            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
+
+        let mut meta_file = fs::File::create(&metadata_path)
+            .map_err(|e| Error::InternalError(format!("Failed to create metadata file: {}", e)))?;
+
+        meta_file
+            .write_all(metadata_json.as_bytes())
+            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn write_version_snapshot(
+        &self,
+        bucket: &str,
+        object_id: &str,
+        version_id: &str,
+        object: &Object,
+    ) -> Result<()> {
+        let version_dir = self.version_dir(bucket, object_id, version_id);
+        fs::create_dir_all(&version_dir).map_err(|e| {
+            Error::InternalError(format!("Failed to create version directory: {}", e))
+        })?;
+
+        let mut version_object = object.clone();
+        version_object.version_id = Some(version_id.to_string());
+
+        let version_data_path = self.version_data_path(bucket, object_id, version_id);
+        fs::write(&version_data_path, &version_object.data)
+            .map_err(|e| Error::InternalError(format!("Failed to write version data: {}", e)))?;
+
+        let version_metadata_path = self.version_metadata_path(bucket, object_id, version_id);
+        let metadata_json = serde_json::to_string(&version_object).map_err(|e| {
+            Error::InternalError(format!("Failed to serialize version metadata: {}", e))
+        })?;
+
+        fs::write(&version_metadata_path, metadata_json).map_err(|e| {
+            Error::InternalError(format!("Failed to write version metadata: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    fn version_entries_exist(&self, bucket: &str, object_id: &str) -> Result<bool> {
+        let versions_dir = self.versions_dir(bucket, object_id);
+        if !versions_dir.exists() {
+            return Ok(false);
+        }
+
+        let entries = fs::read_dir(&versions_dir)
+            .map_err(|e| Error::InternalError(format!("Failed to read versions dir: {}", e)))?;
+
+        Ok(entries.flatten().next().is_some())
+    }
 }
 
 impl Storage for FilesystemStorage {
@@ -256,32 +326,33 @@ impl Storage for FilesystemStorage {
         }
 
         let object_id = Self::compute_object_id(bucket, &key);
-        let object_id_dir = self.object_id_dir(bucket, &object_id);
 
-        // Create object directory if needed
-        fs::create_dir_all(&object_id_dir).map_err(|e| {
-            Error::InternalError(format!("Failed to create object directory: {}", e))
-        })?;
+        let mut object = object;
 
-        // Write object data to object.blob
-        let object_data_path = self.object_data_path(bucket, &object_id);
-        let mut file = fs::File::create(&object_data_path)
-            .map_err(|e| Error::InternalError(format!("Failed to create object file: {}", e)))?;
+        if self.versioning_enabled(bucket) {
+            match self.get_object(bucket, &key) {
+                Ok(current_object) => {
+                    let snapshot_version_id = current_object
+                        .version_id
+                        .clone()
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    self.write_version_snapshot(
+                        bucket,
+                        &object_id,
+                        &snapshot_version_id,
+                        &current_object,
+                    )?;
+                }
+                Err(Error::KeyNotFound) => {}
+                Err(e) => return Err(e),
+            }
 
-        file.write_all(&object.data)
-            .map_err(|e| Error::InternalError(format!("Failed to write object data: {}", e)))?;
+            object.version_id = Some(Uuid::new_v4().to_string());
+        } else {
+            object.version_id = None;
+        }
 
-        // Write metadata to object.meta.json
-        let metadata_path = self.object_metadata_path(bucket, &object_id);
-        let metadata_json = serde_json::to_string(&object)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-
-        let mut meta_file = fs::File::create(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to create metadata file: {}", e)))?;
-
-        meta_file
-            .write_all(metadata_json.as_bytes())
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+        self.write_object_files(bucket, &object_id, &object)?;
 
         // Update index
         self.index.insert(bucket.to_string(), key);
@@ -374,13 +445,30 @@ impl Storage for FilesystemStorage {
         let object_id = Self::compute_object_id(bucket, key);
         let object_id_dir = self.object_id_dir(bucket, &object_id);
 
-        if !object_id_dir.exists() {
-            return Err(Error::KeyNotFound);
-        }
+        self.get_object(bucket, key)?;
 
-        // Remove entire object_id directory
-        fs::remove_dir_all(&object_id_dir)
-            .map_err(|e| Error::InternalError(format!("Failed to delete object: {}", e)))?;
+        if self.versioning_enabled(bucket) {
+            let object_data_path = self.object_data_path(bucket, &object_id);
+            let metadata_path = self.object_metadata_path(bucket, &object_id);
+
+            if object_data_path.exists() {
+                fs::remove_file(&object_data_path)
+                    .map_err(|e| Error::InternalError(format!("Failed to delete object: {}", e)))?;
+            }
+
+            if metadata_path.exists() {
+                fs::remove_file(&metadata_path)
+                    .map_err(|e| Error::InternalError(format!("Failed to delete object: {}", e)))?;
+            }
+
+            if !self.version_entries_exist(bucket, &object_id)? {
+                let _ = fs::remove_dir_all(&object_id_dir);
+            }
+        } else {
+            // Remove entire object_id directory
+            fs::remove_dir_all(&object_id_dir)
+                .map_err(|e| Error::InternalError(format!("Failed to delete object: {}", e)))?;
+        }
 
         // Update index
         self.index.remove(bucket, key);
@@ -906,6 +994,15 @@ impl Storage for FilesystemStorage {
         let object_id = Self::compute_object_id(bucket, key);
         let version_data_path = self.version_data_path(bucket, &object_id, version_id);
         if !version_data_path.exists() {
+            let current_object = self.get_object(bucket, key).map_err(|err| match err {
+                Error::KeyNotFound => Error::NoSuchVersion,
+                other => other,
+            })?;
+
+            if current_object.version_id.as_deref() == Some(version_id) {
+                return Ok(current_object);
+            }
+
             return Err(Error::NoSuchVersion);
         }
 
@@ -949,6 +1046,20 @@ impl Storage for FilesystemStorage {
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         if name.starts_with(".") {
                             continue;
+                        }
+                    }
+
+                    let metadata_path = path.join("object.meta.json");
+                    if let Ok(metadata_json) = fs::read_to_string(&metadata_path) {
+                        if let Ok(mut obj) = serde_json::from_str::<crate::models::Object>(&metadata_json)
+                        {
+                            if obj.key.starts_with(prefix) && obj.version_id.is_some() {
+                                let data_path = path.join("object.blob");
+                                if let Ok(data) = fs::read(&data_path) {
+                                    obj.data = data;
+                                    versions.push(obj);
+                                }
+                            }
                         }
                     }
 
@@ -1014,12 +1125,48 @@ impl Storage for FilesystemStorage {
         let object_id = Self::compute_object_id(bucket, key);
         let version_data_path = self.version_data_path(bucket, &object_id, version_id);
         if !version_data_path.exists() {
-            return Err(Error::NoSuchVersion);
+            let current_object = self.get_object(bucket, key).map_err(|err| match err {
+                Error::KeyNotFound => Error::NoSuchVersion,
+                other => other,
+            })?;
+
+            if current_object.version_id.as_deref() != Some(version_id) {
+                return Err(Error::NoSuchVersion);
+            }
+
+            let object_data_path = self.object_data_path(bucket, &object_id);
+            let metadata_path = self.object_metadata_path(bucket, &object_id);
+
+            if object_data_path.exists() {
+                fs::remove_file(&object_data_path)
+                    .map_err(|e| Error::InternalError(format!("Failed to delete version: {}", e)))?;
+            }
+
+            if metadata_path.exists() {
+                fs::remove_file(&metadata_path)
+                    .map_err(|e| Error::InternalError(format!("Failed to delete version: {}", e)))?;
+            }
+
+            self.index.remove(bucket, key);
+
+            if !self.version_entries_exist(bucket, &object_id)? {
+                let version_dir = self.object_id_dir(bucket, &object_id);
+                let _ = fs::remove_dir_all(&version_dir);
+            }
+
+            return Ok(());
         }
 
         let version_dir = self.version_dir(bucket, &object_id, version_id);
         fs::remove_dir_all(&version_dir)
             .map_err(|e| Error::InternalError(format!("Failed to delete version: {}", e)))?;
+
+        if !self.object_data_path(bucket, &object_id).exists()
+            && !self.version_entries_exist(bucket, &object_id)?
+        {
+            let object_id_dir = self.object_id_dir(bucket, &object_id);
+            let _ = fs::remove_dir_all(&object_id_dir);
+        }
 
         Ok(())
     }
@@ -1041,7 +1188,8 @@ mod tests {
     }
 
     #[test]
-    fn should_roundtrip_metadata_on_put_and_get() {
+    fn should_roundtrip_metadata_on_put_then_get() {
+        // Arrange
         let base = temp_path();
         let storage = FilesystemStorage::new(&base);
 
@@ -1061,9 +1209,12 @@ mod tests {
             metadata.clone(),
         );
 
+        // Act
         storage.put_object(bucket, key.clone(), obj).unwrap();
 
         let fetched = storage.get_object(bucket, &key).unwrap();
+
+        // Assert
         assert_eq!(fetched.data, data, "Object data should round-trip");
         assert_eq!(
             fetched.metadata.len(),
@@ -1078,6 +1229,7 @@ mod tests {
 
     #[test]
     fn should_rebuild_index_with_metadata_present() {
+        // Arrange
         let base = temp_path();
         let bucket = "meta-rebuild";
         let key = "file.bin";
@@ -1100,8 +1252,11 @@ mod tests {
             storage.put_object(bucket, key.to_string(), obj).unwrap();
         }
 
+        // Act
         // Recreate storage to force index rebuild from disk
         let storage = FilesystemStorage::new(&base);
+
+        // Assert
         assert!(
             storage.object_exists(bucket, key).unwrap(),
             "Index should include existing object"
@@ -1114,7 +1269,8 @@ mod tests {
     }
 
     #[test]
-    fn should_store_and_return_tags() {
+    fn should_store_tags_then_return_them() {
+        // Arrange
         let base = temp_path();
         let storage = FilesystemStorage::new(&base);
 
@@ -1130,9 +1286,13 @@ mod tests {
             HashMap::new(),
         );
         obj.tags.insert("env".to_string(), "test".to_string());
+
+        // Act
         storage.put_object(bucket, key.to_string(), obj).unwrap();
 
         let tags = storage.get_object_tags(bucket, key).unwrap();
+
+        // Assert
         assert_eq!(tags.get("env"), Some(&"test".to_string()));
 
         let mut new_tags = HashMap::new();
@@ -1148,9 +1308,10 @@ mod tests {
     }
 
     #[test]
-    fn should_store_and_retrieve_lifecycle_configuration() {
+    fn should_store_lifecycle_configuration_then_retrieve_it() {
         use crate::models::lifecycle::*;
 
+        // Arrange
         let base = temp_path();
         let storage = FilesystemStorage::new(&base);
         let bucket = "lifecycle-bucket";
@@ -1172,15 +1333,144 @@ mod tests {
             transitions: vec![],
         });
 
+        // Act
         storage
             .put_bucket_lifecycle(bucket, config.clone())
             .unwrap();
         let retrieved = storage.get_bucket_lifecycle(bucket).unwrap();
+
+        // Assert
         assert_eq!(retrieved.rules.len(), 1);
         assert_eq!(retrieved.rules[0].id, Some("delete-old-logs".to_string()));
 
         storage.delete_bucket_lifecycle(bucket).unwrap();
         assert!(storage.get_bucket_lifecycle(bucket).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_create_versions_on_overwrite_when_versioning_enabled() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+
+        let bucket = "version-bucket";
+        let key = "doc.txt";
+        storage.create_bucket(bucket.to_string()).unwrap();
+        storage.enable_versioning(bucket).unwrap();
+
+        storage
+            .put_object(
+                bucket,
+                key.to_string(),
+                Object::new(key.to_string(), b"v1".to_vec(), "text/plain".to_string()),
+            )
+            .unwrap();
+
+        // Act
+        let first = storage.get_object(bucket, key).unwrap();
+        let first_version_id = first.version_id.clone().expect("version id should exist");
+        assert_eq!(first.data, b"v1".to_vec());
+        assert_eq!(
+            storage
+                .get_object_version(bucket, key, &first_version_id)
+                .unwrap()
+                .data,
+            b"v1".to_vec()
+        );
+
+        storage
+            .put_object(
+                bucket,
+                key.to_string(),
+                Object::new(key.to_string(), b"v2".to_vec(), "text/plain".to_string()),
+            )
+            .unwrap();
+
+        let current = storage.get_object(bucket, key).unwrap();
+        let current_version_id = current.version_id.clone().expect("version id should exist");
+        assert_ne!(first_version_id, current_version_id);
+        assert_eq!(current.data, b"v2".to_vec());
+        assert_eq!(
+            storage
+                .get_object_version(bucket, key, &current_version_id)
+                .unwrap()
+                .data,
+            b"v2".to_vec()
+        );
+
+        let versions = storage.list_object_versions(bucket, Some(key)).unwrap();
+        let version_ids: Vec<_> = versions.into_iter().filter_map(|obj| obj.version_id).collect();
+
+        // Assert
+        assert_eq!(version_ids.len(), 2);
+        assert!(version_ids.contains(&first_version_id));
+        assert!(version_ids.contains(&current_version_id));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_preserve_history_when_deleting_current_object() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+
+        let bucket = "version-delete-bucket";
+        let key = "doc.txt";
+        storage.create_bucket(bucket.to_string()).unwrap();
+        storage.enable_versioning(bucket).unwrap();
+
+        storage
+            .put_object(
+                bucket,
+                key.to_string(),
+                Object::new(key.to_string(), b"v1".to_vec(), "text/plain".to_string()),
+            )
+            .unwrap();
+        let first_version_id = storage
+            .get_object(bucket, key)
+            .unwrap()
+            .version_id
+            .clone()
+            .expect("version id should exist");
+
+        storage
+            .put_object(
+                bucket,
+                key.to_string(),
+                Object::new(key.to_string(), b"v2".to_vec(), "text/plain".to_string()),
+            )
+            .unwrap();
+        let current_version_id = storage
+            .get_object(bucket, key)
+            .unwrap()
+            .version_id
+            .clone()
+            .expect("version id should exist");
+
+        // Act
+        storage.delete_object(bucket, key).unwrap();
+
+        // Assert
+        assert!(matches!(storage.get_object(bucket, key), Err(Error::KeyNotFound)));
+        assert!(matches!(
+            storage.get_object_version(bucket, key, &current_version_id),
+            Err(Error::NoSuchVersion)
+        ));
+        assert_eq!(
+            storage
+                .get_object_version(bucket, key, &first_version_id)
+                .unwrap()
+                .data,
+            b"v1".to_vec()
+        );
+
+        let versions = storage.list_object_versions(bucket, Some(key)).unwrap();
+        let version_ids: Vec<_> = versions.into_iter().filter_map(|obj| obj.version_id).collect();
+        assert_eq!(version_ids.len(), 1);
+        assert!(version_ids.contains(&first_version_id));
 
         let _ = std::fs::remove_dir_all(&base);
     }

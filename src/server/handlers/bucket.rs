@@ -9,15 +9,6 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::sync::Arc;
 
-fn not_implemented(req_id: &str, message: &str) -> Response<Body> {
-    let xml = xml_utils::error_xml("NotImplemented", message, req_id);
-    ResponseBuilder::new(StatusCode::NOT_IMPLEMENTED)
-        .content_type("application/xml; charset=utf-8")
-        .header("x-amz-request-id", req_id)
-        .body(xml.into_bytes())
-        .build()
-}
-
 fn escape_xml_str(input: &str) -> String {
     input
         .replace('&', "&amp;")

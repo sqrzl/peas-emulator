@@ -33,22 +33,15 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load configuration from environment variables.
-    ///
-    /// # Environment Variables
-    ///
-    /// - `ACCESS_KEY_ID`: AWS access key ID (optional)
-    /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
-    /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
-    /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
-    pub fn from_env() -> Self {
-        let access_key_id = env::var(ENV_ACCESS_KEY_ID).ok();
-        let secret_access_key = env::var(ENV_SECRET_ACCESS_KEY).ok();
-        let blobs_path =
-            env::var(ENV_BLOBS_PATH).unwrap_or_else(|_| DEFAULT_BLOBS_PATH.to_string());
+    fn from_env_with<F>(mut lookup: F) -> Self
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
+        let access_key_id = lookup(ENV_ACCESS_KEY_ID);
+        let secret_access_key = lookup(ENV_SECRET_ACCESS_KEY);
+        let blobs_path = lookup(ENV_BLOBS_PATH).unwrap_or_else(|| DEFAULT_BLOBS_PATH.to_string());
 
-        let lifecycle_interval_hours = env::var(ENV_LIFECYCLE_HOURS)
-            .ok()
+        let lifecycle_interval_hours = lookup(ENV_LIFECYCLE_HOURS)
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_LIFECYCLE_HOURS);
 
@@ -61,6 +54,18 @@ impl Config {
             blobs_path,
             lifecycle_interval: Duration::from_secs(lifecycle_interval_hours * 3600),
         }
+    }
+
+    /// Load configuration from environment variables.
+    ///
+    /// # Environment Variables
+    ///
+    /// - `ACCESS_KEY_ID`: AWS access key ID (optional)
+    /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
+    /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
+    /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
+    pub fn from_env() -> Self {
+        Self::from_env_with(|name| env::var(name).ok())
     }
 
     /// Get the access key ID if authentication is enabled.
@@ -94,82 +99,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_use_default_blobs_path_when_not_set() {
-        let config = Config {
-            access_key_id: None,
-            secret_access_key: None,
-            enforce_auth: false,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
+    fn should_load_default_values_when_env_is_empty() {
+        // Arrange
+        // Act
+        let config = Config::from_env_with(|_| None);
 
-        assert_eq!(config.blobs_path, "./blobs");
+        // Assert
+        assert_eq!(config.access_key_id, None);
+        assert_eq!(config.secret_access_key, None);
+        assert!(!config.enforce_auth);
+        assert_eq!(config.blobs_path, DEFAULT_BLOBS_PATH);
+        assert_eq!(config.lifecycle_interval, Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600));
     }
 
     #[test]
-    fn should_validate_correct_credentials() {
-        let config = Config {
-            access_key_id: Some("test-key".to_string()),
-            secret_access_key: Some("test-secret".to_string()),
-            enforce_auth: true,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
+    fn should_load_custom_values_when_env_contains_all_settings() {
+        // Arrange
+        // Act
+        let config = Config::from_env_with(|name| match name {
+            ENV_ACCESS_KEY_ID => Some("test-key".to_string()),
+            ENV_SECRET_ACCESS_KEY => Some("test-secret".to_string()),
+            ENV_BLOBS_PATH => Some("/tmp/peas-blobs".to_string()),
+            ENV_LIFECYCLE_HOURS => Some("2".to_string()),
+            _ => None,
+        });
 
-        assert!(config.validate_credentials("test-key", "test-secret"));
-    }
-
-    #[test]
-    fn should_reject_wrong_credentials() {
-        let config = Config {
-            access_key_id: Some("test-key".to_string()),
-            secret_access_key: Some("test-secret".to_string()),
-            enforce_auth: true,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
-
-        assert!(!config.validate_credentials("wrong-key", "test-secret"));
-        assert!(!config.validate_credentials("test-key", "wrong-secret"));
-    }
-
-    #[test]
-    fn should_allow_all_when_auth_disabled() {
-        let config = Config {
-            access_key_id: None,
-            secret_access_key: None,
-            enforce_auth: false,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
-
-        assert!(config.validate_credentials("any-key", "any-secret"));
-    }
-
-    #[test]
-    fn should_access_key_returns_none_when_not_set() {
-        let config = Config {
-            access_key_id: None,
-            secret_access_key: None,
-            enforce_auth: false,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
-
-        assert!(config.access_key().is_none());
-    }
-
-    #[test]
-    fn should_access_key_returns_some_when_set() {
-        let config = Config {
-            access_key_id: Some("test-key".to_string()),
-            secret_access_key: Some("test-secret".to_string()),
-            enforce_auth: true,
-            blobs_path: "./blobs".to_string(),
-            lifecycle_interval: Duration::from_secs(3600),
-        };
-
+        // Assert
         assert_eq!(config.access_key(), Some("test-key"));
         assert_eq!(config.secret_key(), Some("test-secret"));
+        assert!(config.enforce_auth);
+        assert_eq!(config.blobs_path, "/tmp/peas-blobs");
+        assert_eq!(config.lifecycle_interval, Duration::from_secs(7200));
+        assert!(config.validate_credentials("test-key", "test-secret"));
+        assert!(!config.validate_credentials("wrong-key", "test-secret"));
+    }
+
+    #[test]
+    fn should_keep_auth_disabled_when_only_one_credential_is_present() {
+        // Arrange
+        // Act
+        let access_only = Config::from_env_with(|name| match name {
+            ENV_ACCESS_KEY_ID => Some("test-key".to_string()),
+            _ => None,
+        });
+
+        let secret_only = Config::from_env_with(|name| match name {
+            ENV_SECRET_ACCESS_KEY => Some("test-secret".to_string()),
+            _ => None,
+        });
+
+        // Assert
+        assert!(!access_only.enforce_auth);
+        assert!(!secret_only.enforce_auth);
+        assert!(access_only.validate_credentials("anything", "anything"));
+        assert!(secret_only.validate_credentials("anything", "anything"));
+    }
+
+    #[test]
+    fn should_fall_back_to_default_lifecycle_hours_when_env_value_is_invalid() {
+        // Arrange
+        // Act
+        let config = Config::from_env_with(|name| match name {
+            ENV_BLOBS_PATH => Some("/tmp/custom-blobs".to_string()),
+            ENV_LIFECYCLE_HOURS => Some("invalid".to_string()),
+            _ => None,
+        });
+
+        // Assert
+        assert_eq!(config.blobs_path, "/tmp/custom-blobs");
+        assert_eq!(config.lifecycle_interval, Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600));
     }
 }

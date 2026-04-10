@@ -92,16 +92,21 @@ mod tests {
 
     #[test]
     fn should_match_prefix_given_matching_key() {
+        // Arrange
         let filter = Filter {
             prefix: Some("logs/".to_string()),
             tags: vec![],
         };
+
+        // Act
+        // Assert
         assert!(filter.matches("logs/2024/01/file.txt", &HashMap::new()));
         assert!(!filter.matches("data/file.txt", &HashMap::new()));
     }
 
     #[test]
     fn should_match_tags_given_matching_tags() {
+        // Arrange
         let filter = Filter {
             prefix: None,
             tags: vec![Tag {
@@ -111,6 +116,9 @@ mod tests {
         };
         let mut tags = HashMap::new();
         tags.insert("env".to_string(), "prod".to_string());
+
+        // Act
+        // Assert
         assert!(filter.matches("any/key", &tags));
 
         tags.insert("env".to_string(), "dev".to_string());
@@ -118,7 +126,8 @@ mod tests {
     }
 
     #[test]
-    fn should_match_both_prefix_and_tags() {
+    fn should_match_prefix_with_tags() {
+        // Arrange
         let filter = Filter {
             prefix: Some("logs/".to_string()),
             tags: vec![Tag {
@@ -128,6 +137,9 @@ mod tests {
         };
         let mut tags = HashMap::new();
         tags.insert("type".to_string(), "access".to_string());
+
+        // Act
+        // Assert
         assert!(filter.matches("logs/access.log", &tags));
         assert!(!filter.matches("data/access.log", &tags));
 

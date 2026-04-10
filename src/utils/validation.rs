@@ -168,10 +168,14 @@ mod tests {
     // Object key validation tests
     #[test]
     fn should_accept_valid_object_key() {
+        // Arrange
+        // Act
         assert!(validate_object_key("my-object.txt").is_ok());
         assert!(validate_object_key("path/to/object").is_ok());
         assert!(validate_object_key("").is_ok());
         assert!(validate_object_key("🎉 emoji.txt").is_ok());
+
+        // Assert
     }
 
     #[test]
