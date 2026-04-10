@@ -335,12 +335,12 @@ pub async fn object_get(
                     .build());
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -376,24 +376,20 @@ pub async fn object_get(
 
                         Ok(builder.body(data).build())
                     }
-                    Err(e) => {
-                        let xml = xml_utils::error_xml("InvalidRange", &e.to_string(), &req_id);
-                        Ok(ResponseBuilder::new(StatusCode::RANGE_NOT_SATISFIABLE)
-                            .content_type("application/xml; charset=utf-8")
-                            .header("x-amz-request-id", &req_id)
-                            .body(xml.into_bytes())
-                            .build())
-                    }
+                    Err(e) => Ok(xml_error_response(
+                        StatusCode::RANGE_NOT_SATISFIABLE,
+                        "InvalidRange",
+                        &e.to_string(),
+                        &req_id,
+                    )),
                 }
             }
-            None => {
-                let xml = xml_utils::error_xml("InvalidRange", "Invalid Range header", &req_id);
-                Ok(ResponseBuilder::new(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            None => Ok(xml_error_response(
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                "InvalidRange",
+                "Invalid Range header",
+                &req_id,
+            )),
         }
     } else {
         // Default: Get full object
@@ -413,14 +409,12 @@ pub async fn object_get(
 
                 Ok(builder.body(obj.data).build())
             }
-            Err(e) => {
-                let xml = xml_utils::error_xml("NoSuchKey", &e.to_string(), &req_id);
-                Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            Err(e) => Ok(xml_error_response(
+                StatusCode::NOT_FOUND,
+                "NoSuchKey",
+                &e.to_string(),
+                &req_id,
+            )),
         }
     }
 }
@@ -455,12 +449,12 @@ pub async fn object_put(
         let tags = match xml_utils::parse_tagging_xml(&body) {
             Ok(t) => t,
             Err(msg) => {
-                let xml = xml_utils::error_xml("MalformedXML", &msg, &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "MalformedXML",
+                    &msg,
+                    &req_id,
+                ));
             }
         };
         match tokio::task::block_in_place(|| storage.put_object_tags(bucket, key, tags)) {
@@ -471,20 +465,20 @@ pub async fn object_put(
                     .empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    "Key not found",
+                    &req_id,
+                ));
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -505,20 +499,20 @@ pub async fn object_put(
                     .empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    "Key not found",
+                    &req_id,
+                ));
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -540,12 +534,12 @@ pub async fn object_put(
                     .empty());
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -555,13 +549,12 @@ pub async fn object_put(
         let (source_bucket, source_key) = match copy_source.split_once('/') {
             Some((b, k)) => (b, k),
             None => {
-                let xml =
-                    xml_utils::error_xml("InvalidArgument", "Invalid copy source format", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidArgument",
+                    "Invalid copy source format",
+                    &req_id,
+                ));
             }
         };
 
@@ -586,12 +579,12 @@ pub async fn object_put(
                     match copy_source_range_data(&src_obj, range_header) {
                         Ok(data) => data,
                         Err(msg) => {
-                            let xml = xml_utils::error_xml("InvalidRange", &msg, &req_id);
-                            return Ok(ResponseBuilder::new(StatusCode::RANGE_NOT_SATISFIABLE)
-                                .content_type("application/xml; charset=utf-8")
-                                .header("x-amz-request-id", &req_id)
-                                .body(xml.into_bytes())
-                                .build());
+                            return Ok(xml_error_response(
+                                StatusCode::RANGE_NOT_SATISFIABLE,
+                                "InvalidRange",
+                                &msg,
+                                &req_id,
+                            ));
                         }
                     }
                 } else {
@@ -659,50 +652,50 @@ pub async fn object_put(
                         return Ok(builder.body(xml.into_bytes()).build());
                     }
                     Err(e) => {
-                        let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                        return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                            .content_type("application/xml; charset=utf-8")
-                            .header("x-amz-request-id", &req_id)
-                            .body(xml.into_bytes())
-                            .build());
+                        return Ok(xml_error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "InternalError",
+                            &e.to_string(),
+                            &req_id,
+                        ));
                     }
                 }
             }
             Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Copy source not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    "Copy source not found",
+                    &req_id,
+                ));
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
 
     if let Err(e) = validation::validate_bucket_name(bucket) {
-        let xml = xml_utils::error_xml("InvalidBucketName", &e, &req_id);
-        return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build());
+        return Ok(xml_error_response(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucketName",
+            &e,
+            &req_id,
+        ));
     }
 
     if let Err(e) = validation::validate_object_key(key) {
-        let xml = xml_utils::error_xml("InvalidKey", &e, &req_id);
-        return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build());
+        return Ok(xml_error_response(
+            StatusCode::BAD_REQUEST,
+            "InvalidKey",
+            &e,
+            &req_id,
+        ));
     }
 
     let content_type = req
@@ -715,12 +708,12 @@ pub async fn object_put(
         match parse_tagging_header(tag_str) {
             Ok(t) => Some(t),
             Err(e) => {
-                let xml = xml_utils::error_xml("InvalidTag", &e, &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidTag",
+                    &e,
+                    &req_id,
+                ));
             }
         }
     } else {
@@ -756,14 +749,12 @@ pub async fn object_put(
 
             Ok(builder.empty())
         }
-        Err(e) => {
-            let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-            Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes())
-                .build())
-        }
+        Err(e) => Ok(xml_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+            &req_id,
+        )),
     }
 }
 
@@ -1129,12 +1120,12 @@ pub async fn object_delete(
                     .empty());
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -1151,12 +1142,12 @@ pub async fn object_delete(
                     .empty());
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -1235,20 +1226,20 @@ pub async fn object_head(
                 return Ok(builder.empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    "Key not found",
+                    &req_id,
+                ));
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -1308,20 +1299,20 @@ pub async fn object_post(
                 return Ok(builder.body(xml.into_bytes()).build());
             }
             Err(crate::error::Error::NoSuchUpload) => {
-                let xml = xml_utils::error_xml("NoSuchUpload", "Upload not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchUpload",
+                    "Upload not found",
+                    &req_id,
+                ));
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ));
             }
         }
     }
@@ -1347,25 +1338,19 @@ pub async fn object_post(
                     .body(xml.into_bytes())
                     .build())
             }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            Err(e) => Ok(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+                &req_id,
+            )),
         }
     } else {
-        let xml = xml_utils::error_xml(
+        Ok(xml_error_response(
+            StatusCode::NOT_IMPLEMENTED,
             "NotImplemented",
             "Object POST operations not yet implemented",
             &req_id,
-        );
-        Ok(ResponseBuilder::new(StatusCode::NOT_IMPLEMENTED)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build())
+        ))
     }
 }

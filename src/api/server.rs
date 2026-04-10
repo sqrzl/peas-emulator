@@ -1,9 +1,10 @@
 use crate::error::{Error, Result};
+use crate::services::{json_error_response, json_response};
 use crate::storage::Storage;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server as HyperServer, StatusCode};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize};
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::Arc;
@@ -41,7 +42,7 @@ async fn handle_ui_request(
     if req.uri().path().starts_with("/api/") {
         let resp = match handle_api_request(storage, req).await {
             Ok(resp) => resp,
-            Err(err) => json_error(err),
+            Err(err) => json_error_response(&err),
         };
         return Ok(resp);
     }
@@ -87,34 +88,6 @@ async fn handle_ui_request(
             .body(Body::from(default_content))
             .unwrap_or_else(|_| Response::new(Body::from(default_content))))
     }
-}
-
-fn json<T: Serialize>(status: StatusCode, body: &T) -> Response<Body> {
-    match serde_json::to_vec(body) {
-        Ok(bytes) => Response::builder()
-            .status(status)
-            .header("content-type", "application/json; charset=utf-8")
-            .body(Body::from(bytes))
-            .unwrap_or_else(|_| Response::new(Body::empty())),
-        Err(_) => Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .header("content-type", "application/json; charset=utf-8")
-            .body(Body::from("{\"error\":\"serialization failed\"}"))
-            .unwrap_or_else(|_| Response::new(Body::empty())),
-    }
-}
-
-fn json_error(err: Error) -> Response<Body> {
-    #[derive(Serialize)]
-    struct ApiError<'a> {
-        error: &'a str,
-    }
-    json(
-        err.status_code(),
-        &ApiError {
-            error: err.error_code(),
-        },
-    )
 }
 
 async fn read_json<T: DeserializeOwned>(req: Request<Body>) -> Result<T> {
@@ -199,7 +172,7 @@ async fn handle_api_request(
                         })
                         .collect(),
                 };
-                return Ok(json(StatusCode::OK, &resp));
+                return Ok(json_response(StatusCode::OK, &resp));
             }
             Method::POST => {
                 #[derive(Deserialize)]
@@ -209,7 +182,7 @@ async fn handle_api_request(
                 let payload: CreateReq = read_json(req).await?;
                 tokio::task::block_in_place(|| storage.create_bucket(payload.name))?;
                 let resp = crate::api::models::SuccessResponse { success: true };
-                return Ok(json(StatusCode::OK, &resp));
+                return Ok(json_response(StatusCode::OK, &resp));
             }
             _ => return Err(Error::InvalidRequest("Unsupported method".into())),
         }
@@ -233,11 +206,11 @@ async fn handle_api_request(
                         created_at: bucket.created_at.to_rfc3339(),
                         versioning_enabled,
                     };
-                    return Ok(json(StatusCode::OK, &resp));
+                    return Ok(json_response(StatusCode::OK, &resp));
                 }
                 Method::DELETE => {
                     tokio::task::block_in_place(|| storage.delete_bucket(&bucket))?;
-                    return Ok(json(
+                    return Ok(json_response(
                         StatusCode::OK,
                         &crate::api::models::SuccessResponse { success: true },
                     ));
@@ -250,7 +223,7 @@ async fn handle_api_request(
                     let resp = crate::api::models::VersioningStatus {
                         enabled: bucket_versioning_enabled(&bucket),
                     };
-                    return Ok(json(StatusCode::OK, &resp));
+                    return Ok(json_response(StatusCode::OK, &resp));
                 }
                 Method::PUT => {
                     #[derive(Deserialize)]
@@ -263,7 +236,7 @@ async fn handle_api_request(
                     } else {
                         tokio::task::block_in_place(|| storage.suspend_versioning(&bucket))?;
                     }
-                    return Ok(json(
+                    return Ok(json_response(
                         StatusCode::OK,
                         &crate::api::models::SuccessResponse { success: true },
                     ));
@@ -302,7 +275,7 @@ async fn handle_api_request(
                         is_truncated: list.is_truncated,
                         next_marker: list.next_marker,
                     };
-                    return Ok(json(StatusCode::OK, &resp));
+                    return Ok(json_response(StatusCode::OK, &resp));
                 }
 
                 // Handle object sub-resources
@@ -316,7 +289,7 @@ async fn handle_api_request(
                         let obj =
                             tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
                         let resp = object_to_metadata(obj);
-                        return Ok(json(StatusCode::OK, &resp));
+                        return Ok(json_response(StatusCode::OK, &resp));
                     }
                     Some("download") if method == Method::GET => {
                         let obj =
@@ -345,12 +318,12 @@ async fn handle_api_request(
                                 })
                                 .collect(),
                         };
-                        return Ok(json(StatusCode::OK, &resp));
+                        return Ok(json_response(StatusCode::OK, &resp));
                     }
                     Some("tags") if method == Method::GET => {
                         let tags =
                             tokio::task::block_in_place(|| storage.get_object_tags(&bucket, &key))?;
-                        return Ok(json(
+                        return Ok(json_response(
                             StatusCode::OK,
                             &crate::api::models::TagsResponse { tags },
                         ));
@@ -364,7 +337,7 @@ async fn handle_api_request(
                         tokio::task::block_in_place(|| {
                             storage.put_object_tags(&bucket, &key, body.tags)
                         })?;
-                        return Ok(json(
+                        return Ok(json_response(
                             StatusCode::OK,
                             &crate::api::models::SuccessResponse { success: true },
                         ));
@@ -407,7 +380,7 @@ async fn handle_api_request(
                                 tokio::task::block_in_place(|| {
                                     storage.put_object(&bucket, key_to_use.clone(), obj)
                                 })?;
-                                return Ok(json(
+                                return Ok(json_response(
                                     StatusCode::OK,
                                     &crate::api::models::SuccessResponse { success: true },
                                 ));
@@ -416,7 +389,7 @@ async fn handle_api_request(
                                 tokio::task::block_in_place(|| {
                                     storage.delete_object(&bucket, &key)
                                 })?;
-                                return Ok(json(
+                                return Ok(json_response(
                                     StatusCode::OK,
                                     &crate::api::models::SuccessResponse { success: true },
                                 ));

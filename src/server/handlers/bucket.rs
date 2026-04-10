@@ -224,12 +224,12 @@ pub async fn bucket_put(
     }
 
     if let Err(e) = validation::validate_bucket_name(bucket) {
-        let xml = xml_utils::error_xml("InvalidBucketName", &e, &req_id);
-        return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build());
+        return Ok(xml_error_response(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucketName",
+            &e,
+            &req_id,
+        ));
     }
 
     if req.has_query_param("lifecycle") {
@@ -238,12 +238,12 @@ pub async fn bucket_put(
         let cfg = match xml_utils::parse_lifecycle_xml(&body) {
             Ok(c) => c,
             Err(msg) => {
-                let xml = xml_utils::error_xml("MalformedXML", &msg, &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "MalformedXML",
+                    &msg,
+                    &req_id,
+                ));
             }
         };
 
@@ -252,22 +252,18 @@ pub async fn bucket_put(
                 .header("x-amz-request-id", &req_id)
                 .header("x-amz-id-2", &header_utils::generate_request_id())
                 .empty()),
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                "Bucket not found",
+                &req_id,
+            )),
+            Err(e) => Ok(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+                &req_id,
+            )),
         }
     } else if req.has_query_param("versioning") {
         let body = String::from_utf8(req.body.to_vec())
@@ -275,12 +271,12 @@ pub async fn bucket_put(
         let enabled = match xml_utils::parse_versioning_xml(&body) {
             Ok(e) => e,
             Err(msg) => {
-                let xml = xml_utils::error_xml("MalformedXML", &msg, &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "MalformedXML",
+                    &msg,
+                    &req_id,
+                ));
             }
         };
         if enabled {
@@ -292,20 +288,20 @@ pub async fn bucket_put(
                         .empty())
                 }
                 Err(crate::error::Error::BucketNotFound) => {
-                    let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                    return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .body(xml.into_bytes())
-                        .build());
+                    return Ok(xml_error_response(
+                        StatusCode::NOT_FOUND,
+                        "NoSuchBucket",
+                        "Bucket not found",
+                        &req_id,
+                    ));
                 }
                 Err(e) => {
-                    let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                    return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .body(xml.into_bytes())
-                        .build());
+                    return Ok(xml_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                        &req_id,
+                    ));
                 }
             }
         } else {
@@ -317,20 +313,20 @@ pub async fn bucket_put(
                         .empty())
                 }
                 Err(crate::error::Error::BucketNotFound) => {
-                    let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                    return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .body(xml.into_bytes())
-                        .build());
+                    return Ok(xml_error_response(
+                        StatusCode::NOT_FOUND,
+                        "NoSuchBucket",
+                        "Bucket not found",
+                        &req_id,
+                    ));
                 }
                 Err(e) => {
-                    let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                    return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .body(xml.into_bytes())
-                        .build());
+                    return Ok(xml_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                        &req_id,
+                    ));
                 }
             }
         }
@@ -350,20 +346,20 @@ pub async fn bucket_put(
                     .empty())
             }
             Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
             }
         }
     } else if req.has_query_param("policy") {
@@ -379,20 +375,20 @@ pub async fn bucket_put(
                     .empty())
             }
             Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
             }
         }
     } else {
@@ -422,32 +418,28 @@ pub async fn bucket_get_or_list_objects(
                     .build());
             }
             Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
             }
             Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml(
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
                     "NoSuchLifecycleConfiguration",
                     "No lifecycle configuration present",
                     &req_id,
-                );
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                ))
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
             }
         }
     } else if req.has_query_param("policy") {
@@ -505,20 +497,20 @@ pub async fn bucket_get_or_list_objects(
                     .build());
             }
             Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
             }
             Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
             }
         }
     } else if req.has_query_param("versioning") {

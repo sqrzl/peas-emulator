@@ -3,6 +3,7 @@ use crate::server::ResponseBuilder;
 use crate::utils::{headers as header_utils, xml as xml_utils};
 use http::StatusCode;
 use hyper::{Body, Response};
+use serde::Serialize;
 
 pub fn xml_error_response(
     status: StatusCode,
@@ -44,6 +45,35 @@ pub fn storage_error_response(error: &Error, req_id: &str) -> Response<Body> {
     )
 }
 
+pub fn json_response<T: Serialize>(status: StatusCode, body: &T) -> Response<Body> {
+    match serde_json::to_vec(body) {
+        Ok(bytes) => Response::builder()
+            .status(status)
+            .header("content-type", "application/json; charset=utf-8")
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+        Err(_) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("content-type", "application/json; charset=utf-8")
+            .body(Body::from("{\"error\":\"serialization failed\"}"))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
+}
+
+pub fn json_error_response(err: &Error) -> Response<Body> {
+    #[derive(Serialize)]
+    struct ApiError<'a> {
+        error: &'a str,
+    }
+
+    json_response(
+        err.status_code(),
+        &ApiError {
+            error: err.error_code(),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +105,20 @@ mod tests {
 
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         assert_eq!(body.as_ref(), b"<ok/>");
+    }
+
+    #[tokio::test]
+    async fn should_render_json_error_responses() {
+        let response = json_error_response(&Error::InvalidRequest("bad".into()));
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/json; charset=utf-8"
+        );
+
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("InvalidRequest"));
     }
 }
