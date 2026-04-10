@@ -123,6 +123,16 @@ impl Storage for IndexedStorage {
         Ok(())
     }
 
+    fn update_object_storage_class(
+        &self,
+        bucket: &str,
+        key: &str,
+        storage_class: &str,
+    ) -> Result<()> {
+        self.inner
+            .update_object_storage_class(bucket, key, storage_class)
+    }
+
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool> {
         // Fast path: check index first
         if let Ok(index) = self.index.read() {

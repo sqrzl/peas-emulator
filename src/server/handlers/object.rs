@@ -1,6 +1,7 @@
 use super::auth::{check_authorization, verify_presigned_url};
 use super::ResponseBuilder;
 use crate::auth::AuthConfig;
+use crate::services::{storage_error_response, xml_error_response, xml_success_response};
 use crate::storage::Storage;
 use crate::utils::{headers as header_utils, validation, xml as xml_utils};
 use http::StatusCode;
@@ -269,40 +270,21 @@ pub async fn object_get(
 
     if is_expired.is_ok() && is_expired.unwrap() {
         // Object was deleted due to lifecycle expiration
-        let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-        return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build());
+        return Ok(xml_error_response(
+            StatusCode::NOT_FOUND,
+            "NoSuchKey",
+            "Key not found",
+            &req_id,
+        ));
     }
 
     if req.has_query_param("tagging") {
         match tokio::task::block_in_place(|| storage.get_object_tags(bucket, key)) {
             Ok(tags) => {
                 let xml = xml_utils::tagging_xml(&tags);
-                return Ok(ResponseBuilder::new(StatusCode::OK)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_success_response(StatusCode::OK, xml, &req_id));
             }
-            Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
     }
 
@@ -314,28 +296,9 @@ pub async fn object_get(
                     display_name: "S3 Emulator".to_string(),
                 };
                 let xml = xml_utils::acl_xml(&owner, &acl);
-                return Ok(ResponseBuilder::new(StatusCode::OK)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
+                return Ok(xml_success_response(StatusCode::OK, xml, &req_id));
             }
-            Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
     }
 
@@ -356,22 +319,7 @@ pub async fn object_get(
 
                 return Ok(builder.body(obj.data).build());
             }
-            Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchKey", "Key not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
     }
 

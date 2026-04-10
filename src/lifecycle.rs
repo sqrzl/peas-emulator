@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::models::{LifecycleConfiguration, Status};
+use crate::models::{LifecycleConfiguration, Status, StorageClass, Transition};
 use crate::storage::Storage;
 use chrono::{DateTime, NaiveDate, Utc};
 use std::collections::HashMap;
@@ -115,6 +115,40 @@ fn should_expire_noncurrent_version(
     (now - last_modified).num_days() >= noncurrent_days as i64
 }
 
+fn should_transition(
+    last_modified: DateTime<Utc>,
+    transition: &Transition,
+    now: DateTime<Utc>,
+) -> bool {
+    if let Some(days) = transition.days {
+        if (now - last_modified).num_days() >= days as i64 {
+            return true;
+        }
+    }
+
+    if let Some(date_str) = &transition.date {
+        if let Ok(transition_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            if let Some(transition_datetime) =
+                transition_date.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc())
+            {
+                if now >= transition_datetime {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn storage_class_to_str(storage_class: &StorageClass) -> &'static str {
+    match storage_class {
+        StorageClass::Standard => "STANDARD",
+        StorageClass::Glacier => "GLACIER",
+        StorageClass::DeepArchive => "DEEP_ARCHIVE",
+    }
+}
+
 /// Background job that executes lifecycle rules periodically
 pub struct LifecycleExecutor {
     storage: Arc<dyn Storage>,
@@ -225,6 +259,43 @@ impl LifecycleExecutor {
                         let _ = tokio::task::block_in_place(|| {
                             self.storage.delete_object(bucket_name, &object.key)
                         });
+
+                        continue;
+                    }
+                }
+
+                if let Some(transition) = rule
+                    .transitions
+                    .iter()
+                    .find(|transition| should_transition(object.last_modified, transition, now))
+                {
+                    let storage_class = storage_class_to_str(&transition.storage_class);
+
+                    if object.storage_class != storage_class {
+                        info!(
+                            bucket = bucket_name,
+                            key = object.key,
+                            rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                            storage_class = storage_class,
+                            "Transitioning object storage class"
+                        );
+
+                        if let Err(e) = tokio::task::block_in_place(|| {
+                            self.storage.update_object_storage_class(
+                                bucket_name,
+                                &object.key,
+                                storage_class,
+                            )
+                        }) {
+                            error!(
+                                bucket = bucket_name,
+                                key = object.key,
+                                rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                                storage_class = storage_class,
+                                error = %e,
+                                "Failed to transition object storage class"
+                            );
+                        }
                     }
                 }
             }
@@ -307,7 +378,8 @@ impl LifecycleExecutor {
 mod tests {
     use super::*;
     use crate::models::lifecycle::{
-        Filter, LifecycleConfiguration, NoncurrentVersionExpiration, Rule, Status,
+        Filter, LifecycleConfiguration, NoncurrentVersionExpiration, Rule, Status, StorageClass,
+        Transition,
     };
     use crate::models::Object;
     use crate::storage::FilesystemStorage;
@@ -404,5 +476,55 @@ mod tests {
             storage.get_object("bucket", "doc.txt").unwrap().data,
             b"v2".to_vec()
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_transition_current_objects_when_rule_is_configured() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let now = Utc.with_ymd_and_hms(2024, 4, 10, 12, 0, 0).unwrap();
+
+        let mut object = Object::new(
+            "archive/report.txt".to_string(),
+            b"payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        object.last_modified = now - chrono::Duration::days(45);
+        storage
+            .put_object("bucket", "archive/report.txt".to_string(), object)
+            .unwrap();
+
+        let config = LifecycleConfiguration {
+            rules: vec![Rule {
+                id: Some("transition-archive".to_string()),
+                status: Status::Enabled,
+                filter: Some(Filter {
+                    prefix: Some("archive/".to_string()),
+                    tags: vec![],
+                }),
+                expiration: None,
+                noncurrent_version_expiration: None,
+                transitions: vec![Transition {
+                    days: Some(30),
+                    date: None,
+                    storage_class: StorageClass::Glacier,
+                }],
+            }],
+        };
+
+        let executor = LifecycleExecutor::new(storage.clone(), Duration::from_secs(3600));
+
+        // Act
+        executor
+            .apply_lifecycle_rules("bucket", &config, now)
+            .await
+            .expect("lifecycle rules should apply");
+
+        // Assert
+        let transitioned = storage.get_object("bucket", "archive/report.txt").unwrap();
+        assert_eq!(transitioned.storage_class, "GLACIER");
+        assert_eq!(transitioned.data, b"payload".to_vec());
     }
 }

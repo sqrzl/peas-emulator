@@ -477,6 +477,34 @@ impl Storage for FilesystemStorage {
         Ok(())
     }
 
+    fn update_object_storage_class(
+        &self,
+        bucket: &str,
+        key: &str,
+        storage_class: &str,
+    ) -> Result<()> {
+        let object_id = Self::compute_object_id(bucket, key);
+        let metadata_path = self.object_metadata_path(bucket, &object_id);
+
+        if !metadata_path.exists() {
+            return Err(Error::KeyNotFound);
+        }
+
+        let metadata_json = fs::read_to_string(&metadata_path)
+            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
+
+        let mut object: Object = serde_json::from_str(&metadata_json)
+            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+
+        object.storage_class = storage_class.to_string();
+
+        let updated_json = serde_json::to_string(&object)
+            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
+
+        fs::write(&metadata_path, updated_json)
+            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))
+    }
+
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool> {
         // Fast path: check lock-free index first
         Ok(self.index.contains(bucket, key))

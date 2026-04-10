@@ -1,7 +1,8 @@
 use super::http::{Request, ResponseBuilder, RouteMatch, Router};
 use crate::auth::AuthConfig;
+use crate::services::xml_error_response;
 use crate::storage::Storage;
-use crate::utils::{headers as header_utils, xml as xml_utils};
+use crate::utils::headers as header_utils;
 use http::StatusCode;
 use hyper::{Body, Response};
 use std::sync::Arc;
@@ -67,13 +68,11 @@ pub async fn handle_request(
             object_post(storage, &bucket, &key, &req, req_id).await
         }
 
-        RouteMatch::NotFound => {
-            let xml = xml_utils::error_xml("NotFound", "Not Found", &req_id);
-            Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes())
-                .build())
-        }
+        RouteMatch::NotFound => Ok(xml_error_response(
+            StatusCode::NOT_FOUND,
+            "NotFound",
+            "Not Found",
+            &req_id,
+        )),
     }
 }

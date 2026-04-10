@@ -1,9 +1,9 @@
-use super::ResponseBuilder;
 use crate::auth::{AuthConfig, AuthInfo, SigV4Config, SignatureVerifier};
 use crate::models::policy::{AuthContext, Authorizer, PolicyEffect};
 use crate::models::Owner;
+use crate::services::xml_error_response;
 use crate::storage::Storage;
-use crate::utils::{headers as header_utils, xml as xml_utils};
+use crate::utils::headers as header_utils;
 use hex;
 use http::StatusCode;
 use hyper::{Body, Response};
@@ -139,60 +139,48 @@ pub(crate) fn verify_sigv4_signature(
     let amz_date = match req.header("x-amz-date").or_else(|| req.header("date")) {
         Some(d) => d.to_string(),
         None => {
-            let xml = xml_utils::error_xml("InvalidRequest", "Missing date header", &req_id);
-            let resp = ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            return Err(resp.build());
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Missing date header",
+                &req_id,
+            ));
         }
     };
 
     let signature = match extract_sigv4_signature(auth_header) {
         Some(sig) => sig,
         None => {
-            let xml = xml_utils::error_xml(
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
                 "InvalidRequest",
                 "Missing signature in authorization header",
                 &req_id,
-            );
-            let resp = ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            return Err(resp.build());
+            ));
         }
     };
 
     let signed_headers = match extract_signed_headers(auth_header) {
         Some(headers) if !headers.is_empty() => headers,
         _ => {
-            let xml = xml_utils::error_xml(
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
                 "InvalidRequest",
                 "Missing signed headers in authorization header",
                 &req_id,
-            );
-            let resp = ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            return Err(resp.build());
+            ));
         }
     };
 
     let credential_scope = match extract_credential_scope(auth_header) {
         Some(scope) => scope,
         None => {
-            let xml = xml_utils::error_xml(
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
                 "InvalidRequest",
                 "Missing credential in authorization header",
                 &req_id,
-            );
-            let resp = ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            return Err(resp.build());
+            ));
         }
     };
 
@@ -228,16 +216,12 @@ pub(crate) fn verify_sigv4_signature(
 
     if !is_valid {
         warn!("SigV4 signature verification failed");
-        let xml = xml_utils::error_xml(
+        return Err(xml_error_response(
+            StatusCode::FORBIDDEN,
             "SignatureDoesNotMatch",
             "The provided signature does not match",
             &req_id,
-        );
-        let resp = ResponseBuilder::new(StatusCode::FORBIDDEN)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes());
-        return Err(resp.build());
+        ));
     }
 
     Ok(true)
@@ -298,32 +282,24 @@ pub(crate) fn verify_presigned_url(
             // Validate the presigned URL
             if let Err(e) = presigned.validate(&host, &presigned_config) {
                 warn!("Presigned URL validation failed: {}", e);
-                let xml = xml_utils::error_xml(
+                return Err(xml_error_response(
+                    StatusCode::FORBIDDEN,
                     "InvalidSignature",
                     &format!("Presigned URL validation failed: {}", e),
                     &req_id,
-                );
-                let resp = ResponseBuilder::new(StatusCode::FORBIDDEN)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes());
-                return Err(resp.build());
+                ));
             }
 
             Ok(true)
         }
         Err(e) => {
             warn!("Failed to parse presigned URL: {}", e);
-            let xml = xml_utils::error_xml(
+            Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
                 "InvalidRequest",
                 &format!("Invalid presigned URL parameters: {}", e),
                 &req_id,
-            );
-            let resp = ResponseBuilder::new(StatusCode::BAD_REQUEST)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            Err(resp.build())
+            ))
         }
     }
 }
@@ -552,12 +528,12 @@ pub(crate) fn check_authorization(
                 "Access denied"
             );
             let req_id = header_utils::generate_request_id();
-            let xml = xml_utils::error_xml("AccessDenied", "Access Denied", &req_id);
-            let resp = ResponseBuilder::new(StatusCode::FORBIDDEN)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes());
-            Err(resp.build())
+            Err(xml_error_response(
+                StatusCode::FORBIDDEN,
+                "AccessDenied",
+                "Access Denied",
+                &req_id,
+            ))
         }
     }
 }

@@ -1,6 +1,9 @@
 use super::auth::check_authorization;
 use super::ResponseBuilder;
 use crate::auth::AuthConfig;
+use crate::services::{
+    empty_success_response, storage_error_response, xml_error_response, xml_success_response,
+};
 use crate::storage::Storage;
 use crate::utils::{headers as header_utils, validation, xml as xml_utils};
 use http::StatusCode;
@@ -141,12 +144,7 @@ pub async fn list_buckets(
     let buckets = tokio::task::block_in_place(|| storage.list_buckets())?;
     let xml = xml_utils::list_buckets_xml(&buckets);
 
-    Ok(ResponseBuilder::new(StatusCode::OK)
-        .content_type("application/xml; charset=utf-8")
-        .header("x-amz-request-id", &req_id)
-        .header("x-amz-id-2", &header_utils::generate_request_id())
-        .body(xml.into_bytes())
-        .build())
+    Ok(xml_success_response(StatusCode::OK, xml, &req_id))
 }
 
 pub async fn bucket_head(
@@ -155,18 +153,8 @@ pub async fn bucket_head(
     req_id: String,
 ) -> Result<Response<Body>, String> {
     match tokio::task::block_in_place(|| storage.get_bucket(bucket)) {
-        Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
-            .header("x-amz-request-id", &req_id)
-            .header("x-amz-id-2", &header_utils::generate_request_id())
-            .empty()),
-        Err(_) => {
-            let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-            Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes())
-                .build())
-        }
+        Ok(_) => Ok(empty_success_response(StatusCode::OK, &req_id)),
+        Err(e) => Ok(storage_error_response(&e, &req_id)),
     }
 }
 
@@ -191,59 +179,24 @@ pub async fn bucket_delete(
 
     if req.has_query_param("lifecycle") {
         match tokio::task::block_in_place(|| storage.delete_bucket_lifecycle(bucket)) {
-            Ok(_) => Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
-                .header("x-amz-request-id", &req_id)
-                .header("x-amz-id-2", &header_utils::generate_request_id())
-                .empty()),
-            Err(e) => {
-                let (status, code) = match e {
-                    crate::error::Error::BucketNotFound => (StatusCode::NOT_FOUND, "NoSuchBucket"),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "InternalError"),
-                };
-                let xml = xml_utils::error_xml(code, &e.to_string(), &req_id);
-                Ok(ResponseBuilder::new(status)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
+            Err(e) => Ok(storage_error_response(&e, &req_id)),
         }
     } else if req.has_query_param("policy") {
         match tokio::task::block_in_place(|| storage.delete_bucket_policy(bucket)) {
-            Ok(_) => Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
-                .header("x-amz-request-id", &req_id)
-                .header("x-amz-id-2", &header_utils::generate_request_id())
-                .empty()),
-            Err(e) => {
-                let (status, code) = match e {
-                    crate::error::Error::BucketNotFound => (StatusCode::NOT_FOUND, "NoSuchBucket"),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "InternalError"),
-                };
-                let xml = xml_utils::error_xml(code, &e.to_string(), &req_id);
-                Ok(ResponseBuilder::new(status)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
-            }
+            Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
+            Err(e) => Ok(storage_error_response(&e, &req_id)),
         }
     } else if req.has_query_param("versioning") || req.has_query_param("acl") {
-        let xml = xml_utils::error_xml(
+        Ok(xml_error_response(
+            StatusCode::BAD_REQUEST,
             "InvalidRequest",
             "Cannot delete versioning or ACL via DELETE",
             &req_id,
-        );
-        Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
-            .content_type("application/xml; charset=utf-8")
-            .header("x-amz-request-id", &req_id)
-            .body(xml.into_bytes())
-            .build())
+        ))
     } else {
         tokio::task::block_in_place(|| storage.delete_bucket(bucket))?;
-        Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
-            .header("x-amz-request-id", &req_id)
-            .header("x-amz-id-2", &header_utils::generate_request_id())
-            .empty())
+        Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id))
     }
 }
 

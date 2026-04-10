@@ -6,6 +6,7 @@ pub mod error;
 pub mod lifecycle;
 pub mod models;
 pub mod server;
+pub mod services;
 pub mod storage;
 pub mod utils;
 

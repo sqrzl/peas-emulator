@@ -30,6 +30,12 @@ pub trait Storage: Send + Sync {
         end: Option<u64>,
     ) -> Result<(Object, Vec<u8>)>;
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()>;
+    fn update_object_storage_class(
+        &self,
+        bucket: &str,
+        key: &str,
+        storage_class: &str,
+    ) -> Result<()>;
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool>;
     fn list_objects(
         &self,
