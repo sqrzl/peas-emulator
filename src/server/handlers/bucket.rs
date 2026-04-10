@@ -2,7 +2,8 @@ use super::auth::check_authorization;
 use super::ResponseBuilder;
 use crate::auth::AuthConfig;
 use crate::services::{
-    empty_success_response, storage_error_response, xml_error_response, xml_success_response,
+    bucket as bucket_service, empty_success_response, object as object_service,
+    storage_error_response, xml_error_response, xml_success_response,
 };
 use crate::storage::Storage;
 use crate::utils::{headers as header_utils, validation, xml as xml_utils};
@@ -141,7 +142,7 @@ pub async fn list_buckets(
         return Ok(response);
     }
 
-    let buckets = tokio::task::block_in_place(|| storage.list_buckets())?;
+    let buckets = tokio::task::block_in_place(|| bucket_service::list_buckets(storage.as_ref()))?;
     let xml = xml_utils::list_buckets_xml(&buckets);
 
     Ok(xml_success_response(StatusCode::OK, xml, &req_id))
@@ -152,7 +153,7 @@ pub async fn bucket_head(
     bucket: &str,
     req_id: String,
 ) -> Result<Response<Body>, String> {
-    match tokio::task::block_in_place(|| storage.get_bucket(bucket)) {
+    match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
         Ok(_) => Ok(empty_success_response(StatusCode::OK, &req_id)),
         Err(e) => Ok(storage_error_response(&e, &req_id)),
     }
@@ -178,12 +179,16 @@ pub async fn bucket_delete(
     }
 
     if req.has_query_param("lifecycle") {
-        match tokio::task::block_in_place(|| storage.delete_bucket_lifecycle(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::delete_bucket_lifecycle(storage.as_ref(), bucket)
+        }) {
             Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
             Err(e) => Ok(storage_error_response(&e, &req_id)),
         }
     } else if req.has_query_param("policy") {
-        match tokio::task::block_in_place(|| storage.delete_bucket_policy(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::delete_bucket_policy(storage.as_ref(), bucket)
+        }) {
             Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
             Err(e) => Ok(storage_error_response(&e, &req_id)),
         }
@@ -195,11 +200,12 @@ pub async fn bucket_delete(
             &req_id,
         ))
     } else {
-        tokio::task::block_in_place(|| storage.delete_bucket(bucket))?;
+        tokio::task::block_in_place(|| bucket_service::delete_bucket(storage.as_ref(), bucket))?;
         Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id))
     }
 }
 
+#[allow(clippy::needless_return)]
 pub async fn bucket_put(
     storage: Arc<dyn Storage>,
     auth_config: Arc<AuthConfig>,
@@ -247,7 +253,9 @@ pub async fn bucket_put(
             }
         };
 
-        match tokio::task::block_in_place(|| storage.put_bucket_lifecycle(bucket, cfg)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::put_bucket_lifecycle(storage.as_ref(), bucket, cfg)
+        }) {
             Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
                 .header("x-amz-request-id", &req_id)
                 .header("x-amz-id-2", &header_utils::generate_request_id())
@@ -280,7 +288,9 @@ pub async fn bucket_put(
             }
         };
         if enabled {
-            match tokio::task::block_in_place(|| storage.enable_versioning(bucket)) {
+            match tokio::task::block_in_place(|| {
+                bucket_service::set_versioning(storage.as_ref(), bucket, true)
+            }) {
                 Ok(_) => {
                     return Ok(ResponseBuilder::new(StatusCode::OK)
                         .header("x-amz-request-id", &req_id)
@@ -305,7 +315,9 @@ pub async fn bucket_put(
                 }
             }
         } else {
-            match tokio::task::block_in_place(|| storage.suspend_versioning(bucket)) {
+            match tokio::task::block_in_place(|| {
+                bucket_service::set_versioning(storage.as_ref(), bucket, false)
+            }) {
                 Ok(_) => {
                     return Ok(ResponseBuilder::new(StatusCode::OK)
                         .header("x-amz-request-id", &req_id)
@@ -338,7 +350,9 @@ pub async fn bucket_put(
             canned: canned_acl,
             grants: vec![],
         };
-        match tokio::task::block_in_place(|| storage.put_bucket_acl(bucket, acl)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::put_bucket_acl(storage.as_ref(), bucket, acl)
+        }) {
             Ok(_) => {
                 return Ok(ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
@@ -367,7 +381,9 @@ pub async fn bucket_put(
             .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
         let policy: crate::models::policy::BucketPolicyDocument =
             serde_json::from_str(&body).map_err(|e| format!("Invalid JSON policy: {}", e))?;
-        match tokio::task::block_in_place(|| storage.put_bucket_policy(bucket, policy)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::put_bucket_policy(storage.as_ref(), bucket, policy)
+        }) {
             Ok(_) => {
                 return Ok(ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
@@ -392,7 +408,9 @@ pub async fn bucket_put(
             }
         }
     } else {
-        tokio::task::block_in_place(|| storage.create_bucket(bucket.to_string()))?;
+        tokio::task::block_in_place(|| {
+            bucket_service::create_bucket(storage.as_ref(), bucket.to_string())
+        })?;
         Ok(ResponseBuilder::new(StatusCode::OK)
             .header("x-amz-request-id", &req_id)
             .header("x-amz-id-2", &header_utils::generate_request_id())
@@ -400,6 +418,7 @@ pub async fn bucket_put(
     }
 }
 
+#[allow(clippy::needless_return)]
 pub async fn bucket_get_or_list_objects(
     storage: Arc<dyn Storage>,
     bucket: &str,
@@ -407,7 +426,9 @@ pub async fn bucket_get_or_list_objects(
     req_id: String,
 ) -> Result<Response<Body>, String> {
     if req.has_query_param("lifecycle") {
-        match tokio::task::block_in_place(|| storage.get_bucket_lifecycle(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::get_bucket_lifecycle(storage.as_ref(), bucket)
+        }) {
             Ok(cfg) => {
                 let xml = xml_utils::lifecycle_xml(&cfg);
                 return Ok(ResponseBuilder::new(StatusCode::OK)
@@ -443,7 +464,9 @@ pub async fn bucket_get_or_list_objects(
             }
         }
     } else if req.has_query_param("policy") {
-        match tokio::task::block_in_place(|| storage.get_bucket_policy(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::get_bucket_policy(storage.as_ref(), bucket)
+        }) {
             Ok(policy) => {
                 let json = serde_json::to_string(&policy)
                     .map_err(|e| format!("JSON serialization error: {}", e))?;
@@ -483,7 +506,9 @@ pub async fn bucket_get_or_list_objects(
             }
         }
     } else if req.has_query_param("acl") {
-        match tokio::task::block_in_place(|| storage.get_bucket_acl(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::get_bucket_acl(storage.as_ref(), bucket)
+        }) {
             Ok(acl) => {
                 let owner = crate::models::policy::Owner {
                     id: "peas-emulator".to_string(),
@@ -514,7 +539,7 @@ pub async fn bucket_get_or_list_objects(
             }
         }
     } else if req.has_query_param("versioning") {
-        match tokio::task::block_in_place(|| storage.get_bucket(bucket)) {
+        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
             Ok(b) => {
                 let status = if b.versioning_enabled {
                     Some("Enabled")
@@ -546,7 +571,9 @@ pub async fn bucket_get_or_list_objects(
             }
         }
     } else if req.has_query_param("uploads") {
-        match tokio::task::block_in_place(|| storage.list_multipart_uploads(bucket)) {
+        match tokio::task::block_in_place(|| {
+            bucket_service::list_multipart_uploads(storage.as_ref(), bucket)
+        }) {
             Ok(uploads) => {
                 let xml = xml_utils::list_multipart_uploads_xml(&uploads, bucket);
                 return Ok(ResponseBuilder::new(StatusCode::OK)
@@ -590,7 +617,9 @@ pub async fn bucket_get_or_list_objects(
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1000);
 
-        match tokio::task::block_in_place(|| storage.list_object_versions(bucket, prefix)) {
+        match tokio::task::block_in_place(|| {
+            object_service::list_object_versions(storage.as_ref(), bucket, prefix)
+        }) {
             Ok(mut versions) => {
                 versions.sort_by(|left, right| {
                     right
@@ -654,42 +683,6 @@ pub async fn bucket_get_or_list_objects(
                     .build());
             }
         }
-    } else if req.has_query_param("uploads") {
-        match tokio::task::block_in_place(|| storage.list_multipart_uploads(bucket)) {
-            Ok(uploads) => {
-                let xml = xml_utils::list_multipart_uploads_xml(&uploads, bucket);
-                return Ok(ResponseBuilder::new(StatusCode::OK)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(crate::error::Error::NoSuchUpload) => {
-                let xml = xml_utils::error_xml("NoSuchUpload", "Upload not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
     } else if req.query_param("list-type") == Some("2") {
         let prefix = req.query_param("prefix").unwrap_or("");
         let delimiter = req
@@ -712,7 +705,7 @@ pub async fn bucket_get_or_list_objects(
         );
 
         match tokio::task::block_in_place(|| {
-            storage.list_objects(bucket, Some(prefix), None, None, None)
+            object_service::list_objects(storage.as_ref(), bucket, Some(prefix), None, None, None)
         }) {
             Ok(result) => {
                 let entries = build_list_objects_v2_entries(result.objects, prefix, delimiter);
@@ -785,7 +778,14 @@ pub async fn bucket_get_or_list_objects(
         .and_then(|s| s.parse::<usize>().ok());
 
     match tokio::task::block_in_place(|| {
-        storage.list_objects(bucket, prefix, delimiter, marker, max_keys)
+        object_service::list_objects(
+            storage.as_ref(),
+            bucket,
+            prefix,
+            delimiter,
+            marker,
+            max_keys,
+        )
     }) {
         Ok(mut result) => {
             // Filter out expired objects (lifecycle eager enforcement)
@@ -834,7 +834,8 @@ pub async fn bucket_post(
 ) -> Result<Response<Body>, String> {
     // Multi-object delete: POST /bucket?delete
     if req.has_query_param("delete") {
-        if !tokio::task::block_in_place(|| storage.bucket_exists(bucket))? {
+        if !tokio::task::block_in_place(|| bucket_service::bucket_exists(storage.as_ref(), bucket))?
+        {
             let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
             return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
                 .content_type("application/xml; charset=utf-8")
@@ -850,9 +851,9 @@ pub async fn bucket_post(
         for (key, version) in &objects {
             let _ = tokio::task::block_in_place(|| {
                 if let Some(v) = version {
-                    storage.delete_object_version(bucket, key, v)
+                    object_service::delete_object_version(storage.as_ref(), bucket, key, v)
                 } else {
-                    storage.delete_object(bucket, key)
+                    object_service::delete_object(storage.as_ref(), bucket, key)
                 }
             });
         }

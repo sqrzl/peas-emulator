@@ -1,7 +1,9 @@
 use super::auth::{check_authorization, verify_presigned_url};
 use super::ResponseBuilder;
 use crate::auth::AuthConfig;
-use crate::services::{storage_error_response, xml_error_response, xml_success_response};
+use crate::services::{
+    object as object_service, storage_error_response, xml_error_response, xml_success_response,
+};
 use crate::storage::Storage;
 use crate::utils::{headers as header_utils, validation, xml as xml_utils};
 use http::StatusCode;
@@ -279,7 +281,9 @@ pub async fn object_get(
     }
 
     if req.has_query_param("tagging") {
-        match tokio::task::block_in_place(|| storage.get_object_tags(bucket, key)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object_tags(storage.as_ref(), bucket, key)
+        }) {
             Ok(tags) => {
                 let xml = xml_utils::tagging_xml(&tags);
                 return Ok(xml_success_response(StatusCode::OK, xml, &req_id));
@@ -289,7 +293,9 @@ pub async fn object_get(
     }
 
     if req.has_query_param("acl") {
-        match tokio::task::block_in_place(|| storage.get_object_acl(bucket, key)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object_acl(storage.as_ref(), bucket, key)
+        }) {
             Ok(acl) => {
                 let owner = crate::models::policy::Owner {
                     id: "peas-emulator".to_string(),
@@ -303,7 +309,9 @@ pub async fn object_get(
     }
 
     if let Some(version_id) = req.query_param("versionId") {
-        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
+        }) {
             Ok(obj) => {
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
@@ -325,7 +333,9 @@ pub async fn object_get(
 
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| storage.list_parts(bucket, upload_id)) {
+        match tokio::task::block_in_place(|| {
+            object_service::list_parts(storage.as_ref(), bucket, upload_id)
+        }) {
             Ok(parts) => {
                 let xml = xml_utils::list_parts_xml(bucket, key, upload_id, &parts);
                 return Ok(ResponseBuilder::new(StatusCode::OK)
@@ -353,7 +363,7 @@ pub async fn object_get(
         match range {
             Some((start, end_opt)) => {
                 match tokio::task::block_in_place(|| {
-                    storage.get_object_range(bucket, key, start, end_opt)
+                    object_service::get_object_range(storage.as_ref(), bucket, key, start, end_opt)
                 }) {
                     Ok((obj, data)) => {
                         if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
@@ -393,7 +403,9 @@ pub async fn object_get(
         }
     } else {
         // Default: Get full object
-        match tokio::task::block_in_place(|| storage.get_object(bucket, key)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object(storage.as_ref(), bucket, key)
+        }) {
             Ok(obj) => {
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
@@ -457,7 +469,9 @@ pub async fn object_put(
                 ));
             }
         };
-        match tokio::task::block_in_place(|| storage.put_object_tags(bucket, key, tags)) {
+        match tokio::task::block_in_place(|| {
+            object_service::put_object_tags(storage.as_ref(), bucket, key, tags)
+        }) {
             Ok(_) => {
                 return Ok(ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
@@ -491,7 +505,9 @@ pub async fn object_put(
             canned: canned_acl,
             grants: vec![],
         };
-        match tokio::task::block_in_place(|| storage.put_object_acl(bucket, key, acl)) {
+        match tokio::task::block_in_place(|| {
+            object_service::put_object_acl(storage.as_ref(), bucket, key, acl)
+        }) {
             Ok(_) => {
                 return Ok(ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
@@ -524,7 +540,13 @@ pub async fn object_put(
             None => 0,
         };
         match tokio::task::block_in_place(|| {
-            storage.upload_part(bucket, upload_id, part_number, req.body.to_vec())
+            object_service::upload_part(
+                storage.as_ref(),
+                bucket,
+                upload_id,
+                part_number,
+                req.body.to_vec(),
+            )
         }) {
             Ok(etag) => {
                 return Ok(ResponseBuilder::new(StatusCode::OK)
@@ -568,7 +590,9 @@ pub async fn object_put(
             .to_uppercase();
         let tagging_header = req.header("x-amz-tagging");
 
-        match tokio::task::block_in_place(|| storage.get_object(source_bucket, source_key)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object(storage.as_ref(), source_bucket, source_key)
+        }) {
             Ok(src_obj) => {
                 // Check copy conditionals before proceeding
                 if let Some(response) = check_copy_conditionals(req, &src_obj, &req_id) {
@@ -626,15 +650,17 @@ pub async fn object_put(
 
                 let dest_key = dest_obj.key.clone();
                 let etag = dest_obj.etag.clone();
-                let dest_last_modified = dest_obj.last_modified.clone();
+                let dest_last_modified = dest_obj.last_modified;
 
-                match tokio::task::block_in_place(|| storage.put_object(bucket, dest_key, dest_obj))
-                {
+                match tokio::task::block_in_place(|| {
+                    object_service::put_object(storage.as_ref(), bucket, dest_key, dest_obj)
+                }) {
                     Ok(_) => {
-                        let stored_version_id =
-                            tokio::task::block_in_place(|| storage.get_object(bucket, key))
-                                .ok()
-                                .and_then(|obj| obj.version_id);
+                        let stored_version_id = tokio::task::block_in_place(|| {
+                            object_service::get_object(storage.as_ref(), bucket, key)
+                        })
+                        .ok()
+                        .and_then(|obj| obj.version_id);
 
                         let xml = format!(
                             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -733,11 +759,15 @@ pub async fn object_put(
     let obj_key = obj.key.clone();
     let etag = obj.etag.clone();
 
-    match tokio::task::block_in_place(|| storage.put_object(bucket, obj_key, obj)) {
+    match tokio::task::block_in_place(|| {
+        object_service::put_object(storage.as_ref(), bucket, obj_key, obj)
+    }) {
         Ok(_) => {
-            let stored_version_id = tokio::task::block_in_place(|| storage.get_object(bucket, key))
-                .ok()
-                .and_then(|obj| obj.version_id);
+            let stored_version_id = tokio::task::block_in_place(|| {
+                object_service::get_object(storage.as_ref(), bucket, key)
+            })
+            .ok()
+            .and_then(|obj| obj.version_id);
 
             let mut builder = ResponseBuilder::new(StatusCode::OK)
                 .header("Content-Length", "0")
@@ -759,6 +789,7 @@ pub async fn object_put(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::auth::AuthConfig;
@@ -1112,7 +1143,9 @@ pub async fn object_delete(
 
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| storage.abort_multipart_upload(bucket, upload_id)) {
+        match tokio::task::block_in_place(|| {
+            object_service::abort_multipart_upload(storage.as_ref(), bucket, upload_id)
+        }) {
             Ok(_) | Err(crate::error::Error::NoSuchUpload) => {
                 return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
@@ -1132,8 +1165,9 @@ pub async fn object_delete(
 
     if req.has_query_param("versionId") {
         let version_id = req.query_param("versionId").unwrap_or("");
-        match tokio::task::block_in_place(|| storage.delete_object_version(bucket, key, version_id))
-        {
+        match tokio::task::block_in_place(|| {
+            object_service::delete_object_version(storage.as_ref(), bucket, key, version_id)
+        }) {
             Ok(_) | Err(crate::error::Error::KeyNotFound) => {
                 return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
@@ -1153,7 +1187,9 @@ pub async fn object_delete(
     }
 
     if req.has_query_param("tagging") {
-        match tokio::task::block_in_place(|| storage.delete_object_tags(bucket, key)) {
+        match tokio::task::block_in_place(|| {
+            object_service::delete_object_tags(storage.as_ref(), bucket, key)
+        }) {
             Ok(_) | Err(crate::error::Error::KeyNotFound) => {
                 return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
@@ -1171,7 +1207,9 @@ pub async fn object_delete(
         }
     }
 
-    match tokio::task::block_in_place(|| storage.delete_object(bucket, key)) {
+    match tokio::task::block_in_place(|| {
+        object_service::delete_object(storage.as_ref(), bucket, key)
+    }) {
         Ok(_) | Err(crate::error::Error::KeyNotFound) => {
             Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
                 .header("x-amz-request-id", &req_id)
@@ -1209,7 +1247,9 @@ pub async fn object_head(
     }
 
     if let Some(version_id) = req.query_param("versionId") {
-        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id)) {
+        match tokio::task::block_in_place(|| {
+            object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
+        }) {
             Ok(obj) => {
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
@@ -1244,7 +1284,8 @@ pub async fn object_head(
         }
     }
 
-    match tokio::task::block_in_place(|| storage.get_object(bucket, key)) {
+    match tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+    {
         Ok(obj) => {
             if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                 return Ok(response);
@@ -1281,13 +1322,16 @@ pub async fn object_post(
     // Complete multipart upload
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| storage.complete_multipart_upload(bucket, upload_id)) {
+        match tokio::task::block_in_place(|| {
+            object_service::complete_multipart_upload(storage.as_ref(), bucket, upload_id)
+        }) {
             Ok(etag) => {
                 let xml = xml_utils::complete_multipart_upload_xml(bucket, key, &etag);
-                let stored_version_id =
-                    tokio::task::block_in_place(|| storage.get_object(bucket, key))
-                        .ok()
-                        .and_then(|obj| obj.version_id);
+                let stored_version_id = tokio::task::block_in_place(|| {
+                    object_service::get_object(storage.as_ref(), bucket, key)
+                })
+                .ok()
+                .and_then(|obj| obj.version_id);
 
                 let mut builder = ResponseBuilder::new(StatusCode::OK)
                     .content_type("application/xml; charset=utf-8")
@@ -1320,7 +1364,7 @@ pub async fn object_post(
     // Handle initiate multipart upload
     if req.has_query_param("uploads") {
         match tokio::task::block_in_place(|| {
-            storage.create_multipart_upload(bucket, key.to_string())
+            object_service::create_multipart_upload(storage.as_ref(), bucket, key.to_string())
         }) {
             Ok(upload) => {
                 let xml = format!(

@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::models::{ListObjectsResult, Object};
+use crate::models::{ListObjectsResult, MultipartUpload, Object, Part};
 use crate::storage::Storage;
 use std::collections::HashMap;
 
@@ -18,12 +18,44 @@ pub fn get_object(storage: &dyn Storage, bucket: &str, key: &str) -> Result<Obje
     storage.get_object(bucket, key)
 }
 
+pub fn get_object_version(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    version_id: &str,
+) -> Result<Object> {
+    storage.get_object_version(bucket, key, version_id)
+}
+
+pub fn get_object_range(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    start: u64,
+    end: Option<u64>,
+) -> Result<(Object, Vec<u8>)> {
+    storage.get_object_range(bucket, key, start, end)
+}
+
+pub fn object_exists(storage: &dyn Storage, bucket: &str, key: &str) -> Result<bool> {
+    storage.object_exists(bucket, key)
+}
+
 pub fn put_object(storage: &dyn Storage, bucket: &str, key: String, object: Object) -> Result<()> {
     storage.put_object(bucket, key, object)
 }
 
 pub fn delete_object(storage: &dyn Storage, bucket: &str, key: &str) -> Result<()> {
     storage.delete_object(bucket, key)
+}
+
+pub fn delete_object_version(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    version_id: &str,
+) -> Result<()> {
+    storage.delete_object_version(bucket, key, version_id)
 }
 
 pub fn list_object_versions(
@@ -55,6 +87,61 @@ pub fn delete_object_tags(storage: &dyn Storage, bucket: &str, key: &str) -> Res
     storage.delete_object_tags(bucket, key)
 }
 
+pub fn get_object_acl(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+) -> Result<crate::models::policy::Acl> {
+    storage.get_object_acl(bucket, key)
+}
+
+pub fn put_object_acl(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    acl: crate::models::policy::Acl,
+) -> Result<()> {
+    storage.put_object_acl(bucket, key, acl)
+}
+
+pub fn list_parts(storage: &dyn Storage, bucket: &str, upload_id: &str) -> Result<Vec<Part>> {
+    storage.list_parts(bucket, upload_id)
+}
+
+pub fn upload_part(
+    storage: &dyn Storage,
+    bucket: &str,
+    upload_id: &str,
+    part_number: u32,
+    data: Vec<u8>,
+) -> Result<String> {
+    storage.upload_part(bucket, upload_id, part_number, data)
+}
+
+pub fn list_multipart_uploads(storage: &dyn Storage, bucket: &str) -> Result<Vec<MultipartUpload>> {
+    storage.list_multipart_uploads(bucket)
+}
+
+pub fn create_multipart_upload(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: String,
+) -> Result<MultipartUpload> {
+    storage.create_multipart_upload(bucket, key)
+}
+
+pub fn complete_multipart_upload(
+    storage: &dyn Storage,
+    bucket: &str,
+    upload_id: &str,
+) -> Result<String> {
+    storage.complete_multipart_upload(bucket, upload_id)
+}
+
+pub fn abort_multipart_upload(storage: &dyn Storage, bucket: &str, upload_id: &str) -> Result<()> {
+    storage.abort_multipart_upload(bucket, upload_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +159,8 @@ mod tests {
     #[test]
     fn should_roundtrip_object_through_service() {
         let storage = temp_storage();
+
+        // Arrange
         storage.create_bucket("bucket".to_string()).unwrap();
 
         let mut object = Object::new(
@@ -80,6 +169,8 @@ mod tests {
             "text/plain".to_string(),
         );
         object.tags.insert("env".to_string(), "dev".to_string());
+
+        // Act
         put_object(storage.as_ref(), "bucket", "key.txt".to_string(), object).unwrap();
 
         let stored = get_object(storage.as_ref(), "bucket", "key.txt").unwrap();
@@ -89,6 +180,7 @@ mod tests {
         let tags = get_object_tags(storage.as_ref(), "bucket", "key.txt").unwrap();
         assert_eq!(tags.get("env"), Some(&"dev".to_string()));
 
+        // Assert
         delete_object_tags(storage.as_ref(), "bucket", "key.txt").unwrap();
         assert!(get_object_tags(storage.as_ref(), "bucket", "key.txt")
             .unwrap()
@@ -98,9 +190,12 @@ mod tests {
     #[test]
     fn should_list_object_versions_through_service() {
         let storage = temp_storage();
+
+        // Arrange
         storage.create_bucket("bucket".to_string()).unwrap();
         storage.enable_versioning("bucket").unwrap();
 
+        // Act
         put_object(
             storage.as_ref(),
             "bucket",
@@ -125,6 +220,8 @@ mod tests {
         .unwrap();
 
         let versions = list_object_versions(storage.as_ref(), "bucket", Some("key.txt")).unwrap();
+
+        // Assert
         assert!(versions.len() >= 2);
         assert!(versions.iter().all(|version| version.key == "key.txt"));
     }

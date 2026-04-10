@@ -1,7 +1,7 @@
 use crate::auth::{AuthConfig, AuthInfo, SigV4Config, SignatureVerifier};
 use crate::models::policy::{AuthContext, Authorizer, PolicyEffect};
 use crate::models::Owner;
-use crate::services::xml_error_response;
+use crate::services::{bucket as bucket_service, object as object_service, xml_error_response};
 use crate::storage::Storage;
 use crate::utils::headers as header_utils;
 use hex;
@@ -25,6 +25,7 @@ fn default_owner(config: &AuthConfig) -> Owner {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::models::policy::{
@@ -255,7 +256,7 @@ pub(crate) fn verify_presigned_url(
     match crate::auth::PresignedUrl::from_query_params(
         bucket,
         key,
-        &req.method().to_string(),
+        req.method().as_str(),
         query_params,
     ) {
         Ok(presigned) => {
@@ -381,11 +382,7 @@ pub(crate) fn build_canonical_request(
         .iter()
         .map(|name| {
             let value = req.header(name).unwrap_or("");
-            let normalized_value = value
-                .trim()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+            let normalized_value = value.split_whitespace().collect::<Vec<_>>().join(" ");
             format!("{}:{}", name, normalized_value)
         })
         .collect();
@@ -469,8 +466,7 @@ pub(crate) fn check_authorization(
     let query_params = parse_query_params(req.query());
     let existing_object_tags = key
         .map(|object_key| {
-            storage
-                .get_object_tags(bucket, object_key)
+            object_service::get_object_tags(storage.as_ref(), bucket, object_key)
                 .unwrap_or_default()
         })
         .unwrap_or_default();
@@ -489,18 +485,18 @@ pub(crate) fn check_authorization(
     };
 
     let acl_allowed = if let Some(k) = key {
-        match storage.get_object_acl(bucket, k) {
+        match object_service::get_object_acl(storage.as_ref(), bucket, k) {
             Ok(acl) => Authorizer::check_acl_permission(&acl, &owner_id, &context),
             Err(_) => false,
         }
     } else {
-        match storage.get_bucket_acl(bucket) {
+        match bucket_service::get_bucket_acl(storage.as_ref(), bucket) {
             Ok(acl) => Authorizer::check_acl_permission(&acl, &owner_id, &context),
             Err(_) => false,
         }
     };
 
-    let policy_result = match storage.get_bucket_policy(bucket) {
+    let policy_result = match bucket_service::get_bucket_policy(storage.as_ref(), bucket) {
         Ok(policy) => Authorizer::evaluate_policy(&policy, &context),
         Err(_) => PolicyEffect::Neutral,
     };

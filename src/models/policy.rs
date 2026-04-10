@@ -638,11 +638,7 @@ impl Authorizer {
                 request_value
                     .parse::<f64>()
                     .ok()
-                    .map(|request_number| {
-                        expected_numbers
-                            .iter()
-                            .any(|expected| request_number == *expected)
-                    })
+                    .map(|request_number| expected_numbers.contains(&request_number))
                     .unwrap_or(false)
             }),
             NumericCondition::NotEquals => request_values.iter().all(|request_value| {

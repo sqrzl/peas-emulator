@@ -228,6 +228,7 @@ pub fn list_objects_xml(
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ListObjectsV2Entry {
     Object(Object),
     CommonPrefix(String),
