@@ -31,12 +31,8 @@ fn parse_tagging_header(tag_header: &str) -> Result<HashMap<String, String>, Str
         let (k, v) = pair
             .split_once('=')
             .ok_or_else(|| "Invalid tagging format".to_string())?;
-        let key = decode(k)
-            .map_err(|e| e.to_string())?
-            .into_owned();
-        let value = decode(v)
-            .map_err(|e| e.to_string())?
-            .into_owned();
+        let key = decode(k).map_err(|e| e.to_string())?.into_owned();
+        let value = decode(v).map_err(|e| e.to_string())?.into_owned();
         tags.insert(key, value);
     }
     Ok(tags)
@@ -46,8 +42,8 @@ fn copy_source_range_data(
     source_obj: &crate::models::Object,
     range_header: &str,
 ) -> Result<Vec<u8>, String> {
-    let (start, end_opt) = parse_range(range_header)
-        .ok_or_else(|| "Invalid copy source range".to_string())?;
+    let (start, end_opt) =
+        parse_range(range_header).ok_or_else(|| "Invalid copy source range".to_string())?;
 
     let source_len = source_obj.data.len() as u64;
     if source_len == 0 || start >= source_len {
@@ -70,6 +66,99 @@ fn add_version_header(builder: ResponseBuilder, version_id: Option<&str>) -> Res
     } else {
         builder
     }
+}
+
+fn normalize_etag(value: &str) -> &str {
+    let value = value.trim();
+    let value = value.strip_prefix("W/").unwrap_or(value);
+    value.trim_matches('"')
+}
+
+fn etag_list_matches(header_value: &str, etag: &str) -> bool {
+    let normalized_etag = normalize_etag(etag);
+
+    header_value
+        .split(',')
+        .map(normalize_etag)
+        .any(|candidate| candidate == "*" || candidate == normalized_etag)
+}
+
+fn object_response_headers(
+    mut builder: ResponseBuilder,
+    obj: &crate::models::Object,
+    req_id: &str,
+) -> ResponseBuilder {
+    let last_modified = header_utils::format_last_modified_at(&obj.last_modified);
+
+    builder = builder
+        .header("ETag", &obj.etag)
+        .header("Last-Modified", &last_modified)
+        .header("x-amz-request-id", req_id)
+        .header("x-amz-id-2", &header_utils::generate_request_id())
+        .header("x-amz-storage-class", &obj.storage_class)
+        .header("Accept-Ranges", "bytes");
+
+    builder = add_version_header(builder, obj.version_id.as_deref());
+
+    for (k, v) in obj.metadata.iter() {
+        builder = builder.header(&format!("x-amz-meta-{}", k), v);
+    }
+
+    builder
+}
+
+fn precondition_failed_response(req_id: &str) -> Response<Body> {
+    let xml = xml_utils::error_xml(
+        "PreconditionFailed",
+        "At least one of the pre-conditions you specified did not hold",
+        req_id,
+    );
+
+    ResponseBuilder::new(StatusCode::PRECONDITION_FAILED)
+        .content_type("application/xml; charset=utf-8")
+        .header("x-amz-request-id", req_id)
+        .body(xml.into_bytes())
+        .build()
+}
+
+fn not_modified_response(obj: &crate::models::Object, req_id: &str) -> Response<Body> {
+    object_response_headers(ResponseBuilder::new(StatusCode::NOT_MODIFIED), obj, req_id).empty()
+}
+
+fn check_object_conditionals(
+    req: &crate::server::http::Request,
+    obj: &crate::models::Object,
+    req_id: &str,
+) -> Option<Response<Body>> {
+    if let Some(if_match) = req.header("if-match") {
+        if !etag_list_matches(if_match, &obj.etag) {
+            return Some(precondition_failed_response(req_id));
+        }
+    }
+
+    if let Some(if_unmodified_since) = req.header("if-unmodified-since") {
+        if let Ok(since_dt) = chrono::DateTime::parse_from_rfc2822(if_unmodified_since) {
+            if obj.last_modified > since_dt.with_timezone(&chrono::Utc) {
+                return Some(precondition_failed_response(req_id));
+            }
+        }
+    }
+
+    if let Some(if_none_match) = req.header("if-none-match") {
+        if etag_list_matches(if_none_match, &obj.etag) {
+            return Some(not_modified_response(obj, req_id));
+        }
+    }
+
+    if let Some(if_modified_since) = req.header("if-modified-since") {
+        if let Ok(since_dt) = chrono::DateTime::parse_from_rfc2822(if_modified_since) {
+            if obj.last_modified <= since_dt.with_timezone(&chrono::Utc) {
+                return Some(not_modified_response(obj, req_id));
+            }
+        }
+    }
+
+    None
 }
 
 fn check_copy_conditionals(
@@ -251,24 +340,19 @@ pub async fn object_get(
     }
 
     if let Some(version_id) = req.query_param("versionId") {
-        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id))
-        {
+        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id)) {
             Ok(obj) => {
-                let mut builder = ResponseBuilder::new(StatusCode::OK)
-                    .content_type(&obj.content_type)
-                    .header("Content-Length", &obj.size.to_string())
-                    .header("ETag", &obj.etag.to_string())
-                    .header("Last-Modified", &header_utils::format_last_modified())
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .header("x-amz-storage-class", "STANDARD")
-                    .header("Accept-Ranges", "bytes");
-
-                builder = add_version_header(builder, obj.version_id.as_deref());
-
-                for (k, v) in obj.metadata.iter() {
-                    builder = builder.header(&format!("x-amz-meta-{}", k), v);
+                if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
+                    return Ok(response);
                 }
+
+                let builder = object_response_headers(
+                    ResponseBuilder::new(StatusCode::OK)
+                        .content_type(&obj.content_type)
+                        .header("Content-Length", &obj.size.to_string()),
+                    &obj,
+                    &req_id,
+                );
 
                 return Ok(builder.body(obj.data).build());
             }
@@ -324,27 +408,23 @@ pub async fn object_get(
                     storage.get_object_range(bucket, key, start, end_opt)
                 }) {
                     Ok((obj, data)) => {
+                        if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
+                            return Ok(response);
+                        }
+
                         let len = data.len() as u64;
                         let end_idx = start + len.saturating_sub(1);
-                        let mut builder = ResponseBuilder::new(StatusCode::PARTIAL_CONTENT)
-                            .content_type(&obj.content_type)
-                            .header("Content-Length", &len.to_string())
-                            .header("ETag", &obj.etag.to_string())
-                            .header("Last-Modified", &header_utils::format_last_modified())
-                            .header(
-                                "Content-Range",
-                                &format!("bytes {}-{}/{}", start, end_idx, obj.size),
-                            )
-                            .header("x-amz-request-id", &req_id)
-                            .header("x-amz-id-2", &header_utils::generate_request_id())
-                            .header("x-amz-storage-class", "STANDARD")
-                            .header("Accept-Ranges", "bytes");
-
-                        builder = add_version_header(builder, obj.version_id.as_deref());
-
-                        for (k, v) in obj.metadata.iter() {
-                            builder = builder.header(&format!("x-amz-meta-{}", k), v);
-                        }
+                        let builder = object_response_headers(
+                            ResponseBuilder::new(StatusCode::PARTIAL_CONTENT)
+                                .content_type(&obj.content_type)
+                                .header("Content-Length", &len.to_string())
+                                .header(
+                                    "Content-Range",
+                                    &format!("bytes {}-{}/{}", start, end_idx, obj.size),
+                                ),
+                            &obj,
+                            &req_id,
+                        );
 
                         Ok(builder.body(data).build())
                     }
@@ -371,21 +451,17 @@ pub async fn object_get(
         // Default: Get full object
         match tokio::task::block_in_place(|| storage.get_object(bucket, key)) {
             Ok(obj) => {
-                let mut builder = ResponseBuilder::new(StatusCode::OK)
-                    .content_type(&obj.content_type)
-                    .header("Content-Length", &obj.size.to_string())
-                    .header("ETag", &obj.etag.to_string())
-                    .header("Last-Modified", &header_utils::format_last_modified())
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .header("x-amz-storage-class", "STANDARD")
-                    .header("Accept-Ranges", "bytes");
-
-                builder = add_version_header(builder, obj.version_id.as_deref());
-
-                for (k, v) in obj.metadata.iter() {
-                    builder = builder.header(&format!("x-amz-meta-{}", k), v);
+                if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
+                    return Ok(response);
                 }
+
+                let builder = object_response_headers(
+                    ResponseBuilder::new(StatusCode::OK)
+                        .content_type(&obj.content_type)
+                        .header("Content-Length", &obj.size.to_string()),
+                    &obj,
+                    &req_id,
+                );
 
                 Ok(builder.body(obj.data).build())
             }
@@ -531,11 +607,8 @@ pub async fn object_put(
         let (source_bucket, source_key) = match copy_source.split_once('/') {
             Some((b, k)) => (b, k),
             None => {
-                let xml = xml_utils::error_xml(
-                    "InvalidArgument",
-                    "Invalid copy source format",
-                    &req_id,
-                );
+                let xml =
+                    xml_utils::error_xml("InvalidArgument", "Invalid copy source format", &req_id);
                 return Ok(ResponseBuilder::new(StatusCode::BAD_REQUEST)
                     .content_type("application/xml; charset=utf-8")
                     .header("x-amz-request-id", &req_id)
@@ -554,9 +627,7 @@ pub async fn object_put(
             .to_uppercase();
         let tagging_header = req.header("x-amz-tagging");
 
-        match tokio::task::block_in_place(|| {
-            storage.get_object(source_bucket, source_key)
-        }) {
+        match tokio::task::block_in_place(|| storage.get_object(source_bucket, source_key)) {
             Ok(src_obj) => {
                 // Check copy conditionals before proceeding
                 if let Some(response) = check_copy_conditionals(req, &src_obj, &req_id) {
@@ -614,15 +685,15 @@ pub async fn object_put(
 
                 let dest_key = dest_obj.key.clone();
                 let etag = dest_obj.etag.clone();
+                let dest_last_modified = dest_obj.last_modified.clone();
 
                 match tokio::task::block_in_place(|| storage.put_object(bucket, dest_key, dest_obj))
                 {
                     Ok(_) => {
-                        let stored_version_id = tokio::task::block_in_place(|| {
-                            storage.get_object(bucket, key)
-                        })
-                        .ok()
-                        .and_then(|obj| obj.version_id);
+                        let stored_version_id =
+                            tokio::task::block_in_place(|| storage.get_object(bucket, key))
+                                .ok()
+                                .and_then(|obj| obj.version_id);
 
                         let xml = format!(
                             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -631,7 +702,7 @@ pub async fn object_put(
     <LastModified>{}</LastModified>
 </CopyObjectResult>"#,
                             etag,
-                            header_utils::format_last_modified()
+                            header_utils::format_last_modified_at(&dest_last_modified)
                         );
                         let mut builder = ResponseBuilder::new(StatusCode::OK)
                             .content_type("application/xml; charset=utf-8")
@@ -755,13 +826,15 @@ mod tests {
     use crate::models::Object;
     use crate::server::RequestExt;
     use crate::storage::FilesystemStorage;
+    use chrono::{TimeZone, Utc};
     use hyper::{Body, Request as HyperRequest, StatusCode};
     use std::fs;
     use std::sync::Arc;
     use std::time::Duration;
 
     fn temp_storage() -> Arc<dyn Storage> {
-        let dir = std::env::temp_dir().join(format!("peas-copy-range-test-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("peas-copy-range-test-{}", uuid::Uuid::new_v4()));
         let _ = fs::create_dir_all(&dir);
         Arc::new(FilesystemStorage::new(dir))
     }
@@ -777,7 +850,23 @@ mod tests {
     }
 
     async fn parsed_request(headers: &[(&str, &str)]) -> RequestExt {
-        let mut builder = HyperRequest::builder().method("PUT").uri("http://localhost/");
+        let mut builder = HyperRequest::builder()
+            .method("PUT")
+            .uri("http://localhost/");
+
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+
+        RequestExt::from_hyper(builder.body(Body::empty()).expect("request should build"))
+            .await
+            .expect("request should parse")
+    }
+
+    async fn parsed_request_with_method(method: &str, headers: &[(&str, &str)]) -> RequestExt {
+        let mut builder = HyperRequest::builder()
+            .method(method)
+            .uri("http://localhost/");
 
         for (name, value) in headers {
             builder = builder.header(*name, *value);
@@ -878,9 +967,183 @@ mod tests {
         // Assert
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
 
-        let body = hyper::body::to_bytes(resp.into_body()).await.expect("body should read");
+        let body = hyper::body::to_bytes(resp.into_body())
+            .await
+            .expect("body should read");
         let body = String::from_utf8(body.to_vec()).expect("body should be utf8");
         assert!(body.contains("InvalidRange"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_object_last_modified_from_stored_object_when_getting_the_object() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut object = Object::new(
+            "object.txt".to_string(),
+            b"payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        let expected_last_modified = Utc.with_ymd_and_hms(2024, 4, 10, 12, 34, 56).unwrap();
+        object.last_modified = expected_last_modified;
+
+        storage
+            .put_object("bucket", "object.txt".to_string(), object)
+            .unwrap();
+
+        // Act
+        let req = parsed_request_with_method("GET", &[]).await;
+
+        let resp = object_get(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "object.txt",
+            &req,
+            "req-125".to_string(),
+        )
+        .await
+        .expect("get should complete");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let last_modified = resp
+            .headers()
+            .get("last-modified")
+            .expect("last-modified header should be present")
+            .to_str()
+            .expect("last-modified should be valid header value");
+        let parsed = chrono::DateTime::parse_from_rfc2822(last_modified)
+            .expect("last-modified should parse as RFC2822")
+            .with_timezone(&Utc);
+        assert_eq!(parsed, expected_last_modified);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_not_modified_when_if_none_match_matches_the_object_etag() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let object = Object::new(
+            "object.txt".to_string(),
+            b"payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        let etag = object.etag.clone();
+        storage
+            .put_object("bucket", "object.txt".to_string(), object)
+            .unwrap();
+
+        // Act
+        let req = parsed_request_with_method("GET", &[("If-None-Match", &etag)]).await;
+
+        let resp = object_get(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "object.txt",
+            &req,
+            "req-126".to_string(),
+        )
+        .await
+        .expect("get should complete");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            resp.headers().get("etag").and_then(|v| v.to_str().ok()),
+            Some(etag.as_str())
+        );
+        let body = hyper::body::to_bytes(resp.into_body())
+            .await
+            .expect("body should read");
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_match_does_not_match_the_object_etag() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        storage
+            .put_object(
+                "bucket",
+                "object.txt".to_string(),
+                Object::new(
+                    "object.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        // Act
+        let req = parsed_request_with_method("GET", &[("If-Match", "not-the-etag")]).await;
+
+        let resp = object_get(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "object.txt",
+            &req,
+            "req-127".to_string(),
+        )
+        .await
+        .expect("get should complete");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
+        let body = hyper::body::to_bytes(resp.into_body())
+            .await
+            .expect("body should read");
+        let body = String::from_utf8(body.to_vec()).expect("body should be utf8");
+        assert!(body.contains("PreconditionFailed"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_not_modified_when_if_modified_since_is_after_the_object_last_modified_on_head(
+    ) {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut object = Object::new(
+            "object.txt".to_string(),
+            b"payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        let expected_last_modified = Utc.with_ymd_and_hms(2024, 4, 10, 12, 34, 56).unwrap();
+        object.last_modified = expected_last_modified;
+        storage
+            .put_object("bucket", "object.txt".to_string(), object)
+            .unwrap();
+
+        let request_time = (expected_last_modified + chrono::Duration::days(1)).to_rfc2822();
+
+        // Act
+        let req = parsed_request_with_method("HEAD", &[("If-Modified-Since", &request_time)]).await;
+
+        let resp = object_head(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "object.txt",
+            &req,
+            "req-128".to_string(),
+        )
+        .await
+        .expect("head should complete");
+
+        // Assert
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        let body = hyper::body::to_bytes(resp.into_body())
+            .await
+            .expect("body should read");
+        assert!(body.is_empty());
     }
 }
 
@@ -930,9 +1193,8 @@ pub async fn object_delete(
 
     if req.has_query_param("versionId") {
         let version_id = req.query_param("versionId").unwrap_or("");
-        match tokio::task::block_in_place(|| {
-            storage.delete_object_version(bucket, key, version_id)
-        }) {
+        match tokio::task::block_in_place(|| storage.delete_object_version(bucket, key, version_id))
+        {
             Ok(_) | Err(crate::error::Error::KeyNotFound) => {
                 return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
@@ -1008,19 +1270,19 @@ pub async fn object_head(
     }
 
     if let Some(version_id) = req.query_param("versionId") {
-        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id))
-        {
+        match tokio::task::block_in_place(|| storage.get_object_version(bucket, key, version_id)) {
             Ok(obj) => {
-                let mut builder = ResponseBuilder::new(StatusCode::OK)
-                    .content_type(&obj.content_type)
-                    .header("Content-Length", &obj.size.to_string())
-                    .header("ETag", &obj.etag.to_string())
-                    .header("Last-Modified", &header_utils::format_last_modified())
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .header("x-amz-storage-class", "STANDARD");
+                if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
+                    return Ok(response);
+                }
 
-                builder = add_version_header(builder, obj.version_id.as_deref());
+                let builder = object_response_headers(
+                    ResponseBuilder::new(StatusCode::OK)
+                        .content_type(&obj.content_type)
+                        .header("Content-Length", &obj.size.to_string()),
+                    &obj,
+                    &req_id,
+                );
 
                 return Ok(builder.empty());
             }
@@ -1045,16 +1307,17 @@ pub async fn object_head(
 
     match tokio::task::block_in_place(|| storage.get_object(bucket, key)) {
         Ok(obj) => {
-            let mut builder = ResponseBuilder::new(StatusCode::OK)
-                .content_type(&obj.content_type)
-                .header("Content-Length", &obj.size.to_string())
-                .header("ETag", &obj.etag.to_string())
-                .header("Last-Modified", &header_utils::format_last_modified())
-                .header("x-amz-request-id", &req_id)
-                .header("x-amz-id-2", &header_utils::generate_request_id())
-                .header("x-amz-storage-class", "STANDARD");
+            if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
+                return Ok(response);
+            }
 
-            builder = add_version_header(builder, obj.version_id.as_deref());
+            let builder = object_response_headers(
+                ResponseBuilder::new(StatusCode::OK)
+                    .content_type(&obj.content_type)
+                    .header("Content-Length", &obj.size.to_string()),
+                &obj,
+                &req_id,
+            );
 
             Ok(builder.empty())
         }
@@ -1079,14 +1342,13 @@ pub async fn object_post(
     // Complete multipart upload
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| {
-            storage.complete_multipart_upload(bucket, upload_id)
-        }) {
+        match tokio::task::block_in_place(|| storage.complete_multipart_upload(bucket, upload_id)) {
             Ok(etag) => {
                 let xml = xml_utils::complete_multipart_upload_xml(bucket, key, &etag);
-                let stored_version_id = tokio::task::block_in_place(|| storage.get_object(bucket, key))
-                    .ok()
-                    .and_then(|obj| obj.version_id);
+                let stored_version_id =
+                    tokio::task::block_in_place(|| storage.get_object(bucket, key))
+                        .ok()
+                        .and_then(|obj| obj.version_id);
 
                 let mut builder = ResponseBuilder::new(StatusCode::OK)
                     .content_type("application/xml; charset=utf-8")

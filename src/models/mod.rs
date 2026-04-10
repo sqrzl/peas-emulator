@@ -10,7 +10,8 @@ pub mod policy;
 
 pub use bucket::Bucket;
 pub use lifecycle::{
-    Expiration, Filter, LifecycleConfiguration, Rule, Status, StorageClass, Transition,
+    Expiration, Filter, LifecycleConfiguration, NoncurrentVersionExpiration, Rule, Status,
+    StorageClass, Transition,
 };
 pub use multipart::{MultipartUpload, Part};
 pub use object::Object;

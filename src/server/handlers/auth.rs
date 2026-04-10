@@ -8,6 +8,7 @@ use hex;
 use http::StatusCode;
 use hyper::{Body, Response};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -20,6 +21,97 @@ fn default_owner(config: &AuthConfig) -> Owner {
     Owner {
         id: owner.clone(),
         display_name: owner,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::policy::{
+        ActionList, BucketPolicyDocument, PolicyStatementDocument, Principal, ResourceList,
+    };
+    use crate::server::http::Request as ParsedRequest;
+    use crate::storage::FilesystemStorage;
+    use hyper::{Body, Request as HyperRequest, StatusCode};
+    use std::fs;
+    use std::sync::Arc;
+
+    fn temp_storage() -> Arc<dyn Storage> {
+        let dir = std::env::temp_dir().join(format!("peas-policy-test-{}", uuid::Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        Arc::new(FilesystemStorage::new(dir))
+    }
+
+    fn auth_config() -> AuthConfig {
+        crate::config::Config {
+            access_key_id: None,
+            secret_access_key: None,
+            enforce_auth: true,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: std::time::Duration::from_secs(3600),
+        }
+    }
+
+    async fn parsed_request(uri: &str, headers: &[(&str, &str)]) -> ParsedRequest {
+        let mut builder = HyperRequest::builder().method("GET").uri(uri);
+
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+
+        ParsedRequest::from_hyper(builder.body(Body::empty()).expect("request should build"))
+            .await
+            .expect("request should parse")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_authorize_list_bucket_only_when_prefix_condition_matches() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let policy = BucketPolicyDocument {
+            version: "2012-10-17".to_string(),
+            statement: vec![PolicyStatementDocument {
+                sid: Some("allow-prefix".to_string()),
+                effect: "Allow".to_string(),
+                principal: Principal::All("*".to_string()),
+                action: ActionList::Single("s3:ListBucket".to_string()),
+                resource: ResourceList::Single("arn:aws:s3:::bucket".to_string()),
+                condition: Some(serde_json::json!({
+                    "StringEquals": {
+                        "s3:prefix": "allowed/"
+                    }
+                })),
+            }],
+        };
+        storage.put_bucket_policy("bucket", policy).unwrap();
+
+        let allowed_req = parsed_request("http://localhost/bucket?prefix=allowed%2F", &[]).await;
+        let denied_req = parsed_request("http://localhost/bucket?prefix=denied%2F", &[]).await;
+
+        // Act
+        let allowed = check_authorization(
+            &allowed_req,
+            &auth_config(),
+            &storage,
+            "bucket",
+            None,
+            "s3:ListBucket",
+        );
+        let denied = check_authorization(
+            &denied_req,
+            &auth_config(),
+            &storage,
+            "bucket",
+            None,
+            "s3:ListBucket",
+        );
+
+        // Assert
+        assert!(allowed.is_ok());
+        let denied = denied.expect_err("request should be denied");
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
     }
 }
 
@@ -166,8 +258,8 @@ pub(crate) fn verify_presigned_url(
     let query_params = &req.query_params;
 
     // Check if this is a presigned URL request
-    let has_presigned_query = query_params.contains_key("X-Amz-Signature")
-        || query_params.contains_key("Signature");
+    let has_presigned_query =
+        query_params.contains_key("X-Amz-Signature") || query_params.contains_key("Signature");
 
     if !has_presigned_query {
         return Ok(true);
@@ -176,21 +268,21 @@ pub(crate) fn verify_presigned_url(
     let req_id = header_utils::generate_request_id();
 
     // Parse presigned URL parameters
-    match crate::auth::PresignedUrl::from_query_params(bucket, key, &req.method().to_string(), query_params) {
+    match crate::auth::PresignedUrl::from_query_params(
+        bucket,
+        key,
+        &req.method().to_string(),
+        query_params,
+    ) {
         Ok(presigned) => {
             // Get the host from request headers
-            let host = req
-                .header("host")
-                .unwrap_or("localhost:9000")
-                .to_string();
+            let host = req.header("host").unwrap_or("localhost:9000").to_string();
 
             // Get secret key for validation
             let secret_key = match auth_config.secret_key() {
                 Some(key) => key,
                 None => {
-                    warn!(
-                        "Presigned URL validation requested but no secret key configured"
-                    );
+                    warn!("Presigned URL validation requested but no secret key configured");
                     return Ok(true);
                 }
             };
@@ -340,6 +432,39 @@ pub(crate) fn build_canonical_request(
     )
 }
 
+fn build_request_headers(req: &dyn crate::auth::HttpRequestLike) -> HashMap<String, String> {
+    req.headers()
+        .into_iter()
+        .map(|(name, value)| (name.to_lowercase(), value))
+        .collect()
+}
+
+fn parse_query_params(query: Option<&str>) -> HashMap<String, String> {
+    let mut query_params = HashMap::new();
+
+    let Some(query) = query else {
+        return query_params;
+    };
+
+    for param in query.split('&') {
+        if param.is_empty() {
+            continue;
+        }
+
+        if let Some((key, value)) = param.split_once('=') {
+            let decoded_key = urlencoding::decode(key).unwrap_or_default().to_lowercase();
+            let decoded_value = urlencoding::decode(value).unwrap_or_default().to_string();
+            query_params.insert(decoded_key, decoded_value);
+        } else {
+            let decoded_key = urlencoding::decode(param)
+                .unwrap_or_default()
+                .to_lowercase();
+            query_params.insert(decoded_key, String::new());
+        }
+    }
+
+    query_params
+}
 /// Check if the request is authorized to perform the action
 #[allow(clippy::result_large_err)]
 pub(crate) fn check_authorization(
@@ -364,6 +489,16 @@ pub(crate) fn check_authorization(
         format!("arn:aws:s3:::{}", bucket)
     };
 
+    let request_headers = build_request_headers(req);
+    let query_params = parse_query_params(req.query());
+    let existing_object_tags = key
+        .map(|object_key| {
+            storage
+                .get_object_tags(bucket, object_key)
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
     let owner_id = default_owner(auth_config).id;
     let context = AuthContext {
         principal: auth_info.principal.clone(),
@@ -372,6 +507,9 @@ pub(crate) fn check_authorization(
         resource: resource.clone(),
         bucket_owner: Some(owner_id.clone()),
         object_owner: Some(owner_id.clone()),
+        request_headers,
+        query_params,
+        existing_object_tags,
     };
 
     let acl_allowed = if let Some(k) = key {

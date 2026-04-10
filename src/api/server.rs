@@ -1,4 +1,4 @@
-﻿use crate::error::{Error, Result};
+use crate::error::{Error, Result};
 use crate::storage::Storage;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
@@ -109,7 +109,12 @@ fn json_error(err: Error) -> Response<Body> {
     struct ApiError<'a> {
         error: &'a str,
     }
-    json(err.status_code(), &ApiError { error: err.error_code() })
+    json(
+        err.status_code(),
+        &ApiError {
+            error: err.error_code(),
+        },
+    )
 }
 
 async fn read_json<T: DeserializeOwned>(req: Request<Body>) -> Result<T> {
@@ -142,9 +147,7 @@ fn object_to_metadata(obj: crate::models::Object) -> crate::api::models::ObjectM
     }
 }
 
-fn map_object_list(
-    objects: Vec<crate::models::Object>,
-) -> Vec<crate::api::models::ObjectInfo> {
+fn map_object_list(objects: Vec<crate::models::Object>) -> Vec<crate::api::models::ObjectInfo> {
     objects
         .into_iter()
         .map(|o| crate::api::models::ObjectInfo {
@@ -221,54 +224,52 @@ async fn handle_api_request(
         }
 
         match segments.next() {
-            None => {
-                match method {
-                    Method::GET => {
-                        let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
-                        let versioning_enabled = bucket_versioning_enabled(&bucket);
-                        let resp = crate::api::models::BucketDetails {
-                            name: bucket.name,
-                            created_at: bucket.created_at.to_rfc3339(),
-                            versioning_enabled,
-                        };
-                        return Ok(json(StatusCode::OK, &resp));
-                    }
-                    Method::DELETE => {
-                        tokio::task::block_in_place(|| storage.delete_bucket(&bucket))?;
-                        return Ok(json(StatusCode::OK, &crate::api::models::SuccessResponse {
-                            success: true,
-                        }));
-                    }
-                    _ => return Err(Error::InvalidRequest("Unsupported method".into())),
+            None => match method {
+                Method::GET => {
+                    let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
+                    let versioning_enabled = bucket_versioning_enabled(&bucket);
+                    let resp = crate::api::models::BucketDetails {
+                        name: bucket.name,
+                        created_at: bucket.created_at.to_rfc3339(),
+                        versioning_enabled,
+                    };
+                    return Ok(json(StatusCode::OK, &resp));
                 }
-            }
-            Some("versioning") => {
-                match method {
-                    Method::GET => {
-                        let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
-                        let resp = crate::api::models::VersioningStatus {
-                            enabled: bucket_versioning_enabled(&bucket),
-                        };
-                        return Ok(json(StatusCode::OK, &resp));
-                    }
-                    Method::PUT => {
-                        #[derive(Deserialize)]
-                        struct VersioningReq {
-                            enabled: bool,
-                        }
-                        let body: VersioningReq = read_json(req).await?;
-                        if body.enabled {
-                            tokio::task::block_in_place(|| storage.enable_versioning(&bucket))?;
-                        } else {
-                            tokio::task::block_in_place(|| storage.suspend_versioning(&bucket))?;
-                        }
-                        return Ok(json(StatusCode::OK, &crate::api::models::SuccessResponse {
-                            success: true,
-                        }));
-                    }
-                    _ => return Err(Error::InvalidRequest("Unsupported method".into())),
+                Method::DELETE => {
+                    tokio::task::block_in_place(|| storage.delete_bucket(&bucket))?;
+                    return Ok(json(
+                        StatusCode::OK,
+                        &crate::api::models::SuccessResponse { success: true },
+                    ));
                 }
-            }
+                _ => return Err(Error::InvalidRequest("Unsupported method".into())),
+            },
+            Some("versioning") => match method {
+                Method::GET => {
+                    let bucket = tokio::task::block_in_place(|| storage.get_bucket(&bucket))?;
+                    let resp = crate::api::models::VersioningStatus {
+                        enabled: bucket_versioning_enabled(&bucket),
+                    };
+                    return Ok(json(StatusCode::OK, &resp));
+                }
+                Method::PUT => {
+                    #[derive(Deserialize)]
+                    struct VersioningReq {
+                        enabled: bool,
+                    }
+                    let body: VersioningReq = read_json(req).await?;
+                    if body.enabled {
+                        tokio::task::block_in_place(|| storage.enable_versioning(&bucket))?;
+                    } else {
+                        tokio::task::block_in_place(|| storage.suspend_versioning(&bucket))?;
+                    }
+                    return Ok(json(
+                        StatusCode::OK,
+                        &crate::api::models::SuccessResponse { success: true },
+                    ));
+                }
+                _ => return Err(Error::InvalidRequest("Unsupported method".into())),
+            },
             Some("objects") => {
                 let remainder = segments.next().unwrap_or("");
 
@@ -282,9 +283,7 @@ async fn handle_api_request(
                     let prefix = params.get("prefix").cloned();
                     let delimiter = params.get("delimiter").cloned();
                     let marker = params.get("marker").cloned();
-                    let max_keys = params
-                        .get("max-keys")
-                        .and_then(|s| s.parse::<usize>().ok());
+                    let max_keys = params.get("max-keys").and_then(|s| s.parse::<usize>().ok());
 
                     let list = tokio::task::block_in_place(|| {
                         storage.list_objects(
@@ -314,16 +313,20 @@ async fn handle_api_request(
 
                 match action {
                     Some("metadata") if method == Method::GET => {
-                        let obj = tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
+                        let obj =
+                            tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
                         let resp = object_to_metadata(obj);
                         return Ok(json(StatusCode::OK, &resp));
                     }
                     Some("download") if method == Method::GET => {
-                        let obj = tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
+                        let obj =
+                            tokio::task::block_in_place(|| storage.get_object(&bucket, &key))?;
                         let builder = Response::builder()
                             .status(StatusCode::OK)
                             .header("content-type", obj.content_type);
-                        return Ok(builder.body(Body::from(obj.data)).unwrap_or_else(|_| Response::new(Body::empty())));
+                        return Ok(builder
+                            .body(Body::from(obj.data))
+                            .unwrap_or_else(|_| Response::new(Body::empty())));
                     }
                     Some("versions") if method == Method::GET => {
                         let versions = tokio::task::block_in_place(|| {
@@ -345,8 +348,12 @@ async fn handle_api_request(
                         return Ok(json(StatusCode::OK, &resp));
                     }
                     Some("tags") if method == Method::GET => {
-                        let tags = tokio::task::block_in_place(|| storage.get_object_tags(&bucket, &key))?;
-                        return Ok(json(StatusCode::OK, &crate::api::models::TagsResponse { tags }));
+                        let tags =
+                            tokio::task::block_in_place(|| storage.get_object_tags(&bucket, &key))?;
+                        return Ok(json(
+                            StatusCode::OK,
+                            &crate::api::models::TagsResponse { tags },
+                        ));
                     }
                     Some("tags") if method == Method::PUT => {
                         #[derive(Deserialize)]
@@ -357,9 +364,10 @@ async fn handle_api_request(
                         tokio::task::block_in_place(|| {
                             storage.put_object_tags(&bucket, &key, body.tags)
                         })?;
-                        return Ok(json(StatusCode::OK, &crate::api::models::SuccessResponse {
-                            success: true,
-                        }));
+                        return Ok(json(
+                            StatusCode::OK,
+                            &crate::api::models::SuccessResponse { success: true },
+                        ));
                     }
                     None => {
                         match method {
@@ -381,7 +389,9 @@ async fn handle_api_request(
                                 // Extract metadata headers
                                 let mut metadata = std::collections::HashMap::new();
                                 for (name, value) in headers.iter() {
-                                    if let Some(stripped) = name.as_str().strip_prefix("x-amz-meta-") {
+                                    if let Some(stripped) =
+                                        name.as_str().strip_prefix("x-amz-meta-")
+                                    {
                                         if let Ok(v) = value.to_str() {
                                             metadata.insert(stripped.to_string(), v.to_string());
                                         }
@@ -397,15 +407,19 @@ async fn handle_api_request(
                                 tokio::task::block_in_place(|| {
                                     storage.put_object(&bucket, key_to_use.clone(), obj)
                                 })?;
-                                return Ok(json(StatusCode::OK, &crate::api::models::SuccessResponse {
-                                    success: true,
-                                }));
+                                return Ok(json(
+                                    StatusCode::OK,
+                                    &crate::api::models::SuccessResponse { success: true },
+                                ));
                             }
                             Method::DELETE => {
-                                tokio::task::block_in_place(|| storage.delete_object(&bucket, &key))?;
-                                return Ok(json(StatusCode::OK, &crate::api::models::SuccessResponse {
-                                    success: true,
-                                }));
+                                tokio::task::block_in_place(|| {
+                                    storage.delete_object(&bucket, &key)
+                                })?;
+                                return Ok(json(
+                                    StatusCode::OK,
+                                    &crate::api::models::SuccessResponse { success: true },
+                                ));
                             }
                             _ => return Err(Error::InvalidRequest("Unsupported method".into())),
                         }
@@ -427,9 +441,9 @@ mod tests {
     use crate::storage::FilesystemStorage;
     use hyper::body::to_bytes;
     use hyper::Request;
+    use serde::de::DeserializeOwned;
     use std::fs;
     use std::sync::Arc;
-    use serde::de::DeserializeOwned;
 
     fn temp_storage() -> Arc<dyn Storage> {
         let dir = std::env::temp_dir().join(format!("peas-test-{}", uuid::Uuid::new_v4()));
@@ -442,13 +456,17 @@ mod tests {
     }
 
     async fn json_body<T: DeserializeOwned>(resp: Response<Body>) -> T {
-        let bytes = to_bytes(resp.into_body()).await.expect("response body should read");
+        let bytes = to_bytes(resp.into_body())
+            .await
+            .expect("response body should read");
         serde_json::from_slice(&bytes).expect("response body should deserialize")
     }
 
     fn assert_json_content_type(resp: &Response<Body>) {
         assert_eq!(
-            resp.headers().get("content-type").and_then(|value| value.to_str().ok()),
+            resp.headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
             Some("application/json; charset=utf-8")
         );
     }
@@ -578,7 +596,10 @@ mod tests {
         assert_eq!(metadata.key, "hello.txt");
         assert_eq!(metadata.content_type.as_deref(), Some("text/plain"));
         assert_eq!(metadata.metadata.get("owner"), Some(&"alice".to_string()));
-        assert_eq!(metadata.metadata.get("environment"), Some(&"dev".to_string()));
+        assert_eq!(
+            metadata.metadata.get("environment"),
+            Some(&"dev".to_string())
+        );
 
         // Arrange
         let req = Request::builder()
@@ -593,7 +614,9 @@ mod tests {
         // Assert
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("content-type").and_then(|value| value.to_str().ok()),
+            resp.headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
             Some("text/plain")
         );
         let bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();

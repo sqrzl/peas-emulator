@@ -227,6 +227,139 @@ pub fn list_objects_xml(
     xml
 }
 
+#[derive(Debug, Clone)]
+pub enum ListObjectsV2Entry {
+    Object(Object),
+    CommonPrefix(String),
+}
+
+impl ListObjectsV2Entry {
+    pub fn token(&self) -> &str {
+        match self {
+            ListObjectsV2Entry::Object(obj) => &obj.key,
+            ListObjectsV2Entry::CommonPrefix(prefix) => prefix,
+        }
+    }
+}
+
+fn render_v2_value(value: &str, encoding_type: Option<&str>) -> String {
+    let value = if matches!(encoding_type, Some(encoding) if encoding.eq_ignore_ascii_case("url")) {
+        urlencoding::encode(value).into_owned()
+    } else {
+        value.to_string()
+    };
+
+    escape_xml(&value)
+}
+
+/// ListBucketResult response (ListObjectsV2)
+#[allow(clippy::too_many_arguments)]
+pub fn list_objects_v2_xml(
+    entries: &[ListObjectsV2Entry],
+    bucket: &str,
+    prefix: &str,
+    delimiter: Option<&str>,
+    max_keys: usize,
+    key_count: usize,
+    truncated: bool,
+    continuation_token: Option<&str>,
+    next_continuation_token: Option<&str>,
+    start_after: Option<&str>,
+    encoding_type: Option<&str>,
+    fetch_owner: bool,
+) -> String {
+    let mut xml = format!(
+        r#"{}
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
+        xml_declaration()
+    );
+
+    xml.push_str(&format!("\n  <Name>{}</Name>", escape_xml(bucket)));
+    xml.push_str(&format!(
+        "\n  <Prefix>{}</Prefix>",
+        render_v2_value(prefix, encoding_type)
+    ));
+
+    if let Some(delim) = delimiter {
+        xml.push_str(&format!(
+            "\n  <Delimiter>{}</Delimiter>",
+            render_v2_value(delim, encoding_type)
+        ));
+    }
+
+    if let Some(token) = continuation_token {
+        xml.push_str(&format!(
+            "\n  <ContinuationToken>{}</ContinuationToken>",
+            render_v2_value(token, encoding_type)
+        ));
+    }
+
+    if let Some(start_after_value) = start_after {
+        xml.push_str(&format!(
+            "\n  <StartAfter>{}</StartAfter>",
+            render_v2_value(start_after_value, encoding_type)
+        ));
+    }
+
+    xml.push_str(&format!("\n  <MaxKeys>{}</MaxKeys>", max_keys));
+    xml.push_str(&format!("\n  <KeyCount>{}</KeyCount>", key_count));
+    xml.push_str(&format!(
+        "\n  <IsTruncated>{}</IsTruncated>",
+        if truncated { "true" } else { "false" }
+    ));
+
+    if matches!(encoding_type, Some(encoding) if encoding.eq_ignore_ascii_case("url")) {
+        xml.push_str("\n  <EncodingType>url</EncodingType>");
+    }
+
+    for entry in entries {
+        match entry {
+            ListObjectsV2Entry::Object(obj) => {
+                let modified = obj.last_modified.to_rfc3339();
+                xml.push_str(&format!(
+                    r#"
+  <Contents>
+    <Key>{}</Key>
+    <LastModified>{}</LastModified>
+    <ETag>\"{}\"</ETag>
+    <Size>{}</Size>
+    {}<StorageClass>{}</StorageClass>
+  </Contents>"#,
+                    render_v2_value(&obj.key, encoding_type),
+                    modified,
+                    escape_xml(&obj.etag),
+                    obj.size,
+                    if fetch_owner {
+                        "<Owner><ID>peas-emulator</ID><DisplayName>Peas Emulator</DisplayName></Owner>\n    "
+                    } else {
+                        ""
+                    },
+                    escape_xml(&obj.storage_class)
+                ));
+            }
+            ListObjectsV2Entry::CommonPrefix(prefix_value) => {
+                xml.push_str(&format!(
+                    r#"
+  <CommonPrefixes>
+    <Prefix>{}</Prefix>
+  </CommonPrefixes>"#,
+                    render_v2_value(prefix_value, encoding_type)
+                ));
+            }
+        }
+    }
+
+    if let Some(next_token) = next_continuation_token {
+        xml.push_str(&format!(
+            "\n  <NextContinuationToken>{}</NextContinuationToken>",
+            render_v2_value(next_token, encoding_type)
+        ));
+    }
+
+    xml.push_str("\n</ListBucketResult>");
+    xml
+}
+
 /// Error response
 pub fn error_xml(code: &str, message: &str, request_id: &str) -> String {
     format!(
@@ -269,16 +402,18 @@ pub fn list_versions_xml(
     next_key_marker: Option<&str>,
     next_version_id_marker: Option<&str>,
 ) -> String {
+    let mut seen_keys = std::collections::HashSet::new();
     let mut versions_xml = String::new();
     for obj in versions {
         let version_id = obj.version_id.as_deref().unwrap_or("null");
         let last_modified = obj.last_modified.format("%Y-%m-%dT%H:%M:%S%.3fZ");
+        let is_latest = seen_keys.insert(obj.key.clone());
         versions_xml.push_str(&format!(
             r#"
   <Version>
     <Key>{}</Key>
     <VersionId>{}</VersionId>
-    <IsLatest>false</IsLatest>
+    <IsLatest>{}</IsLatest>
     <LastModified>{}</LastModified>
     <ETag>{}</ETag>
     <Size>{}</Size>
@@ -290,6 +425,7 @@ pub fn list_versions_xml(
   </Version>"#,
             escape_xml(&obj.key),
             escape_xml(version_id),
+            if is_latest { "true" } else { "false" },
             last_modified,
             escape_xml(&obj.etag),
             obj.size,
@@ -613,6 +749,15 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
             xml.push_str("    </Expiration>\n");
         }
 
+        if let Some(noncurrent_expiration) = &rule.noncurrent_version_expiration {
+            xml.push_str("    <NoncurrentVersionExpiration>\n");
+            xml.push_str(&format!(
+                "      <NoncurrentDays>{}</NoncurrentDays>\n",
+                noncurrent_expiration.noncurrent_days
+            ));
+            xml.push_str("    </NoncurrentVersionExpiration>\n");
+        }
+
         for transition in &rule.transitions {
             xml.push_str("    <Transition>\n");
             if let Some(days) = transition.days {
@@ -655,6 +800,7 @@ pub fn parse_lifecycle_xml(
     let mut current_rule: Option<Rule> = None;
     let mut current_filter: Option<Filter> = None;
     let mut current_expiration: Option<Expiration> = None;
+    let mut current_noncurrent_version_expiration: Option<NoncurrentVersionExpiration> = None;
     let mut current_transition: Option<Transition> = None;
     let mut current_tag: Option<(String, String)> = None;
 
@@ -674,6 +820,7 @@ pub fn parse_lifecycle_xml(
                             status: Status::Disabled,
                             filter: None,
                             expiration: None,
+                            noncurrent_version_expiration: None,
                             transitions: Vec::new(),
                         });
                     }
@@ -689,6 +836,10 @@ pub fn parse_lifecycle_xml(
                             date: None,
                             expired_object_delete_marker: None,
                         });
+                    }
+                    "NoncurrentVersionExpiration" => {
+                        current_noncurrent_version_expiration =
+                            Some(NoncurrentVersionExpiration { noncurrent_days: 0 });
                     }
                     "Transition" => {
                         current_transition = Some(Transition {
@@ -759,6 +910,15 @@ pub fn parse_lifecycle_xml(
                             }
                         }
                     }
+                    "NoncurrentDays" => {
+                        if let Ok(days) = text_buffer.parse::<u32>() {
+                            if let Some(ref mut noncurrent_expiration) =
+                                current_noncurrent_version_expiration
+                            {
+                                noncurrent_expiration.noncurrent_days = days;
+                            }
+                        }
+                    }
                     "Date" => {
                         if let Some(ref mut exp) = current_expiration {
                             exp.date = Some(text_buffer.clone());
@@ -792,6 +952,14 @@ pub fn parse_lifecycle_xml(
                             (&mut current_rule, current_expiration.take())
                         {
                             rule.expiration = Some(exp);
+                        }
+                    }
+                    "NoncurrentVersionExpiration" => {
+                        if let (Some(ref mut rule), Some(noncurrent_expiration)) = (
+                            &mut current_rule,
+                            current_noncurrent_version_expiration.take(),
+                        ) {
+                            rule.noncurrent_version_expiration = Some(noncurrent_expiration);
                         }
                     }
                     "Transition" => {
@@ -1078,6 +1246,42 @@ mod tests {
     }
 
     #[test]
+    fn should_round_trip_noncurrent_version_expiration_in_lifecycle_xml() {
+        // Arrange
+        let config = crate::models::lifecycle::LifecycleConfiguration {
+            rules: vec![crate::models::lifecycle::Rule {
+                id: Some("cleanup-noncurrent".to_string()),
+                status: crate::models::lifecycle::Status::Enabled,
+                filter: Some(crate::models::lifecycle::Filter {
+                    prefix: Some("logs/".to_string()),
+                    tags: vec![],
+                }),
+                expiration: None,
+                noncurrent_version_expiration: Some(
+                    crate::models::lifecycle::NoncurrentVersionExpiration { noncurrent_days: 7 },
+                ),
+                transitions: vec![],
+            }],
+        };
+
+        // Act
+        let xml = lifecycle_xml(&config);
+        let parsed = parse_lifecycle_xml(&xml).expect("lifecycle xml should parse");
+
+        // Assert
+        assert!(xml.contains("<NoncurrentVersionExpiration>"));
+        assert!(xml.contains("<NoncurrentDays>7</NoncurrentDays>"));
+        assert_eq!(parsed.rules.len(), 1);
+        assert_eq!(
+            parsed.rules[0]
+                .noncurrent_version_expiration
+                .as_ref()
+                .map(|expiration| expiration.noncurrent_days),
+            Some(7)
+        );
+    }
+
+    #[test]
     fn should_render_owner_grant_in_acl_xml() {
         // Arrange
         let owner = Owner {
@@ -1097,7 +1301,10 @@ mod tests {
         assert!(xml.contains("<Permission>FULL_CONTROL</Permission>"));
         assert!(xml.contains("owner-id"));
         assert_eq!(xml.matches("<Grant>").count(), 1);
-        assert_eq!(xml.matches("<Permission>FULL_CONTROL</Permission>").count(), 1);
+        assert_eq!(
+            xml.matches("<Permission>FULL_CONTROL</Permission>").count(),
+            1
+        );
         assert!(!xml.contains("AllUsers"));
     }
     #[test]

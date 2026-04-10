@@ -167,8 +167,9 @@ impl FilesystemStorage {
 
     fn write_object_files(&self, bucket: &str, object_id: &str, object: &Object) -> Result<()> {
         let object_id_dir = self.object_id_dir(bucket, object_id);
-        fs::create_dir_all(&object_id_dir)
-            .map_err(|e| Error::InternalError(format!("Failed to create object directory: {}", e)))?;
+        fs::create_dir_all(&object_id_dir).map_err(|e| {
+            Error::InternalError(format!("Failed to create object directory: {}", e))
+        })?;
 
         let object_data_path = self.object_data_path(bucket, object_id);
         let mut file = fs::File::create(&object_data_path)
@@ -1051,7 +1052,8 @@ impl Storage for FilesystemStorage {
 
                     let metadata_path = path.join("object.meta.json");
                     if let Ok(metadata_json) = fs::read_to_string(&metadata_path) {
-                        if let Ok(mut obj) = serde_json::from_str::<crate::models::Object>(&metadata_json)
+                        if let Ok(mut obj) =
+                            serde_json::from_str::<crate::models::Object>(&metadata_json)
                         {
                             if obj.key.starts_with(prefix) && obj.version_id.is_some() {
                                 let data_path = path.join("object.blob");
@@ -1138,13 +1140,15 @@ impl Storage for FilesystemStorage {
             let metadata_path = self.object_metadata_path(bucket, &object_id);
 
             if object_data_path.exists() {
-                fs::remove_file(&object_data_path)
-                    .map_err(|e| Error::InternalError(format!("Failed to delete version: {}", e)))?;
+                fs::remove_file(&object_data_path).map_err(|e| {
+                    Error::InternalError(format!("Failed to delete version: {}", e))
+                })?;
             }
 
             if metadata_path.exists() {
-                fs::remove_file(&metadata_path)
-                    .map_err(|e| Error::InternalError(format!("Failed to delete version: {}", e)))?;
+                fs::remove_file(&metadata_path).map_err(|e| {
+                    Error::InternalError(format!("Failed to delete version: {}", e))
+                })?;
             }
 
             self.index.remove(bucket, key);
@@ -1330,6 +1334,7 @@ mod tests {
                 date: None,
                 expired_object_delete_marker: None,
             }),
+            noncurrent_version_expiration: None,
             transitions: vec![],
         });
 
@@ -1401,7 +1406,10 @@ mod tests {
         );
 
         let versions = storage.list_object_versions(bucket, Some(key)).unwrap();
-        let version_ids: Vec<_> = versions.into_iter().filter_map(|obj| obj.version_id).collect();
+        let version_ids: Vec<_> = versions
+            .into_iter()
+            .filter_map(|obj| obj.version_id)
+            .collect();
 
         // Assert
         assert_eq!(version_ids.len(), 2);
@@ -1454,7 +1462,10 @@ mod tests {
         storage.delete_object(bucket, key).unwrap();
 
         // Assert
-        assert!(matches!(storage.get_object(bucket, key), Err(Error::KeyNotFound)));
+        assert!(matches!(
+            storage.get_object(bucket, key),
+            Err(Error::KeyNotFound)
+        ));
         assert!(matches!(
             storage.get_object_version(bucket, key, &current_version_id),
             Err(Error::NoSuchVersion)
@@ -1468,7 +1479,10 @@ mod tests {
         );
 
         let versions = storage.list_object_versions(bucket, Some(key)).unwrap();
-        let version_ids: Vec<_> = versions.into_iter().filter_map(|obj| obj.version_id).collect();
+        let version_ids: Vec<_> = versions
+            .into_iter()
+            .filter_map(|obj| obj.version_id)
+            .collect();
         assert_eq!(version_ids.len(), 1);
         assert!(version_ids.contains(&first_version_id));
 

@@ -59,10 +59,17 @@ impl Request {
         let mut query_params = HashMap::new();
         if let Some(query) = parts.uri.query() {
             for param in query.split('&') {
+                if param.is_empty() {
+                    continue;
+                }
+
                 if let Some((key, value)) = param.split_once('=') {
                     let decoded_key = urlencoding::decode(key).unwrap_or_default().to_string();
                     let decoded_value = urlencoding::decode(value).unwrap_or_default().to_string();
                     query_params.insert(decoded_key, decoded_value);
+                } else {
+                    let decoded_key = urlencoding::decode(param).unwrap_or_default().to_string();
+                    query_params.insert(decoded_key, String::new());
                 }
             }
         }
@@ -166,6 +173,32 @@ impl ResponseBuilder {
             // Last resort fallback - should never fail
             HttpResponse::new(Body::empty())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Request;
+    use hyper::{Body, Request as HyperRequest};
+
+    #[tokio::test]
+    async fn should_preserve_bare_query_flags_when_parsing_requests() {
+        // Arrange
+        let request = HyperRequest::builder()
+            .method("GET")
+            .uri("http://localhost/bucket?versions&prefix=logs%2F")
+            .body(Body::empty())
+            .expect("request should build");
+
+        // Act
+        let parsed = Request::from_hyper(request)
+            .await
+            .expect("request should parse");
+
+        // Assert
+        assert!(parsed.has_query_param("versions"));
+        assert_eq!(parsed.query_param("versions"), Some(""));
+        assert_eq!(parsed.query_param("prefix"), Some("logs/"));
     }
 }
 

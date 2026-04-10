@@ -13,6 +13,7 @@ pub struct Rule {
     pub status: Status,
     pub filter: Option<Filter>,
     pub expiration: Option<Expiration>,
+    pub noncurrent_version_expiration: Option<NoncurrentVersionExpiration>,
     pub transitions: Vec<Transition>,
 }
 
@@ -43,6 +44,12 @@ pub struct Expiration {
     pub days: Option<u32>,
     pub date: Option<String>, // ISO 8601 format
     pub expired_object_delete_marker: Option<bool>,
+}
+
+/// Noncurrent version expiration action - when to delete stale versions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoncurrentVersionExpiration {
+    pub noncurrent_days: u32,
 }
 
 /// Transition action - when to move objects to different storage class

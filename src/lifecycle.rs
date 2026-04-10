@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::models::{LifecycleConfiguration, Status};
 use crate::storage::Storage;
 use chrono::{DateTime, NaiveDate, Utc};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
@@ -40,11 +41,8 @@ pub fn check_object_expiration(
             continue;
         }
 
-        // Check if filter matches
-        if let Some(filter) = &rule.filter {
-            if !filter.matches(key, &tags) {
-                continue;
-            }
+        if !rule_matches_filter(rule, key, &tags) {
+            continue;
         }
 
         // Apply expiration action
@@ -65,6 +63,17 @@ pub fn check_object_expiration(
     }
 
     Ok(false)
+}
+
+fn rule_matches_filter(
+    rule: &crate::models::lifecycle::Rule,
+    key: &str,
+    tags: &HashMap<String, String>,
+) -> bool {
+    rule.filter
+        .as_ref()
+        .map(|filter| filter.matches(key, tags))
+        .unwrap_or(true)
 }
 
 fn should_expire(
@@ -96,6 +105,14 @@ fn should_expire(
     }
 
     false
+}
+
+fn should_expire_noncurrent_version(
+    last_modified: DateTime<Utc>,
+    noncurrent_days: u32,
+    now: DateTime<Utc>,
+) -> bool {
+    (now - last_modified).num_days() >= noncurrent_days as i64
 }
 
 /// Background job that executes lifecycle rules periodically
@@ -177,7 +194,7 @@ impl LifecycleExecutor {
                 "Applying lifecycle rule"
             );
 
-            // List all objects in the bucket (using pagination)
+            // List all current objects in the bucket (using pagination)
             let result = tokio::task::block_in_place(|| {
                 self.storage
                     .list_objects(bucket_name, None, None, None, None)
@@ -191,11 +208,8 @@ impl LifecycleExecutor {
                 })
                 .unwrap_or_default();
 
-                // Check if filter matches
-                if let Some(filter) = &rule.filter {
-                    if !filter.matches(&object.key, &tags) {
-                        continue;
-                    }
+                if !rule_matches_filter(rule, &object.key, &tags) {
+                    continue;
                 }
 
                 // Apply expiration action
@@ -213,12 +227,182 @@ impl LifecycleExecutor {
                         });
                     }
                 }
+            }
 
-                // Transitions would be applied here (not implemented in emulator)
-                // As an emulator, we don't actually move objects between storage classes
+            if let Some(noncurrent_expiration) = &rule.noncurrent_version_expiration {
+                let versions = tokio::task::block_in_place(|| {
+                    self.storage.list_object_versions(bucket_name, None)
+                })?;
+
+                let mut versions_by_key: HashMap<String, Vec<crate::models::Object>> =
+                    HashMap::new();
+
+                for version in versions {
+                    let tags = tokio::task::block_in_place(|| {
+                        self.storage.get_object_tags(bucket_name, &version.key)
+                    })
+                    .unwrap_or_default();
+
+                    if !rule_matches_filter(rule, &version.key, &tags) {
+                        continue;
+                    }
+
+                    versions_by_key
+                        .entry(version.key.clone())
+                        .or_default()
+                        .push(version);
+                }
+
+                for (key, mut versions) in versions_by_key {
+                    versions.sort_by(|left, right| {
+                        right
+                            .last_modified
+                            .cmp(&left.last_modified)
+                            .then_with(|| left.version_id.cmp(&right.version_id))
+                    });
+
+                    let current_version_id =
+                        tokio::task::block_in_place(|| self.storage.get_object(bucket_name, &key))
+                            .ok()
+                            .and_then(|object| object.version_id);
+
+                    for version in versions {
+                        if current_version_id.as_deref() == version.version_id.as_deref() {
+                            continue;
+                        }
+
+                        if should_expire_noncurrent_version(
+                            version.last_modified,
+                            noncurrent_expiration.noncurrent_days,
+                            now,
+                        ) {
+                            if let Some(version_id) = version.version_id.as_deref() {
+                                info!(
+                                    bucket = bucket_name,
+                                    key = key,
+                                    version_id = version_id,
+                                    rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                                    "Expiring noncurrent object version"
+                                );
+
+                                let _ = tokio::task::block_in_place(|| {
+                                    self.storage.delete_object_version(
+                                        bucket_name,
+                                        &key,
+                                        version_id,
+                                    )
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::lifecycle::{
+        Filter, LifecycleConfiguration, NoncurrentVersionExpiration, Rule, Status,
+    };
+    use crate::models::Object;
+    use crate::storage::FilesystemStorage;
+    use chrono::{TimeZone, Utc};
+    use std::fs;
+    use std::sync::Arc;
+
+    fn temp_storage() -> Arc<dyn Storage> {
+        let dir =
+            std::env::temp_dir().join(format!("peas-lifecycle-test-{}", uuid::Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        Arc::new(FilesystemStorage::new(dir))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_expire_noncurrent_versions_when_rule_is_configured() {
+        // Arrange
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage.enable_versioning("bucket").unwrap();
+
+        let now = Utc.with_ymd_and_hms(2024, 4, 10, 12, 0, 0).unwrap();
+
+        let mut first_version = Object::new(
+            "doc.txt".to_string(),
+            b"v1".to_vec(),
+            "text/plain".to_string(),
+        );
+        first_version.last_modified = now - chrono::Duration::days(40);
+        storage
+            .put_object("bucket", "doc.txt".to_string(), first_version)
+            .unwrap();
+
+        let first_version_id = storage
+            .get_object("bucket", "doc.txt")
+            .unwrap()
+            .version_id
+            .clone()
+            .expect("first version id should exist");
+
+        let mut second_version = Object::new(
+            "doc.txt".to_string(),
+            b"v2".to_vec(),
+            "text/plain".to_string(),
+        );
+        second_version.last_modified = now - chrono::Duration::days(1);
+        storage
+            .put_object("bucket", "doc.txt".to_string(), second_version)
+            .unwrap();
+
+        let current_version_id = storage
+            .get_object("bucket", "doc.txt")
+            .unwrap()
+            .version_id
+            .clone()
+            .expect("current version id should exist");
+
+        let config = LifecycleConfiguration {
+            rules: vec![Rule {
+                id: Some("cleanup-noncurrent".to_string()),
+                status: Status::Enabled,
+                filter: Some(Filter {
+                    prefix: Some("doc".to_string()),
+                    tags: vec![],
+                }),
+                expiration: None,
+                noncurrent_version_expiration: Some(NoncurrentVersionExpiration {
+                    noncurrent_days: 30,
+                }),
+                transitions: vec![],
+            }],
+        };
+
+        let executor = LifecycleExecutor::new(storage.clone(), Duration::from_secs(3600));
+
+        // Act
+        executor
+            .apply_lifecycle_rules("bucket", &config, now)
+            .await
+            .expect("lifecycle rules should apply");
+
+        // Assert
+        let versions = storage
+            .list_object_versions("bucket", Some("doc.txt"))
+            .unwrap();
+        let version_ids: Vec<_> = versions
+            .into_iter()
+            .filter_map(|obj| obj.version_id)
+            .collect();
+
+        assert!(version_ids.contains(&current_version_id));
+        assert!(!version_ids.contains(&first_version_id));
+        assert_eq!(
+            storage.get_object("bucket", "doc.txt").unwrap().data,
+            b"v2".to_vec()
+        );
     }
 }

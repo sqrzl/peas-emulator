@@ -109,7 +109,10 @@ mod tests {
         assert_eq!(config.secret_access_key, None);
         assert!(!config.enforce_auth);
         assert_eq!(config.blobs_path, DEFAULT_BLOBS_PATH);
-        assert_eq!(config.lifecycle_interval, Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600));
+        assert_eq!(
+            config.lifecycle_interval,
+            Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600)
+        );
     }
 
     #[test]
@@ -167,6 +170,9 @@ mod tests {
 
         // Assert
         assert_eq!(config.blobs_path, "/tmp/custom-blobs");
-        assert_eq!(config.lifecycle_interval, Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600));
+        assert_eq!(
+            config.lifecycle_interval,
+            Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600)
+        );
     }
 }

@@ -1,5 +1,5 @@
 /// HTTP header handling for S3 responses
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use md5;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -14,9 +14,14 @@ pub fn generate_request_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Format a timestamp as RFC2822 (Last-Modified)
+pub fn format_last_modified_at(last_modified: &DateTime<Utc>) -> String {
+    last_modified.to_rfc2822()
+}
+
 /// Format current time as RFC2822 (Last-Modified)
 pub fn format_last_modified() -> String {
-    Utc::now().to_rfc2822()
+    format_last_modified_at(&Utc::now())
 }
 
 /// Extract user-defined metadata headers (x-amz-meta-*) from HTTP headers
@@ -38,9 +43,9 @@ pub fn extract_metadata_from_http_headers(
 mod tests {
     use super::*;
     use crate::server::RequestExt as ParsedRequest;
-    use chrono::{Duration as ChronoDuration, Utc};
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
     use hyper::{Body, Request as HyperRequest};
-    use uuid::{Variant, Version, Uuid};
+    use uuid::{Uuid, Variant, Version};
 
     #[test]
     fn should_compute_known_md5_vectors_when_compute_etag_called() {
@@ -48,8 +53,14 @@ mod tests {
         // Act
         // Assert
         assert_eq!(compute_etag(b""), "d41d8cd98f00b204e9800998ecf8427e");
-        assert_eq!(compute_etag(b"test data"), "eb733a00c0c9d336e65691a37ab54293");
-        assert_eq!(compute_etag(b"hello world"), "5eb63bbbe01eeed093cb22bb8f5acdc3");
+        assert_eq!(
+            compute_etag(b"test data"),
+            "eb733a00c0c9d336e65691a37ab54293"
+        );
+        assert_eq!(
+            compute_etag(b"hello world"),
+            "5eb63bbbe01eeed093cb22bb8f5acdc3"
+        );
     }
 
     #[test]
@@ -85,6 +96,20 @@ mod tests {
         assert!(parsed_utc <= after + tolerance);
     }
 
+    #[test]
+    fn should_format_supplied_rfc2822_timestamp_in_utc_when_format_last_modified_at_called() {
+        // Arrange
+        let timestamp = Utc.with_ymd_and_hms(2024, 4, 10, 12, 34, 56).unwrap();
+
+        // Act
+        let formatted = format_last_modified_at(&timestamp);
+        let parsed = chrono::DateTime::parse_from_rfc2822(&formatted)
+            .expect("formatted timestamp should parse as RFC2822");
+
+        // Assert
+        assert_eq!(parsed.with_timezone(&Utc), timestamp);
+    }
+
     async fn build_parsed_request(headers: &[(&str, &str)]) -> ParsedRequest {
         let mut builder = HyperRequest::builder()
             .method("PUT")
@@ -94,9 +119,12 @@ mod tests {
             builder = builder.header(*name, *value);
         }
 
-        let request: HyperRequest<Body> = builder.body(Body::empty()).expect("request should build");
+        let request: HyperRequest<Body> =
+            builder.body(Body::empty()).expect("request should build");
 
-        ParsedRequest::from_hyper(request).await.expect("request should parse")
+        ParsedRequest::from_hyper(request)
+            .await
+            .expect("request should parse")
     }
 
     #[tokio::test]
