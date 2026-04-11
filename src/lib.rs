@@ -1,10 +1,13 @@
 // Re-exports for convenience
 pub mod api;
 pub mod auth;
+pub mod blob;
+mod compatibility_matrix;
 pub mod config;
 pub mod error;
 pub mod lifecycle;
 pub mod models;
+pub mod providers;
 pub mod server;
 pub mod services;
 pub mod storage;

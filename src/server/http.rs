@@ -96,6 +96,10 @@ impl Request {
         self.headers.get(name).and_then(|h| h.to_str().ok())
     }
 
+    pub fn host(&self) -> Option<&str> {
+        self.header("host")
+    }
+
     pub fn query_param(&self, name: &str) -> Option<&str> {
         self.query_params.get(name).map(|s| s.as_str())
     }
@@ -178,7 +182,7 @@ impl ResponseBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::Request;
+    use super::{Request, RouteMatch, Router};
     use hyper::{Body, Request as HyperRequest};
 
     #[tokio::test]
@@ -200,22 +204,95 @@ mod tests {
         assert_eq!(parsed.query_param("versions"), Some(""));
         assert_eq!(parsed.query_param("prefix"), Some("logs/"));
     }
+
+    #[tokio::test]
+    async fn should_route_virtual_hosted_style_bucket_requests() {
+        let request = HyperRequest::builder()
+            .method("GET")
+            .uri("http://localhost/photos/kitten.jpg")
+            .header("host", "media.localhost")
+            .body(Body::empty())
+            .expect("request should build");
+
+        let parsed = Request::from_hyper(request)
+            .await
+            .expect("request should parse");
+
+        match Router::route(&parsed) {
+            RouteMatch::ObjectGet(bucket, key) => {
+                assert_eq!(bucket, "media");
+                assert_eq!(key, "photos/kitten.jpg");
+            }
+            route => panic!("unexpected route: {:?}", route),
+        }
+    }
 }
 
 /// Router for S3 API endpoints
 pub struct Router;
 
 impl Router {
-    pub fn route(method: &Method, path: &str) -> RouteMatch {
+    fn bucket_from_host(host: &str) -> Option<String> {
+        let host_without_port = host.split(':').next().unwrap_or(host);
+
+        if host_without_port.eq_ignore_ascii_case("localhost")
+            || host_without_port.parse::<std::net::IpAddr>().is_ok()
+        {
+            return None;
+        }
+
+        let labels: Vec<&str> = host_without_port.split('.').collect();
+        if labels.len() < 2 {
+            return None;
+        }
+
+        let candidate = labels[0];
+        if candidate.is_empty()
+            || candidate.eq_ignore_ascii_case("s3")
+            || candidate.eq_ignore_ascii_case("blob")
+            || candidate.eq_ignore_ascii_case("storage")
+        {
+            return None;
+        }
+
+        Some(candidate.to_string())
+    }
+
+    pub fn route(req: &Request) -> RouteMatch {
+        let method = req.method();
+        let path = req.path();
         let parts: Vec<&str> = path
             .trim_start_matches('/')
             .split('/')
             .filter(|s| !s.is_empty())
             .collect();
+        let host_bucket = req.host().and_then(Self::bucket_from_host);
 
         match parts.as_slice() {
             // List buckets: GET /
-            [] if method == Method::GET => RouteMatch::ListBuckets,
+            [] if method == Method::GET && host_bucket.is_none() => RouteMatch::ListBuckets,
+            [] if host_bucket.is_some() => match *method {
+                Method::GET => RouteMatch::BucketGet(host_bucket.unwrap_or_default()),
+                Method::PUT => RouteMatch::BucketPut(host_bucket.unwrap_or_default()),
+                Method::DELETE => RouteMatch::BucketDelete(host_bucket.unwrap_or_default()),
+                Method::HEAD => RouteMatch::BucketHead(host_bucket.unwrap_or_default()),
+                Method::POST => RouteMatch::BucketPost(host_bucket.unwrap_or_default()),
+                _ => RouteMatch::NotFound,
+            },
+
+            // Virtual-hosted-style object operations take precedence over path-style parsing.
+            [key @ ..] if !key.is_empty() && host_bucket.is_some() => {
+                let key = key.join("/");
+                let bucket = host_bucket.unwrap_or_default();
+                match *method {
+                    Method::GET => RouteMatch::ObjectGet(bucket, key),
+                    Method::PUT => RouteMatch::ObjectPut(bucket, key),
+                    Method::DELETE => RouteMatch::ObjectDelete(bucket, key),
+                    Method::HEAD => RouteMatch::ObjectHead(bucket, key),
+                    Method::POST => RouteMatch::ObjectPost(bucket, key),
+                    _ => RouteMatch::NotFound,
+                }
+            }
 
             // Bucket operations
             [bucket] => match *method {
@@ -239,7 +316,6 @@ impl Router {
                     _ => RouteMatch::NotFound,
                 }
             }
-
             _ => RouteMatch::NotFound,
         }
     }

@@ -26,7 +26,7 @@ pub async fn handle_request(
     auth_config: Arc<AuthConfig>,
     req: Request,
 ) -> Result<Response<Body>, String> {
-    let route = Router::route(req.method(), req.path());
+    let route = Router::route(&req);
     let req_id = header_utils::generate_request_id();
 
     match route {

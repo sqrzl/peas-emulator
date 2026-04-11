@@ -114,6 +114,33 @@ mod tests {
         let denied = denied.expect_err("request should be denied");
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_build_standard_sigv4_canonical_request_with_sorted_query() {
+        let req = parsed_request(
+            "http://localhost/example-bucket/photos/kitten.jpg?prefix=z&list-type=2&prefix=a",
+            &[
+                ("Host", "example-bucket.localhost:9000"),
+                ("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD"),
+                ("X-Amz-Date", "20240101T120000Z"),
+            ],
+        )
+        .await;
+
+        let canonical = build_canonical_request(
+            &req,
+            &[
+                "host".to_string(),
+                "x-amz-content-sha256".to_string(),
+                "x-amz-date".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            canonical,
+            "GET\n/example-bucket/photos/kitten.jpg\nlist-type=2&prefix=a&prefix=z\nhost:example-bucket.localhost:9000\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:20240101T120000Z\n\nhost;x-amz-content-sha256;x-amz-date\nUNSIGNED-PAYLOAD"
+        );
+    }
 }
 
 /// Verify SigV4 signature in the request
@@ -356,6 +383,60 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn uri_encode(value: &str, encode_slash: bool) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        let ch = byte as char;
+        let should_keep = ch.is_ascii_alphanumeric()
+            || matches!(ch, '-' | '_' | '.' | '~')
+            || (!encode_slash && ch == '/');
+
+        if should_keep {
+            out.push(ch);
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
+}
+
+fn canonical_uri(path: &str) -> String {
+    if path.is_empty() {
+        "/".to_string()
+    } else {
+        uri_encode(path, false)
+    }
+}
+
+fn canonical_query_string(query: Option<&str>) -> String {
+    let Some(query) = query else {
+        return String::new();
+    };
+
+    let mut params: Vec<(String, String)> = query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let (raw_key, raw_value) = part.split_once('=').unwrap_or((part, ""));
+            let key = urlencoding::decode(raw_key)
+                .map(|decoded| decoded.into_owned())
+                .unwrap_or_else(|_| raw_key.to_string());
+            let value = urlencoding::decode(raw_value)
+                .map(|decoded| decoded.into_owned())
+                .unwrap_or_else(|_| raw_value.to_string());
+            (uri_encode(&key, true), uri_encode(&value, true))
+        })
+        .collect();
+
+    params.sort_by(|left, right| left.cmp(right));
+
+    params
+        .into_iter()
+        .map(|(key, value)| format!("{}={}", key, value))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// Build canonical request for SigV4 verification using the same rules as the TS SDK signer
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn build_canonical_request(
@@ -363,19 +444,8 @@ pub(crate) fn build_canonical_request(
     signed_headers: &[String],
 ) -> String {
     let method = req.method();
-
-    // The TS SDK signer builds the canonical URI as `pathname + search` and leaves the canonical
-    // query string blank, so we must mirror that behavior exactly here.
-    let path = req.path();
-    let path_with_query = if let Some(q) = req.query() {
-        if q.is_empty() {
-            path.to_string()
-        } else {
-            format!("{}?{}", path, q)
-        }
-    } else {
-        path.to_string()
-    };
+    let canonical_uri = canonical_uri(req.path());
+    let canonical_query = canonical_query_string(req.query());
 
     // Canonical headers: lower-case, trimmed, single-spaced, in the SignedHeaders order.
     let mut canonical_headers: Vec<String> = signed_headers
@@ -397,11 +467,20 @@ pub(crate) fn build_canonical_request(
         names.join(";")
     };
 
-    let payload_hash = sha256_hex(req.body());
+    let payload_hash = req
+        .header("x-amz-content-sha256")
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| sha256_hex(req.body()));
 
     format!(
-        "{}\n{}\n\n{}\n\n{}\n{}",
-        method, path_with_query, canonical_headers_str, signed_headers_str, payload_hash
+        "{}\n{}\n{}\n{}\n\n{}\n{}",
+        method,
+        canonical_uri,
+        canonical_query,
+        canonical_headers_str,
+        signed_headers_str,
+        payload_hash
     )
 }
 

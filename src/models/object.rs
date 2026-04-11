@@ -52,12 +52,15 @@ impl Object {
 
 /// Compute S3-compatible ETag (MD5 for single-part objects)
 pub fn compute_etag(data: &[u8]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    crate::utils::headers::compute_etag(data)
+}
 
-    // Simple hash for now - in real implementation use MD5
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    let hash = hasher.finish();
-    format!("{:x}", hash)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_compute_md5_etag_for_single_part_objects() {
+        assert_eq!(compute_etag(b"hello world"), "5eb63bbbe01eeed093cb22bb8f5acdc3");
+    }
 }

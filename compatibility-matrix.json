@@ -1,0 +1,39 @@
+{
+  "providers": {
+    "s3-family": {
+      "bucket_crud": "pass",
+      "object_crud": "pass",
+      "virtual_hosted_style": "pass",
+      "sigv4": "pass",
+      "multipart": "pass",
+      "versioning": "pass",
+      "advanced_s3_features": "deferred"
+    },
+    "azure-blob": {
+      "container_crud": "pass",
+      "blob_crud": "pass",
+      "list_containers": "pass",
+      "list_blobs": "pass",
+      "shared_key_auth": "pass",
+      "sas_auth": "pass",
+      "block_blob_upload": "pass",
+      "append_page_blob": "deferred"
+    },
+    "gcs": {
+      "bucket_crud": "pass",
+      "object_crud": "pass",
+      "list_objects": "pass",
+      "signed_url_v2": "pass",
+      "resumable_upload": "pass",
+      "json_api_breadth": "partial"
+    },
+    "oci-object": {
+      "namespace_discovery": "pass",
+      "bucket_crud": "pass",
+      "object_crud": "pass",
+      "list_objects": "pass",
+      "request_signing": "pass",
+      "multipart": "partial"
+    }
+  }
+}
