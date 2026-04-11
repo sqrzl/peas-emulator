@@ -1,0 +1,27 @@
+name: Interop
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sdk-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install interop dependencies
+        run: python -m pip install -r tests/interop/requirements.txt
+
+      - name: Run SDK smoke harness
+        run: python tests/interop/run_sdk_smoke.py --auth-checks

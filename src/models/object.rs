@@ -18,6 +18,8 @@ pub struct Object {
     pub tags: HashMap<String, String>,
     #[serde(default)]
     pub acl: Option<crate::models::policy::Acl>,
+    #[serde(default)]
+    pub provider_metadata: HashMap<String, String>,
 }
 
 impl Object {
@@ -46,6 +48,7 @@ impl Object {
             metadata,
             tags: HashMap::new(),
             acl: None,
+            provider_metadata: HashMap::new(),
         }
     }
 }

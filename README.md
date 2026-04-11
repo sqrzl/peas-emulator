@@ -10,10 +10,10 @@ A multi-provider blob and object storage emulator for local development and comp
   - Google Cloud Storage workflows
   - OCI Object Storage workflows
 - Shared filesystem-backed blob core
-- S3-focused versioning, multipart upload, lifecycle, tagging, ACL, and policy support
-- Azure block blob upload flow with Shared Key and SAS validation
-- GCS signed URL and resumable upload flow support
-- OCI namespace, bucket, object, and request-signing support
+- S3-focused versioning, multipart upload, lifecycle, tagging, ACL, policy, requester-pays, website, and CORS bucket config support
+- Azure block blob, append blob, and page blob upload flows with Shared Key and SAS validation
+- GCS XML/JSON API object workflows, signed URL, and resumable upload flow support
+- OCI namespace, bucket, object, multipart, and request-signing support
 - Docker deployment ready
 - Local development support
 
@@ -25,11 +25,8 @@ A multi-provider blob and object storage emulator for local development and comp
 
 ## Known Gaps
 
-- Full SDK and CLI interoperability matrices against official external clients are not yet wired into CI.
-- Advanced S3 features such as requester pays, website hosting, object lock, and the full SSE/CORS/admin surface are still deferred.
-- Azure append blobs, page blobs, leases, and immutability features are deferred.
-- GCS JSON API breadth is still partial; the current implementation focuses on XML-style object workflows plus resumable upload.
-- OCI multipart and advanced policy/retention behavior are still partial.
+- Advanced S3 features still in progress are object lock / retention semantics, richer POST workflows, and broader SSE request-contract coverage.
+- Azure lease management, snapshots, and immutability / retention enforcement are still in progress.
 - Lifecycle enforcement, ACLs, and policy behavior remain simplified compared with production cloud providers.
 
 ## Building

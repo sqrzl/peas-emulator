@@ -50,7 +50,7 @@ impl BlobRecord {
             storage_class: object.storage_class.clone(),
             metadata: object.metadata.clone(),
             tags: object.tags.clone(),
-            provider_metadata: HashMap::new(),
+            provider_metadata: object.provider_metadata.clone(),
         }
     }
 }
@@ -65,6 +65,34 @@ pub struct PutBlobRequest {
     pub tags: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateBlobMetadataRequest {
+    pub namespace: String,
+    pub key: String,
+    pub metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobPayload {
+    pub blob: Object,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateUploadSessionRequest {
+    pub namespace: String,
+    pub key: String,
+    pub content_type: Option<String>,
+    pub metadata: HashMap<String, String>,
+    pub provider_metadata: HashMap<String, String>,
+}
+
 pub trait BlobBackend: Send + Sync {
     fn create_namespace(&self, name: String) -> Result<Namespace>;
     fn get_namespace(&self, name: &str) -> Result<Namespace>;
@@ -73,7 +101,10 @@ pub trait BlobBackend: Send + Sync {
 
     fn put_blob(&self, request: PutBlobRequest) -> Result<BlobRecord>;
     fn get_blob(&self, namespace: &str, key: &str) -> Result<Object>;
+    fn get_blob_version(&self, namespace: &str, key: &str, version_id: &str) -> Result<Object>;
+    fn get_blob_range(&self, namespace: &str, key: &str, range: BlobRange) -> Result<BlobPayload>;
     fn delete_blob(&self, namespace: &str, key: &str) -> Result<()>;
+    fn update_blob_metadata(&self, request: UpdateBlobMetadataRequest) -> Result<BlobRecord>;
     fn list_blobs(
         &self,
         namespace: &str,
@@ -82,8 +113,9 @@ pub trait BlobBackend: Send + Sync {
         marker: Option<&str>,
         max_keys: Option<usize>,
     ) -> Result<Vec<BlobRecord>>;
+    fn list_blob_versions(&self, namespace: &str, prefix: Option<&str>) -> Result<Vec<BlobRecord>>;
 
-    fn create_upload_session(&self, namespace: &str, key: String) -> Result<MultipartUpload>;
+    fn create_upload_session(&self, request: CreateUploadSessionRequest) -> Result<MultipartUpload>;
     fn upload_session_part(
         &self,
         namespace: &str,
@@ -142,8 +174,37 @@ impl<T: Storage + ?Sized> BlobBackend for T {
         self.get_object(namespace, key)
     }
 
+    fn get_blob_version(&self, namespace: &str, key: &str, version_id: &str) -> Result<Object> {
+        self.get_object_version(namespace, key, version_id)
+    }
+
+    fn get_blob_range(&self, namespace: &str, key: &str, range: BlobRange) -> Result<BlobPayload> {
+        let (blob, data) = self.get_object_range(namespace, key, range.start, Some(range.end))?;
+        Ok(BlobPayload { blob, data })
+    }
+
     fn delete_blob(&self, namespace: &str, key: &str) -> Result<()> {
         self.delete_object(namespace, key)
+    }
+
+    fn update_blob_metadata(&self, request: UpdateBlobMetadataRequest) -> Result<BlobRecord> {
+        let existing = self.get_object(&request.namespace, &request.key)?;
+        let mut object = Object::new_with_metadata(
+            request.key.clone(),
+            existing.data,
+            existing.content_type,
+            request.metadata,
+        );
+        object.etag = existing.etag;
+        object.last_modified = existing.last_modified;
+        object.version_id = existing.version_id;
+        object.storage_class = existing.storage_class;
+        object.tags = existing.tags;
+        object.acl = existing.acl;
+        object.provider_metadata = existing.provider_metadata;
+        self.put_object(&request.namespace, request.key.clone(), object)?;
+        let stored = self.get_object(&request.namespace, &request.key)?;
+        Ok(BlobRecord::from_object(&request.namespace, &stored))
     }
 
     fn list_blobs(
@@ -162,8 +223,22 @@ impl<T: Storage + ?Sized> BlobBackend for T {
             .collect())
     }
 
-    fn create_upload_session(&self, namespace: &str, key: String) -> Result<MultipartUpload> {
-        self.create_multipart_upload(namespace, key)
+    fn list_blob_versions(&self, namespace: &str, prefix: Option<&str>) -> Result<Vec<BlobRecord>> {
+        Ok(self
+            .list_object_versions(namespace, prefix)?
+            .iter()
+            .map(|object| BlobRecord::from_object(namespace, object))
+            .collect())
+    }
+
+    fn create_upload_session(&self, request: CreateUploadSessionRequest) -> Result<MultipartUpload> {
+        self.create_multipart_upload_with_metadata(
+            &request.namespace,
+            request.key,
+            request.content_type,
+            request.metadata,
+            request.provider_metadata,
+        )
     }
 
     fn upload_session_part(
@@ -178,5 +253,130 @@ impl<T: Storage + ?Sized> BlobBackend for T {
 
     fn complete_upload_session(&self, namespace: &str, upload_id: &str) -> Result<String> {
         self.complete_multipart_upload(namespace, upload_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::FilesystemStorage;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn temp_path() -> PathBuf {
+        std::env::temp_dir().join(format!("peas_blob_core_test_{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn should_support_range_metadata_and_version_operations_through_blob_backend() {
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let backend: &dyn BlobBackend = &storage;
+
+        backend
+            .create_namespace("docs".to_string())
+            .expect("namespace create should succeed");
+
+        backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello backend".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("alice"))]),
+                tags: HashMap::from([(String::from("env"), String::from("test"))]),
+            })
+            .expect("put should succeed");
+
+        let range = backend
+            .get_blob_range(
+                "docs",
+                "guide.txt",
+                BlobRange { start: 6, end: 12 },
+            )
+            .expect("range get should succeed");
+        assert_eq!(range.data, b"backend".to_vec());
+
+        let updated = backend
+            .update_blob_metadata(UpdateBlobMetadataRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("bob"))]),
+            })
+            .expect("metadata update should succeed");
+        assert_eq!(updated.metadata.get("owner"), Some(&"bob".to_string()));
+
+        storage.enable_versioning("docs").expect("versioning should enable");
+        backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello versions".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::new(),
+                tags: HashMap::new(),
+            })
+            .expect("versioned overwrite should succeed");
+
+        let versions = backend
+            .list_blob_versions("docs", Some("guide"))
+            .expect("version list should succeed");
+        assert!(
+            versions.len() >= 2,
+            "expected current and historical versions after overwrite"
+        );
+        let version_id = versions
+            .iter()
+            .find_map(|blob| blob.version_id.clone())
+            .expect("version id should exist");
+        let version = backend
+            .get_blob_version("docs", "guide.txt", &version_id)
+            .expect("version fetch should succeed");
+        assert_eq!(version.version_id.as_deref(), Some(version_id.as_str()));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_preserve_provider_metadata_when_updating_blob_metadata() {
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let backend: &dyn BlobBackend = &storage;
+
+        backend
+            .create_namespace("azure".to_string())
+            .expect("namespace create should succeed");
+
+        let mut object = Object::new(
+            "append.log".to_string(),
+            b"hello".to_vec(),
+            "text/plain".to_string(),
+        );
+        object.provider_metadata.insert(
+            "azure_blob_type".to_string(),
+            "AppendBlob".to_string(),
+        );
+        storage
+            .put_object("azure", "append.log".to_string(), object)
+            .expect("put should succeed");
+
+        backend
+            .update_blob_metadata(UpdateBlobMetadataRequest {
+                namespace: "azure".to_string(),
+                key: "append.log".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("alice"))]),
+            })
+            .expect("metadata update should succeed");
+
+        let stored = backend
+            .get_blob("azure", "append.log")
+            .expect("blob fetch should succeed");
+        assert_eq!(
+            stored.provider_metadata.get("azure_blob_type"),
+            Some(&"AppendBlob".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(base);
     }
 }

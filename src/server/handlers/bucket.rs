@@ -69,6 +69,46 @@ fn parse_delete_keys(xml: &str) -> Vec<(String, Option<String>)> {
     objects
 }
 
+const S3_REQUEST_PAYMENT_KEY: &str = "s3_requester_pays";
+const S3_WEBSITE_XML_KEY: &str = "s3_website_xml";
+const S3_CORS_XML_KEY: &str = "s3_cors_xml";
+
+fn metadata_value(xml: &str, tag: &[u8]) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+    let mut buf = Vec::new();
+    let mut in_tag = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) if e.name().as_ref() == tag => in_tag = true,
+            Ok(Event::End(e)) if e.name().as_ref() == tag => in_tag = false,
+            Ok(Event::Text(t)) if in_tag => {
+                return Some(t.unescape().unwrap_or_default().to_string());
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    None
+}
+
+fn with_bucket_metadata<F>(
+    storage: &dyn Storage,
+    bucket: &str,
+    update: F,
+) -> crate::error::Result<crate::models::Bucket>
+where
+    F: FnOnce(&mut std::collections::HashMap<String, String>),
+{
+    let mut bucket_record = bucket_service::get_bucket(storage, bucket)?;
+    update(&mut bucket_record.metadata);
+    bucket_service::update_bucket_metadata(storage, bucket, bucket_record.metadata)
+}
+
 fn build_list_objects_v2_entries(
     objects: Vec<crate::models::Object>,
     prefix: &str,
@@ -170,6 +210,10 @@ pub async fn bucket_delete(
         "s3:DeleteLifecycleConfiguration"
     } else if req.has_query_param("policy") {
         "s3:DeleteBucketPolicy"
+    } else if req.has_query_param("website") {
+        "s3:DeleteBucketWebsite"
+    } else if req.has_query_param("cors") {
+        "s3:DeleteBucketCors"
     } else {
         "s3:DeleteBucket"
     };
@@ -178,7 +222,25 @@ pub async fn bucket_delete(
         return Ok(response);
     }
 
-    if req.has_query_param("lifecycle") {
+    if req.has_query_param("website") {
+        match tokio::task::block_in_place(|| {
+            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
+                metadata.remove(S3_WEBSITE_XML_KEY);
+            })
+        }) {
+            Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
+            Err(e) => Ok(storage_error_response(&e, &req_id)),
+        }
+    } else if req.has_query_param("cors") {
+        match tokio::task::block_in_place(|| {
+            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
+                metadata.remove(S3_CORS_XML_KEY);
+            })
+        }) {
+            Ok(_) => Ok(empty_success_response(StatusCode::NO_CONTENT, &req_id)),
+            Err(e) => Ok(storage_error_response(&e, &req_id)),
+        }
+    } else if req.has_query_param("lifecycle") {
         match tokio::task::block_in_place(|| {
             bucket_service::delete_bucket_lifecycle(storage.as_ref(), bucket)
         }) {
@@ -217,6 +279,12 @@ pub async fn bucket_put(
         "s3:PutBucketVersioning"
     } else if req.has_query_param("lifecycle") {
         "s3:PutLifecycleConfiguration"
+    } else if req.has_query_param("requestPayment") {
+        "s3:PutBucketRequestPayment"
+    } else if req.has_query_param("website") {
+        "s3:PutBucketWebsite"
+    } else if req.has_query_param("cors") {
+        "s3:PutBucketCors"
     } else if req.has_query_param("acl") {
         "s3:PutBucketAcl"
     } else if req.has_query_param("policy") {
@@ -255,6 +323,91 @@ pub async fn bucket_put(
 
         match tokio::task::block_in_place(|| {
             bucket_service::put_bucket_lifecycle(storage.as_ref(), bucket, cfg)
+        }) {
+            Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
+                .header("x-amz-request-id", &req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id())
+                .empty()),
+            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                "Bucket not found",
+                &req_id,
+            )),
+            Err(e) => Ok(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+                &req_id,
+            )),
+        }
+    } else if req.has_query_param("requestPayment") {
+        let body = String::from_utf8(req.body.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
+        let payer = metadata_value(&body, b"Payer").unwrap_or_default();
+        if payer != "Requester" && payer != "BucketOwner" {
+            return Ok(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "MalformedXML",
+                "RequestPaymentConfiguration must contain a valid Payer value",
+                &req_id,
+            ));
+        }
+
+        match tokio::task::block_in_place(|| {
+            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
+                metadata.insert(S3_REQUEST_PAYMENT_KEY.to_string(), payer);
+            })
+        }) {
+            Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
+                .header("x-amz-request-id", &req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id())
+                .empty()),
+            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                "Bucket not found",
+                &req_id,
+            )),
+            Err(e) => Ok(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+                &req_id,
+            )),
+        }
+    } else if req.has_query_param("website") {
+        let body = String::from_utf8(req.body.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
+        match tokio::task::block_in_place(|| {
+            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
+                metadata.insert(S3_WEBSITE_XML_KEY.to_string(), body);
+            })
+        }) {
+            Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
+                .header("x-amz-request-id", &req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id())
+                .empty()),
+            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                "Bucket not found",
+                &req_id,
+            )),
+            Err(e) => Ok(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+                &req_id,
+            )),
+        }
+    } else if req.has_query_param("cors") {
+        let body = String::from_utf8(req.body.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
+        match tokio::task::block_in_place(|| {
+            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
+                metadata.insert(S3_CORS_XML_KEY.to_string(), body);
+            })
         }) {
             Ok(_) => Ok(ResponseBuilder::new(StatusCode::OK)
                 .header("x-amz-request-id", &req_id)
@@ -425,7 +578,118 @@ pub async fn bucket_get_or_list_objects(
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
-    if req.has_query_param("lifecycle") {
+    if req.has_query_param("requestPayment") {
+        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
+            Ok(bucket_record) => {
+                let payer = bucket_record
+                    .metadata
+                    .get(S3_REQUEST_PAYMENT_KEY)
+                    .map(|value| value.as_str())
+                    .unwrap_or("BucketOwner");
+                let xml = format!(
+                    "{}\n<RequestPaymentConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <Payer>{}</Payer>\n</RequestPaymentConfiguration>",
+                    xml_utils::xml_declaration(),
+                    payer
+                );
+                return Ok(ResponseBuilder::new(StatusCode::OK)
+                    .content_type("application/xml; charset=utf-8")
+                    .header("x-amz-request-id", &req_id)
+                    .header("x-amz-id-2", &header_utils::generate_request_id())
+                    .body(xml.into_bytes())
+                    .build());
+            }
+            Err(crate::error::Error::BucketNotFound) => {
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
+            }
+            Err(e) => {
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
+            }
+        }
+    } else if req.has_query_param("website") {
+        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
+            Ok(bucket_record) => match bucket_record.metadata.get(S3_WEBSITE_XML_KEY) {
+                Some(xml) => {
+                    return Ok(ResponseBuilder::new(StatusCode::OK)
+                        .content_type("application/xml; charset=utf-8")
+                        .header("x-amz-request-id", &req_id)
+                        .header("x-amz-id-2", &header_utils::generate_request_id())
+                        .body(xml.clone().into_bytes())
+                        .build());
+                }
+                None => {
+                    return Ok(xml_error_response(
+                        StatusCode::NOT_FOUND,
+                        "NoSuchWebsiteConfiguration",
+                        "The specified bucket does not have a website configuration",
+                        &req_id,
+                    ))
+                }
+            },
+            Err(crate::error::Error::BucketNotFound) => {
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
+            }
+            Err(e) => {
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
+            }
+        }
+    } else if req.has_query_param("cors") {
+        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
+            Ok(bucket_record) => match bucket_record.metadata.get(S3_CORS_XML_KEY) {
+                Some(xml) => {
+                    return Ok(ResponseBuilder::new(StatusCode::OK)
+                        .content_type("application/xml; charset=utf-8")
+                        .header("x-amz-request-id", &req_id)
+                        .header("x-amz-id-2", &header_utils::generate_request_id())
+                        .body(xml.clone().into_bytes())
+                        .build());
+                }
+                None => {
+                    return Ok(xml_error_response(
+                        StatusCode::NOT_FOUND,
+                        "NoSuchCORSConfiguration",
+                        "The CORS configuration does not exist",
+                        &req_id,
+                    ))
+                }
+            },
+            Err(crate::error::Error::BucketNotFound) => {
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ))
+            }
+            Err(e) => {
+                return Ok(xml_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                    &req_id,
+                ))
+            }
+        }
+    } else if req.has_query_param("lifecycle") {
         match tokio::task::block_in_place(|| {
             bucket_service::get_bucket_lifecycle(storage.as_ref(), bucket)
         }) {
@@ -893,6 +1157,7 @@ pub async fn bucket_post(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::models::Object;
     use crate::server::RequestExt;
     use crate::storage::FilesystemStorage;
@@ -908,11 +1173,35 @@ mod tests {
         Arc::new(FilesystemStorage::new(dir))
     }
 
+    fn auth_disabled_config() -> Arc<AuthConfig> {
+        Arc::new(Config {
+            access_key_id: None,
+            secret_access_key: None,
+            enforce_auth: false,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: std::time::Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
+        })
+    }
+
     async fn parsed_request(uri: &str) -> RequestExt {
         let request = HyperRequest::builder()
             .method("GET")
             .uri(uri)
             .body(Body::empty())
+            .expect("request should build");
+
+        RequestExt::from_hyper(request)
+            .await
+            .expect("request should parse")
+    }
+
+    async fn parsed_request_with_method(method: &str, uri: &str, body: &[u8]) -> RequestExt {
+        let request = HyperRequest::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::from(body.to_vec()))
             .expect("request should build");
 
         RequestExt::from_hyper(request)
@@ -1095,5 +1384,144 @@ mod tests {
         assert!(body.contains("<CommonPrefixes>"));
         assert!(body.contains("<Prefix>docs/2024/</Prefix>"));
         assert!(body.contains("<Prefix>docs/2025/</Prefix>"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_round_trip_request_payment_website_and_cors_bucket_configs() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let request_payment_xml = br#"<?xml version="1.0" encoding="UTF-8"?><RequestPaymentConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Payer>Requester</Payer></RequestPaymentConfiguration>"#;
+        let website_xml = br#"<?xml version="1.0" encoding="UTF-8"?><WebsiteConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IndexDocument><Suffix>index.html</Suffix></IndexDocument></WebsiteConfiguration>"#;
+        let cors_xml = br#"<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>"#;
+
+        let put_request_payment = parsed_request_with_method(
+            "PUT",
+            "http://localhost/bucket?requestPayment",
+            request_payment_xml,
+        )
+        .await;
+        let put_website =
+            parsed_request_with_method("PUT", "http://localhost/bucket?website", website_xml).await;
+        let put_cors =
+            parsed_request_with_method("PUT", "http://localhost/bucket?cors", cors_xml).await;
+
+        assert_eq!(
+            bucket_put(
+                storage.clone(),
+                auth_disabled_config(),
+                "bucket",
+                &put_request_payment,
+                "req-133".to_string(),
+            )
+            .await
+            .expect("request payment put should complete")
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            bucket_put(
+                storage.clone(),
+                auth_disabled_config(),
+                "bucket",
+                &put_website,
+                "req-134".to_string(),
+            )
+            .await
+            .expect("website put should complete")
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            bucket_put(
+                storage.clone(),
+                auth_disabled_config(),
+                "bucket",
+                &put_cors,
+                "req-135".to_string(),
+            )
+            .await
+            .expect("cors put should complete")
+            .status(),
+            StatusCode::OK
+        );
+
+        let request_payment = bucket_get_or_list_objects(
+            storage.clone(),
+            "bucket",
+            &parsed_request("http://localhost/bucket?requestPayment").await,
+            "req-136".to_string(),
+        )
+        .await
+        .expect("request payment get should complete");
+        let request_payment_body = String::from_utf8(
+            hyper::body::to_bytes(request_payment.into_body())
+                .await
+                .expect("body should read")
+                .to_vec(),
+        )
+        .expect("body should be utf8");
+        assert!(request_payment_body.contains("<Payer>Requester</Payer>"));
+
+        let website = bucket_get_or_list_objects(
+            storage.clone(),
+            "bucket",
+            &parsed_request("http://localhost/bucket?website").await,
+            "req-137".to_string(),
+        )
+        .await
+        .expect("website get should complete");
+        let website_body = String::from_utf8(
+            hyper::body::to_bytes(website.into_body())
+                .await
+                .expect("body should read")
+                .to_vec(),
+        )
+        .expect("body should be utf8");
+        assert!(website_body.contains("index.html"));
+
+        let cors = bucket_get_or_list_objects(
+            storage.clone(),
+            "bucket",
+            &parsed_request("http://localhost/bucket?cors").await,
+            "req-138".to_string(),
+        )
+        .await
+        .expect("cors get should complete");
+        let cors_body = String::from_utf8(
+            hyper::body::to_bytes(cors.into_body())
+                .await
+                .expect("body should read")
+                .to_vec(),
+        )
+        .expect("body should be utf8");
+        assert!(cors_body.contains("<AllowedMethod>GET</AllowedMethod>"));
+
+        assert_eq!(
+            bucket_delete(
+                storage.clone(),
+                auth_disabled_config(),
+                "bucket",
+                &parsed_request("http://localhost/bucket?website").await,
+                "req-139".to_string(),
+            )
+            .await
+            .expect("website delete should complete")
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            bucket_delete(
+                storage.clone(),
+                auth_disabled_config(),
+                "bucket",
+                &parsed_request("http://localhost/bucket?cors").await,
+                "req-140".to_string(),
+            )
+            .await
+            .expect("cors delete should complete")
+            .status(),
+            StatusCode::NO_CONTENT
+        );
     }
 }

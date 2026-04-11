@@ -42,11 +42,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Lifecycle executor started");
 
     // Start both servers
-    tracing::info!("S3 API listening on http://127.0.0.1:9000");
-    tracing::info!("UI listening on http://127.0.0.1:9001");
+    tracing::info!("S3 API listening on http://127.0.0.1:{}", config.api_port);
+    tracing::info!("UI listening on http://127.0.0.1:{}", config.ui_port);
 
-    let api_server = Server::new(storage.clone(), Arc::new(config.clone()), 9000).start();
-    let ui_server = start_ui_server(storage, 9001);
+    let api_server = Server::new(storage.clone(), Arc::new(config.clone()), config.api_port).start();
+    let ui_server = start_ui_server(storage, config.ui_port);
 
     // Run both servers concurrently
     let result = tokio::select! {

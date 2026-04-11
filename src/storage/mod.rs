@@ -18,6 +18,11 @@ pub trait Storage: Send + Sync {
     fn get_bucket(&self, name: &str) -> Result<Bucket>;
     fn list_buckets(&self) -> Result<Vec<Bucket>>;
     fn bucket_exists(&self, name: &str) -> Result<bool>;
+    fn update_bucket_metadata(
+        &self,
+        bucket: &str,
+        metadata: std::collections::HashMap<String, String>,
+    ) -> Result<Bucket>;
 
     // Object operations
     fn put_object(&self, bucket: &str, key: String, object: Object) -> Result<()>;
@@ -48,6 +53,14 @@ pub trait Storage: Send + Sync {
 
     // Multipart operations
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload>;
+    fn create_multipart_upload_with_metadata(
+        &self,
+        bucket: &str,
+        key: String,
+        content_type: Option<String>,
+        metadata: std::collections::HashMap<String, String>,
+        provider_metadata: std::collections::HashMap<String, String>,
+    ) -> Result<MultipartUpload>;
     fn upload_part(
         &self,
         bucket: &str,

@@ -1,39 +1,274 @@
 {
   "providers": {
     "s3-family": {
-      "bucket_crud": "pass",
-      "object_crud": "pass",
-      "virtual_hosted_style": "pass",
-      "sigv4": "pass",
-      "multipart": "pass",
-      "versioning": "pass",
-      "advanced_s3_features": "deferred"
+      "bucket_crud": {
+        "status": "pass",
+        "verified_by": [
+          "api::server::tests::bucket_crud_json",
+          "interop::sdk_smoke::s3_basic"
+        ]
+      },
+      "object_crud": {
+        "status": "pass",
+        "verified_by": [
+          "api::server::tests::object_upload_download",
+          "interop::sdk_smoke::s3_basic"
+        ]
+      },
+      "virtual_hosted_style": {
+        "status": "pass",
+        "verified_by": [
+          "server::http::tests::should_route_virtual_hosted_style_bucket_requests"
+        ]
+      },
+      "sigv4": {
+        "status": "pass",
+        "verified_by": [
+          "auth::sigv4::tests::should_verify_valid_sigv4_signature",
+          "server::handlers::auth::tests::should_build_standard_sigv4_canonical_request_with_sorted_query",
+          "interop::sdk_smoke::s3_basic"
+        ]
+      },
+      "multipart": {
+        "status": "pass",
+        "verified_by": [
+          "services::object::tests::should_roundtrip_object_through_service",
+          "interop::sdk_smoke::s3_multipart"
+        ]
+      },
+      "versioning": {
+        "status": "pass",
+        "verified_by": [
+          "services::object::tests::should_list_object_versions_through_service",
+          "server::handlers::bucket::tests::should_list_version_history_when_versions_query_is_requested",
+          "interop::sdk_smoke::s3_versioning"
+        ]
+      },
+      "requester_pays": {
+        "status": "pass",
+        "verified_by": [
+          "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ]
+      },
+      "website_hosting": {
+        "status": "pass",
+        "verified_by": [
+          "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ]
+      },
+      "cors_admin": {
+        "status": "pass",
+        "verified_by": [
+          "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ]
+      },
+      "object_lock_retention": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "sse_request_contracts": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "bucket_post_ops": {
+        "status": "missing",
+        "verified_by": []
+      }
     },
     "azure-blob": {
-      "container_crud": "pass",
-      "blob_crud": "pass",
-      "list_containers": "pass",
-      "list_blobs": "pass",
-      "shared_key_auth": "pass",
-      "sas_auth": "pass",
-      "block_blob_upload": "pass",
-      "append_page_blob": "deferred"
+      "container_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
+          "interop::sdk_smoke::azure_basic"
+        ]
+      },
+      "blob_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
+          "interop::sdk_smoke::azure_basic"
+        ]
+      },
+      "metadata_headers": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
+          "interop::sdk_smoke::azure_metadata"
+        ]
+      },
+      "range_reads": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
+          "interop::sdk_smoke::azure_range"
+        ]
+      },
+      "list_containers": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization",
+          "interop::sdk_smoke::azure_list"
+        ]
+      },
+      "list_blobs": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
+          "interop::sdk_smoke::azure_list"
+        ]
+      },
+      "shared_key_auth": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization",
+          "interop::sdk_smoke::azure_basic"
+        ]
+      },
+      "sas_auth": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization"
+        ]
+      },
+      "block_blob_upload": {
+        "status": "pass",
+        "verified_by": [
+          "providers::azure::tests::should_commit_block_blob_from_put_block_list",
+          "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
+          "interop::sdk_smoke::azure_basic"
+        ]
+      },
+      "append_blob": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "page_blob": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "lease_management": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "snapshots": {
+        "status": "missing",
+        "verified_by": []
+      },
+      "immutability_retention": {
+        "status": "missing",
+        "verified_by": []
+      }
     },
     "gcs": {
-      "bucket_crud": "pass",
-      "object_crud": "pass",
-      "list_objects": "pass",
-      "signed_url_v2": "pass",
-      "resumable_upload": "pass",
-      "json_api_breadth": "partial"
+      "bucket_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
+          "interop::sdk_smoke::gcs_basic"
+        ]
+      },
+      "object_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
+          "interop::sdk_smoke::gcs_basic"
+        ]
+      },
+      "metadata_headers": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_return_generation_headers_and_support_ranges",
+          "interop::sdk_smoke::gcs_metadata"
+        ]
+      },
+      "range_reads": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_return_generation_headers_and_support_ranges",
+          "interop::sdk_smoke::gcs_range"
+        ]
+      },
+      "list_objects": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
+          "interop::sdk_smoke::gcs_list"
+        ]
+      },
+      "signed_url_v2": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_support_gcs_resumable_uploads_and_signed_access"
+        ]
+      },
+      "resumable_upload": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_support_gcs_resumable_uploads_and_signed_access",
+          "interop::sdk_smoke::gcs_basic"
+        ]
+      },
+      "json_api_breadth": {
+        "status": "pass",
+        "verified_by": [
+          "providers::gcs::tests::should_support_gcs_json_api_bucket_and_media_flows",
+          "providers::gcs::tests::should_increment_generation_on_overwrite_and_patch_metageneration",
+          "providers::gcs::tests::should_enforce_gcs_generation_and_metageneration_preconditions",
+          "interop::sdk_smoke::gcs_json_api"
+        ]
+      }
     },
     "oci-object": {
-      "namespace_discovery": "pass",
-      "bucket_crud": "pass",
-      "object_crud": "pass",
-      "list_objects": "pass",
-      "request_signing": "pass",
-      "multipart": "partial"
+      "namespace_discovery": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
+          "interop::sdk_smoke::oci_basic"
+        ]
+      },
+      "bucket_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
+          "interop::sdk_smoke::oci_basic"
+        ]
+      },
+      "object_crud": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
+          "interop::sdk_smoke::oci_basic"
+        ]
+      },
+      "metadata_headers": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_round_trip_oci_metadata_and_prefix_listing",
+          "interop::sdk_smoke::oci_metadata"
+        ]
+      },
+      "list_objects": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_round_trip_oci_metadata_and_prefix_listing",
+          "interop::sdk_smoke::oci_list"
+        ]
+      },
+      "request_signing": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_validate_oci_signature_authorization",
+          "interop::sdk_smoke::oci_basic"
+        ]
+      },
+      "multipart": {
+        "status": "pass",
+        "verified_by": [
+          "providers::oci::tests::should_support_oci_multipart_upload_lifecycle",
+          "interop::sdk_smoke::oci_multipart"
+        ]
+      }
     }
   }
 }

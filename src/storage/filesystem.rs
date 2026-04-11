@@ -68,6 +68,10 @@ impl FilesystemStorage {
         self.bucket_dir(bucket).join("bucket.acl.json")
     }
 
+    fn bucket_metadata_path(&self, bucket: &str) -> PathBuf {
+        self.bucket_dir(bucket).join(".bucket.meta.json")
+    }
+
     fn versioning_marker(&self, bucket: &str) -> PathBuf {
         self.bucket_dir(bucket).join(".versioning-enabled")
     }
@@ -223,6 +227,40 @@ impl FilesystemStorage {
         Ok(())
     }
 
+    fn read_bucket_metadata(&self, bucket: &str) -> Result<HashMap<String, String>> {
+        let path = self.bucket_metadata_path(bucket);
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let json = fs::read_to_string(&path)
+            .map_err(|e| Error::InternalError(format!("Failed to read bucket metadata: {}", e)))?;
+        serde_json::from_str(&json)
+            .map_err(|e| Error::InternalError(format!("Failed to parse bucket metadata: {}", e)))
+    }
+
+    fn write_bucket_metadata(&self, bucket: &str, metadata: &HashMap<String, String>) -> Result<()> {
+        let path = self.bucket_metadata_path(bucket);
+        let json = serde_json::to_string_pretty(metadata)
+            .map_err(|e| Error::InternalError(format!("Failed to serialize bucket metadata: {}", e)))?;
+        fs::write(&path, json)
+            .map_err(|e| Error::InternalError(format!("Failed to write bucket metadata: {}", e)))
+    }
+
+    fn read_object_metadata(&self, metadata_path: &Path) -> Result<Object> {
+        let json = fs::read_to_string(metadata_path)
+            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
+        serde_json::from_str(&json)
+            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))
+    }
+
+    fn write_object_metadata(&self, metadata_path: &Path, object: &Object) -> Result<()> {
+        let json = serde_json::to_string(object)
+            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
+        fs::write(metadata_path, json)
+            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))
+    }
+
     fn version_entries_exist(&self, bucket: &str, object_id: &str) -> Result<bool> {
         let versions_dir = self.versions_dir(bucket, object_id);
         if !versions_dir.exists() {
@@ -286,6 +324,7 @@ impl Storage for FilesystemStorage {
 
         let mut bucket = Bucket::new(name.to_string());
         bucket.versioning_enabled = self.versioning_enabled(name);
+        bucket.metadata = self.read_bucket_metadata(name)?;
         Ok(bucket)
     }
 
@@ -307,6 +346,7 @@ impl Storage for FilesystemStorage {
                 if let Some(bucket_name) = name.to_str() {
                     let mut bucket = Bucket::new(bucket_name.to_string());
                     bucket.versioning_enabled = self.versioning_enabled(bucket_name);
+                    bucket.metadata = self.read_bucket_metadata(bucket_name)?;
                     buckets.push(bucket);
                 }
             }
@@ -317,6 +357,18 @@ impl Storage for FilesystemStorage {
 
     fn bucket_exists(&self, name: &str) -> Result<bool> {
         Ok(self.bucket_dir(name).exists())
+    }
+
+    fn update_bucket_metadata(&self, bucket: &str, metadata: HashMap<String, String>) -> Result<Bucket> {
+        if !self.bucket_exists(bucket)? {
+            return Err(Error::BucketNotFound);
+        }
+
+        self.write_bucket_metadata(bucket, &metadata)?;
+
+        let mut bucket_record = self.get_bucket(bucket)?;
+        bucket_record.metadata = metadata;
+        Ok(bucket_record)
     }
 
     fn put_object(&self, bucket: &str, key: String, object: Object) -> Result<()> {
@@ -490,19 +542,11 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let mut object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let mut object = self.read_object_metadata(&metadata_path)?;
 
         object.storage_class = storage_class.to_string();
 
-        let updated_json = serde_json::to_string(&object)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-
-        fs::write(&metadata_path, updated_json)
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))
+        self.write_object_metadata(&metadata_path, &object)
     }
 
     fn object_exists(&self, bucket: &str, key: &str) -> Result<bool> {
@@ -546,10 +590,7 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-        let object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let object = self.read_object_metadata(&metadata_path)?;
 
         Ok(object.acl.unwrap_or_default())
     }
@@ -562,17 +603,11 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-        let mut object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let mut object = self.read_object_metadata(&metadata_path)?;
 
         object.acl = Some(acl);
 
-        let updated = serde_json::to_string(&object)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-        fs::write(&metadata_path, updated)
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))
+        self.write_object_metadata(&metadata_path, &object)
     }
 
     fn get_bucket_lifecycle(
@@ -711,19 +746,11 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let mut object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let mut object = self.read_object_metadata(&metadata_path)?;
 
         object.tags = tags;
 
-        let updated_json = serde_json::to_string(&object)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-
-        fs::write(&metadata_path, updated_json)
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+        self.write_object_metadata(&metadata_path, &object)?;
 
         Ok(())
     }
@@ -736,20 +763,12 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let mut object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let mut object = self.read_object_metadata(&metadata_path)?;
 
         // Clear all tags
         object.tags.clear();
 
-        let updated_json = serde_json::to_string(&object)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-
-        fs::write(&metadata_path, updated_json)
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+        self.write_object_metadata(&metadata_path, &object)?;
 
         Ok(())
     }
@@ -813,11 +832,28 @@ impl Storage for FilesystemStorage {
     }
 
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload> {
+        self.create_multipart_upload_with_metadata(
+            bucket,
+            key,
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    fn create_multipart_upload_with_metadata(
+        &self,
+        bucket: &str,
+        key: String,
+        content_type: Option<String>,
+        metadata: HashMap<String, String>,
+        provider_metadata: HashMap<String, String>,
+    ) -> Result<MultipartUpload> {
         if !self.bucket_exists(bucket)? {
             return Err(Error::BucketNotFound);
         }
 
-        let upload = MultipartUpload::new(key);
+        let upload = MultipartUpload::new(key, content_type, metadata, provider_metadata);
         let mut uploads = self.load_uploads(bucket)?;
         uploads.insert(upload.upload_id.clone(), upload.clone());
         self.save_uploads(bucket, &uploads)?;
@@ -949,12 +985,19 @@ impl Storage for FilesystemStorage {
         );
 
         // Save completed object
-        let mut obj = Object::new(
+        let mut obj = Object::new_with_metadata(
             upload.key.clone(),
             object_data,
-            "application/octet-stream".to_string(),
+            upload
+                .content_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+            upload.metadata.clone(),
         );
         obj.etag = final_etag.clone();
+        if let Some(storage_class) = upload.provider_metadata.get("storage_class") {
+            obj.storage_class = storage_class.clone();
+        }
         self.put_object(bucket, upload.key, obj)?;
 
         // Clean up multipart directory
@@ -1378,6 +1421,32 @@ mod tests {
 
         storage.delete_bucket_lifecycle(bucket).unwrap();
         assert!(storage.get_bucket_lifecycle(bucket).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_persist_bucket_metadata_sidecar() {
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let bucket = "bucket-meta";
+        storage.create_bucket(bucket.to_string()).unwrap();
+
+        let metadata = HashMap::from([
+            ("s3_requester_pays".to_string(), "true".to_string()),
+            ("s3_website_index".to_string(), "index.html".to_string()),
+        ]);
+
+        storage
+            .update_bucket_metadata(bucket, metadata.clone())
+            .unwrap();
+
+        let fetched = storage.get_bucket(bucket).unwrap();
+        assert_eq!(fetched.metadata, metadata);
+
+        let reopened = FilesystemStorage::new(&base);
+        let reopened_bucket = reopened.get_bucket(bucket).unwrap();
+        assert_eq!(reopened_bucket.metadata, metadata);
 
         let _ = std::fs::remove_dir_all(&base);
     }

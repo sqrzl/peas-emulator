@@ -97,6 +97,10 @@ impl Storage for IndexedStorage {
         self.inner.bucket_exists(name)
     }
 
+    fn update_bucket_metadata(&self, bucket: &str, metadata: HashMap<String, String>) -> Result<Bucket> {
+        self.inner.update_bucket_metadata(bucket, metadata)
+    }
+
     fn put_object(&self, bucket: &str, key: String, object: Object) -> Result<()> {
         self.inner.put_object(bucket, key.clone(), object)?;
         self.update_index_put(bucket, key);
@@ -195,6 +199,23 @@ impl Storage for IndexedStorage {
 
     fn create_multipart_upload(&self, bucket: &str, key: String) -> Result<MultipartUpload> {
         self.inner.create_multipart_upload(bucket, key)
+    }
+
+    fn create_multipart_upload_with_metadata(
+        &self,
+        bucket: &str,
+        key: String,
+        content_type: Option<String>,
+        metadata: HashMap<String, String>,
+        provider_metadata: HashMap<String, String>,
+    ) -> Result<MultipartUpload> {
+        self.inner.create_multipart_upload_with_metadata(
+            bucket,
+            key,
+            content_type,
+            metadata,
+            provider_metadata,
+        )
     }
 
     fn upload_part(

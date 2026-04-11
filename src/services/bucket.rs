@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::models::Bucket;
 use crate::models::{LifecycleConfiguration, MultipartUpload};
 use crate::storage::Storage;
+use std::collections::HashMap;
 
 pub fn list_buckets(storage: &dyn Storage) -> Result<Vec<Bucket>> {
     storage.list_buckets()
@@ -21,6 +22,14 @@ pub fn delete_bucket(storage: &dyn Storage, name: &str) -> Result<()> {
 
 pub fn bucket_exists(storage: &dyn Storage, name: &str) -> Result<bool> {
     storage.bucket_exists(name)
+}
+
+pub fn update_bucket_metadata(
+    storage: &dyn Storage,
+    bucket: &str,
+    metadata: HashMap<String, String>,
+) -> Result<Bucket> {
+    storage.update_bucket_metadata(bucket, metadata)
 }
 
 pub fn set_versioning(storage: &dyn Storage, bucket: &str, enabled: bool) -> Result<()> {

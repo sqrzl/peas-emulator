@@ -12,10 +12,14 @@ const ENV_ACCESS_KEY_ID: &str = "ACCESS_KEY_ID";
 const ENV_SECRET_ACCESS_KEY: &str = "SECRET_ACCESS_KEY";
 const ENV_BLOBS_PATH: &str = "BLOBS_PATH";
 const ENV_LIFECYCLE_HOURS: &str = "LIFECYCLE_HOURS";
+const ENV_API_PORT: &str = "API_PORT";
+const ENV_UI_PORT: &str = "UI_PORT";
 
 // Default values
 const DEFAULT_BLOBS_PATH: &str = "./blobs";
 const DEFAULT_LIFECYCLE_HOURS: u64 = 1;
+const DEFAULT_API_PORT: u16 = 9000;
+const DEFAULT_UI_PORT: u16 = 9001;
 
 /// Global application configuration loaded from environment variables.
 #[derive(Clone, Debug)]
@@ -30,6 +34,10 @@ pub struct Config {
     pub blobs_path: String,
     /// Interval for running lifecycle rules
     pub lifecycle_interval: Duration,
+    /// Port for the API server
+    pub api_port: u16,
+    /// Port for the UI server
+    pub ui_port: u16,
 }
 
 impl Config {
@@ -44,6 +52,12 @@ impl Config {
         let lifecycle_interval_hours = lookup(ENV_LIFECYCLE_HOURS)
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_LIFECYCLE_HOURS);
+        let api_port = lookup(ENV_API_PORT)
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_API_PORT);
+        let ui_port = lookup(ENV_UI_PORT)
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_UI_PORT);
 
         let enforce_auth = access_key_id.is_some() && secret_access_key.is_some();
 
@@ -53,6 +67,8 @@ impl Config {
             enforce_auth,
             blobs_path,
             lifecycle_interval: Duration::from_secs(lifecycle_interval_hours * 3600),
+            api_port,
+            ui_port,
         }
     }
 
@@ -113,6 +129,8 @@ mod tests {
             config.lifecycle_interval,
             Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600)
         );
+        assert_eq!(config.api_port, DEFAULT_API_PORT);
+        assert_eq!(config.ui_port, DEFAULT_UI_PORT);
     }
 
     #[test]
@@ -124,6 +142,8 @@ mod tests {
             ENV_SECRET_ACCESS_KEY => Some("test-secret".to_string()),
             ENV_BLOBS_PATH => Some("/tmp/peas-blobs".to_string()),
             ENV_LIFECYCLE_HOURS => Some("2".to_string()),
+            ENV_API_PORT => Some("9100".to_string()),
+            ENV_UI_PORT => Some("9101".to_string()),
             _ => None,
         });
 
@@ -133,6 +153,8 @@ mod tests {
         assert!(config.enforce_auth);
         assert_eq!(config.blobs_path, "/tmp/peas-blobs");
         assert_eq!(config.lifecycle_interval, Duration::from_secs(7200));
+        assert_eq!(config.api_port, 9100);
+        assert_eq!(config.ui_port, 9101);
         assert!(config.validate_credentials("test-key", "test-secret"));
         assert!(!config.validate_credentials("wrong-key", "test-secret"));
     }
@@ -174,5 +196,7 @@ mod tests {
             config.lifecycle_interval,
             Duration::from_secs(DEFAULT_LIFECYCLE_HOURS * 3600)
         );
+        assert_eq!(config.api_port, DEFAULT_API_PORT);
+        assert_eq!(config.ui_port, DEFAULT_UI_PORT);
     }
 }

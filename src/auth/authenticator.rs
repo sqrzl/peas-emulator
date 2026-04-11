@@ -186,6 +186,8 @@ mod tests {
             enforce_auth,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
         }
     }
 

@@ -11,6 +11,13 @@ build/
 *.tsbuildinfo
 .next/
 
+# Python / Interop
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
 # IDEs
 .vscode/
 .idea/
@@ -35,4 +42,5 @@ logs/
 
 # Misc
 .blobs/
+blobs/
 *.tmp

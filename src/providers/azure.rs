@@ -1,6 +1,8 @@
 use super::ProviderAdapter;
 use crate::auth::{AuthConfig, HttpRequestLike};
-use crate::blob::{BlobBackend, PutBlobRequest};
+use crate::blob::{
+    BlobBackend, BlobRange, CreateUploadSessionRequest, PutBlobRequest, UpdateBlobMetadataRequest,
+};
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -17,10 +19,13 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 const AZURE_VERSION: &str = "2023-11-03";
+const AZURE_BLOB_TYPE_KEY: &str = "azure_blob_type";
 
 #[derive(Default)]
 struct AzureBlockSession {
     blocks: HashMap<String, Vec<u8>>,
+    content_type: Option<String>,
+    metadata: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,13 +37,52 @@ struct AzureResource {
 
 pub struct AzureBlobAdapter {
     block_sessions: Mutex<HashMap<String, AzureBlockSession>>,
+    committed_blocks: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl AzureBlobAdapter {
     pub fn new() -> Self {
         Self {
             block_sessions: Mutex::new(HashMap::new()),
+            committed_blocks: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn blob_state_key(account: &str, container: &str, blob: &str) -> String {
+        format!("{}/{}/{}", account, container, blob)
+    }
+
+    fn parse_range_header(value: &str, size: u64) -> Option<(usize, usize)> {
+        let range = value.strip_prefix("bytes=")?;
+        let (start, end) = range.split_once('-')?;
+        let start = start.parse::<u64>().ok()?;
+        if start >= size {
+            return None;
+        }
+        let end = if end.is_empty() {
+            size.saturating_sub(1)
+        } else {
+            end.parse::<u64>().ok()?.min(size.saturating_sub(1))
+        };
+        if end < start {
+            return None;
+        }
+        Some((start as usize, end as usize))
+    }
+
+    fn parse_write_range_header(value: &str) -> Option<(usize, usize)> {
+        let range = value.strip_prefix("bytes=")?;
+        let (start, end) = range.split_once('-')?;
+        let start = start.parse::<usize>().ok()?;
+        let end = end.parse::<usize>().ok()?;
+        if end < start {
+            return None;
+        }
+        Some((start, end))
+    }
+
+    fn requested_range(req: &Request) -> Option<&str> {
+        req.header("x-ms-range").or_else(|| req.header("range"))
     }
 
     fn parse_resource(req: &Request) -> Result<AzureResource, String> {
@@ -143,18 +187,70 @@ impl AzureBlobAdapter {
         );
 
         for blob in blobs {
+            let blob_type = blob
+                .provider_metadata
+                .get(AZURE_BLOB_TYPE_KEY)
+                .map(|value| value.as_str())
+                .unwrap_or("BlockBlob");
             xml.push_str(&format!(
-                "<Blob><Name>{}</Name><Properties><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><Etag>\"{}\"</Etag><BlobType>BlockBlob</BlobType><Last-Modified>{}</Last-Modified></Properties></Blob>",
+                "<Blob><Name>{}</Name><Properties><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><Etag>\"{}\"</Etag><BlobType>{}</BlobType><Last-Modified>{}</Last-Modified></Properties></Blob>",
                 escape_xml(&blob.key),
                 blob.size,
                 escape_xml(&blob.content_type),
                 escape_xml(&blob.etag),
+                blob_type,
                 blob.last_modified.to_rfc2822(),
             ));
         }
 
         xml.push_str("</Blobs><NextMarker /></EnumerationResults>");
         xml
+    }
+
+    fn block_list_xml(block_ids: &[String]) -> String {
+        let blocks = block_ids
+            .iter()
+            .map(|id| format!("<Committed>{}</Committed>", escape_xml(id)))
+            .collect::<Vec<_>>()
+            .join("");
+        format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>{}</BlockList>",
+            blocks
+        )
+    }
+
+    fn blob_type(blob: &crate::models::Object) -> &str {
+        blob.provider_metadata
+            .get(AZURE_BLOB_TYPE_KEY)
+            .map(|value| value.as_str())
+            .unwrap_or("BlockBlob")
+    }
+
+    fn set_blob_type(blob: &mut crate::models::Object, blob_type: &str) {
+        blob.provider_metadata
+            .insert(AZURE_BLOB_TYPE_KEY.to_string(), blob_type.to_string());
+    }
+
+    fn blob_response(
+        status: StatusCode,
+        blob: &crate::models::Object,
+        body_len: usize,
+        content_range: Option<String>,
+    ) -> ResponseBuilder {
+        let mut builder = Self::response(status)
+            .header("accept-ranges", "bytes")
+            .header("content-length", &body_len.to_string())
+            .header("content-type", &blob.content_type)
+            .header("etag", &format!("\"{}\"", blob.etag))
+            .header("last-modified", &blob.last_modified.to_rfc2822())
+            .header("x-ms-blob-type", Self::blob_type(blob));
+        for (key, value) in &blob.metadata {
+            builder = builder.header(&format!("x-ms-meta-{}", key), value);
+        }
+        if let Some(content_range) = content_range {
+            builder = builder.header("content-range", &content_range);
+        }
+        builder
     }
 
     fn canonicalized_headers(req: &Request) -> String {
@@ -512,16 +608,27 @@ impl AzureBlobAdapter {
             let block_id = req
                 .query_param("blockid")
                 .ok_or_else(|| "Missing blockid query parameter".to_string())?;
-            let session_key = format!("{}/{}/{}", resource.account, container, blob_key);
+            let session_key = Self::blob_state_key(&resource.account, &container, &blob_key);
             let mut sessions = self
                 .block_sessions
                 .lock()
                 .map_err(|_| "Failed to lock Azure block session state".to_string())?;
             sessions
                 .entry(session_key)
-                .or_default()
-                .blocks
-                .insert(block_id.to_string(), req.body.to_vec());
+                .and_modify(|session| {
+                    session.content_type = Some(Self::content_type(&req));
+                    session.metadata = Self::metadata_from_headers(&req);
+                    session.blocks.insert(block_id.to_string(), req.body.to_vec());
+                })
+                .or_insert_with(|| {
+                    let mut session = AzureBlockSession {
+                        blocks: HashMap::new(),
+                        content_type: Some(Self::content_type(&req)),
+                        metadata: Self::metadata_from_headers(&req),
+                    };
+                    session.blocks.insert(block_id.to_string(), req.body.to_vec());
+                    session
+                });
 
             return Ok(Self::response(StatusCode::CREATED).empty());
         }
@@ -530,7 +637,7 @@ impl AzureBlobAdapter {
             let block_ids = Self::parse_block_list(
                 &String::from_utf8(req.body.to_vec()).map_err(|err| err.to_string())?,
             )?;
-            let session_key = format!("{}/{}/{}", resource.account, container, blob_key);
+            let session_key = Self::blob_state_key(&resource.account, &container, &blob_key);
             let mut sessions = self
                 .block_sessions
                 .lock()
@@ -540,7 +647,13 @@ impl AzureBlobAdapter {
                 .ok_or_else(|| "No staged Azure blocks were found".to_string())?;
             let upload = storage
                 .as_ref()
-                .create_upload_session(&container, blob_key.clone())
+                .create_upload_session(CreateUploadSessionRequest {
+                    namespace: container.clone(),
+                    key: blob_key.clone(),
+                    content_type: session.content_type.clone(),
+                    metadata: session.metadata.clone(),
+                    provider_metadata: HashMap::new(),
+                })
                 .map_err(|err| err.to_string())?;
 
             for (index, block_id) in block_ids.iter().enumerate() {
@@ -559,53 +672,243 @@ impl AzureBlobAdapter {
                 .complete_upload_session(&container, &upload.upload_id)
                 .map_err(|err| err.to_string())?;
 
+            self.committed_blocks
+                .lock()
+                .map_err(|_| "Failed to lock Azure committed block state".to_string())?
+                .insert(session_key, block_ids);
+
             return Ok(Self::empty_response(StatusCode::CREATED));
+        }
+
+        if req.query_param("comp") == Some("metadata") && req.method() == Method::PUT {
+            storage
+                .as_ref()
+                .update_blob_metadata(UpdateBlobMetadataRequest {
+                    namespace: container.clone(),
+                    key: blob_key.clone(),
+                    metadata: Self::metadata_from_headers(&req),
+                })
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::empty_response(StatusCode::OK));
+        }
+
+        if req.query_param("comp") == Some("blocklist") && req.method() == Method::GET {
+            let session_key = Self::blob_state_key(&resource.account, &container, &blob_key);
+            let block_ids = self
+                .committed_blocks
+                .lock()
+                .map_err(|_| "Failed to lock Azure committed block state".to_string())?
+                .get(&session_key)
+                .cloned()
+                .unwrap_or_default();
+            return Ok(Self::xml_response(
+                StatusCode::OK,
+                Self::block_list_xml(&block_ids),
+            ));
+        }
+
+        if req.method() == Method::PUT && req.query_param("comp") == Some("appendblock") {
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            if Self::blob_type(&blob) != "AppendBlob" {
+                return Ok(Self::error_response(
+                    StatusCode::CONFLICT,
+                    "InvalidBlobType",
+                    "The blob type is invalid for this operation.",
+                ));
+            }
+
+            blob.data.extend_from_slice(&req.body);
+            blob.size = blob.data.len() as u64;
+            blob.etag = crate::models::object::compute_etag(&blob.data);
+            blob.last_modified = Utc::now();
+            storage
+                .put_object(&container, blob_key.clone(), blob)
+                .map_err(|err| err.to_string())?;
+
+            let stored = storage
+                .get_object(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::response(StatusCode::CREATED)
+                .header("etag", &format!("\"{}\"", stored.etag))
+                .header("x-ms-blob-append-offset", &(stored.size - req.body.len() as u64).to_string())
+                .header("x-ms-blob-committed-block-count", "1")
+                .empty());
+        }
+
+        if req.method() == Method::PUT && req.query_param("comp") == Some("page") {
+            let Some(range_header) = Self::requested_range(&req) else {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidHeaderValue",
+                    "Page writes require a valid x-ms-range header.",
+                ));
+            };
+            let Some((start, end)) = Self::parse_write_range_header(range_header) else {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidHeaderValue",
+                    "Page writes require a valid x-ms-range header.",
+                ));
+            };
+            if start % 512 != 0 || (end + 1) % 512 != 0 {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidPageRange",
+                    "Page blob ranges must align to 512-byte boundaries.",
+                ));
+            }
+
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            if Self::blob_type(&blob) != "PageBlob" {
+                return Ok(Self::error_response(
+                    StatusCode::CONFLICT,
+                    "InvalidBlobType",
+                    "The blob type is invalid for this operation.",
+                ));
+            }
+
+            let expected_len = end - start + 1;
+            if req.body.len() != expected_len {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidPageRange",
+                    "Page payload length must match the requested range.",
+                ));
+            }
+            if end >= blob.data.len() {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidPageRange",
+                    "Page write exceeds the blob length.",
+                ));
+            }
+
+            blob.data[start..=end].copy_from_slice(&req.body);
+            blob.etag = crate::models::object::compute_etag(&blob.data);
+            blob.last_modified = Utc::now();
+            storage
+                .put_object(&container, blob_key.clone(), blob)
+                .map_err(|err| err.to_string())?;
+
+            return Ok(Self::response(StatusCode::CREATED).empty());
         }
 
         match req.method() {
             &Method::PUT => {
-                let stored = storage
-                    .as_ref()
-                    .put_blob(PutBlobRequest {
-                        namespace: container.clone(),
-                        key: blob_key.clone(),
-                        data: req.body.to_vec(),
-                        content_type: Self::content_type(&req),
-                        metadata: Self::metadata_from_headers(&req),
-                        tags: HashMap::new(),
-                    })
-                    .map_err(|err| err.to_string())?;
+                let blob_type = req.header("x-ms-blob-type").unwrap_or("BlockBlob");
+                let stored = if blob_type == "AppendBlob" {
+                    let mut object = crate::models::Object::new_with_metadata(
+                        blob_key.clone(),
+                        req.body.to_vec(),
+                        Self::content_type(&req),
+                        Self::metadata_from_headers(&req),
+                    );
+                    Self::set_blob_type(&mut object, "AppendBlob");
+                    storage
+                        .put_object(&container, blob_key.clone(), object)
+                        .map_err(|err| err.to_string())?;
+                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                } else if blob_type == "PageBlob" {
+                    let declared_len = req
+                        .header("x-ms-blob-content-length")
+                        .or_else(|| req.header("content-length"))
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(req.body.len());
+                    if declared_len % 512 != 0 {
+                        return Ok(Self::error_response(
+                            StatusCode::BAD_REQUEST,
+                            "InvalidHeaderValue",
+                            "Page blob length must be a multiple of 512 bytes.",
+                        ));
+                    }
+                    let mut object = crate::models::Object::new_with_metadata(
+                        blob_key.clone(),
+                        vec![0u8; declared_len],
+                        Self::content_type(&req),
+                        Self::metadata_from_headers(&req),
+                    );
+                    Self::set_blob_type(&mut object, "PageBlob");
+                    storage
+                        .put_object(&container, blob_key.clone(), object)
+                        .map_err(|err| err.to_string())?;
+                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                } else {
+                    let mut stored = storage
+                        .as_ref()
+                        .put_blob(PutBlobRequest {
+                            namespace: container.clone(),
+                            key: blob_key.clone(),
+                            data: req.body.to_vec(),
+                            content_type: Self::content_type(&req),
+                            metadata: Self::metadata_from_headers(&req),
+                            tags: HashMap::new(),
+                        })
+                        .map_err(|err| err.to_string())?;
+                    stored
+                        .provider_metadata
+                        .insert(AZURE_BLOB_TYPE_KEY.to_string(), "BlockBlob".to_string());
+                    let mut object = storage
+                        .get_object(&container, &blob_key)
+                        .map_err(|err| err.to_string())?;
+                    Self::set_blob_type(&mut object, "BlockBlob");
+                    storage
+                        .put_object(&container, blob_key.clone(), object)
+                        .map_err(|err| err.to_string())?;
+                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                };
                 Ok(Self::response(StatusCode::CREATED)
                     .header("etag", &format!("\"{}\"", stored.etag))
                     .header("last-modified", &stored.last_modified.to_rfc2822())
-                    .header("x-ms-blob-type", req.header("x-ms-blob-type").unwrap_or("BlockBlob"))
+                    .header("x-ms-blob-type", Self::blob_type(&stored))
                     .empty())
             }
             &Method::GET => {
-                let blob = storage.as_ref().get_blob(&container, &blob_key).map_err(|err| err.to_string())?;
-                let mut builder = Self::response(StatusCode::OK)
-                    .header("content-length", &blob.size.to_string())
-                    .header("content-type", &blob.content_type)
-                    .header("etag", &format!("\"{}\"", blob.etag))
-                    .header("last-modified", &blob.last_modified.to_rfc2822())
-                    .header("x-ms-blob-type", "BlockBlob");
-                for (key, value) in blob.metadata {
-                    builder = builder.header(&format!("x-ms-meta-{}", key), &value);
+                if let Some(range_header) = Self::requested_range(&req) {
+                    let blob = storage
+                        .as_ref()
+                        .get_blob(&container, &blob_key)
+                        .map_err(|err| err.to_string())?;
+                    if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
+                        let payload = storage
+                            .as_ref()
+                            .get_blob_range(
+                                &container,
+                                &blob_key,
+                                BlobRange {
+                                    start: start as u64,
+                                    end: end as u64,
+                                },
+                            )
+                            .map_err(|err| err.to_string())?;
+                        return Ok(Self::blob_response(
+                            StatusCode::PARTIAL_CONTENT,
+                            &payload.blob,
+                            payload.data.len(),
+                            Some(format!("bytes {}-{}/{}", start, end, blob.size)),
+                        )
+                            .body(payload.data)
+                            .build());
+                    }
+                    return Ok(Self::error_response(
+                        StatusCode::RANGE_NOT_SATISFIABLE,
+                        "InvalidRange",
+                        "The requested range is not satisfiable.",
+                    ));
                 }
-                Ok(builder.body(blob.data).build())
+                let blob = storage.as_ref().get_blob(&container, &blob_key).map_err(|err| err.to_string())?;
+                Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None)
+                    .body(blob.data)
+                    .build())
             }
             &Method::HEAD => {
                 let blob = storage.as_ref().get_blob(&container, &blob_key).map_err(|err| err.to_string())?;
-                let mut builder = Self::response(StatusCode::OK)
-                    .header("content-length", &blob.size.to_string())
-                    .header("content-type", &blob.content_type)
-                    .header("etag", &format!("\"{}\"", blob.etag))
-                    .header("last-modified", &blob.last_modified.to_rfc2822())
-                    .header("x-ms-blob-type", "BlockBlob");
-                for (key, value) in blob.metadata {
-                    builder = builder.header(&format!("x-ms-meta-{}", key), &value);
-                }
-                Ok(builder.empty())
+                Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None).empty())
             }
             &Method::DELETE => {
                 storage.as_ref().delete_blob(&container, &blob_key).map_err(|err| err.to_string())?;
@@ -658,6 +961,8 @@ mod tests {
             enforce_auth: false,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: std::time::Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
         })
     }
 
@@ -668,6 +973,8 @@ mod tests {
             enforce_auth: true,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: std::time::Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
         })
     }
 
@@ -933,5 +1240,302 @@ mod tests {
             .await
             .expect("sas request should complete");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_update_metadata_return_block_list_and_support_ranges() {
+        let adapter = AzureBlobAdapter::new();
+        let storage = temp_storage();
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/media?restype=container",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("container create should succeed");
+
+        let block_one = BASE64.encode("block-a");
+        let block_two = BASE64.encode("block-b");
+        for (block_id, payload) in [(&block_one, b"hello ".as_slice()), (&block_two, b"azure".as_slice())] {
+            adapter
+                .handle_request(
+                    storage.clone(),
+                    auth_disabled(),
+                    parsed_request(
+                        "PUT",
+                        &format!(
+                            "http://localhost/devstoreaccount1/media/greeting.txt?comp=block&blockid={}",
+                            urlencoding::encode(block_id)
+                        ),
+                        &[("x-ms-version", AZURE_VERSION)],
+                        payload,
+                    )
+                    .await,
+                )
+                .await
+                .expect("put block should succeed");
+        }
+
+        let block_list = format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList><Latest>{}</Latest><Latest>{}</Latest></BlockList>",
+            block_one, block_two
+        );
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/media/greeting.txt?comp=blocklist",
+                    &[("x-ms-version", AZURE_VERSION), ("content-type", "application/xml")],
+                    block_list.as_bytes(),
+                )
+                .await,
+            )
+            .await
+            .expect("block list commit should succeed");
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    "http://localhost/devstoreaccount1/media/greeting.txt?comp=blocklist",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("block list fetch should succeed");
+        let body = hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("body should read");
+        let xml = String::from_utf8(body.to_vec()).expect("xml");
+        assert!(xml.contains(&block_one));
+        assert!(xml.contains(&block_two));
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/media/greeting.txt?comp=metadata",
+                    &[("x-ms-version", AZURE_VERSION), ("x-ms-meta-owner", "bob")],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("metadata update should succeed");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "HEAD",
+                    "http://localhost/devstoreaccount1/media/greeting.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("head should succeed");
+        assert_eq!(
+            response
+                .headers()
+                .get("x-ms-meta-owner")
+                .and_then(|value| value.to_str().ok()),
+            Some("bob")
+        );
+
+        let response = adapter
+            .handle_request(
+                storage,
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    "http://localhost/devstoreaccount1/media/greeting.txt",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-range", "bytes=6-10"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("range get should succeed");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .and_then(|value| value.to_str().ok()),
+            Some("bytes 6-10/11")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-ms-meta-owner")
+                .and_then(|value| value.to_str().ok()),
+            Some("bob")
+        );
+        let body = hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("body should read");
+        assert_eq!(body.as_ref(), b"azure");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_support_append_and_page_blob_writes() {
+        let adapter = AzureBlobAdapter::new();
+        let storage = temp_storage();
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state?restype=container",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("container create should succeed");
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/events.log",
+                    &[("x-ms-version", AZURE_VERSION), ("x-ms-blob-type", "AppendBlob")],
+                    b"hello",
+                )
+                .await,
+            )
+            .await
+            .expect("append blob create should succeed");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get("x-ms-blob-type").and_then(|v| v.to_str().ok()),
+            Some("AppendBlob")
+        );
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/events.log?comp=appendblock",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b" world",
+                )
+                .await,
+            )
+            .await
+            .expect("append block should succeed");
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    "http://localhost/devstoreaccount1/state/events.log",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("append blob get should succeed");
+        let body = hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("body should read");
+        assert_eq!(body.as_ref(), b"hello world");
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/page.bin",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-blob-type", "PageBlob"),
+                        ("x-ms-blob-content-length", "512"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("page blob create should succeed");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get("x-ms-blob-type").and_then(|v| v.to_str().ok()),
+            Some("PageBlob")
+        );
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/page.bin?comp=page",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-range", "bytes=0-511"),
+                    ],
+                    &vec![b'a'; 512],
+                )
+                .await,
+            )
+            .await
+            .expect("page write should succeed");
+
+        let response = adapter
+            .handle_request(
+                storage,
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    "http://localhost/devstoreaccount1/state/page.bin",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-range", "bytes=0-7"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("page blob range get should succeed");
+        let body = hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("body should read");
+        assert_eq!(body.as_ref(), b"aaaaaaaa");
     }
 }

@@ -14,8 +14,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Validate compatibility matrix
+        shell: pwsh
+        run: ./tools/check_compat_matrix.ps1
+
       - name: Build
         run: cargo build --all-targets
 
       - name: Test
         run: cargo test
+
+  interop:
+    uses: ./.github/workflows/interop.yml
