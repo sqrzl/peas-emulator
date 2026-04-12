@@ -33,7 +33,7 @@ pub async fn handle_request(
         RouteMatch::ListBuckets => list_buckets(storage, auth_config, req, req_id).await,
 
         RouteMatch::BucketGet(bucket) => {
-            bucket_get_or_list_objects(storage, &bucket, &req, req_id).await
+            bucket_get_or_list_objects(storage, auth_config, &bucket, &req, req_id).await
         }
 
         RouteMatch::BucketPut(bucket) => {
@@ -44,9 +44,9 @@ pub async fn handle_request(
             bucket_delete(storage, auth_config, &bucket, &req, req_id).await
         }
 
-        RouteMatch::BucketHead(bucket) => bucket_head(storage, &bucket, req_id).await,
+        RouteMatch::BucketHead(bucket) => bucket_head(storage, auth_config, &bucket, &req, req_id).await,
 
-        RouteMatch::BucketPost(bucket) => bucket_post(storage, &bucket, &req, req_id).await,
+        RouteMatch::BucketPost(bucket) => bucket_post(storage, auth_config, &bucket, &req, req_id).await,
 
         RouteMatch::ObjectGet(bucket, key) => {
             object_get(storage, auth_config, &bucket, &key, &req, req_id).await
@@ -65,7 +65,7 @@ pub async fn handle_request(
         }
 
         RouteMatch::ObjectPost(bucket, key) => {
-            object_post(storage, &bucket, &key, &req, req_id).await
+            object_post(storage, auth_config, &bucket, &key, &req, req_id).await
         }
 
         RouteMatch::NotFound => Ok(xml_error_response(

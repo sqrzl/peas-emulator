@@ -765,12 +765,7 @@ pub async fn object_put(
                     .empty());
             }
             Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ));
+                return Ok(storage_error_response(&e, &req_id));
             }
         }
     }
@@ -1561,11 +1556,27 @@ pub async fn object_head(
 
 pub async fn object_post(
     storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
     bucket: &str,
     key: &str,
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
+    if let Err(response) = check_authorization(
+        req,
+        &auth_config,
+        &storage,
+        bucket,
+        Some(key),
+        "s3:PutObject",
+    ) {
+        return Ok(response);
+    }
+
+    if let Err(response) = verify_presigned_url(req, bucket, key, &auth_config) {
+        return Ok(response);
+    }
+
     // Complete multipart upload
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
@@ -1675,8 +1686,37 @@ mod s3_contract_tests {
         })
     }
 
+    fn auth_enabled_config() -> Arc<AuthConfig> {
+        Arc::new(AuthConfig {
+            access_key_id: Some("test-access-key".to_string()),
+            secret_access_key: Some("test-secret-key".to_string()),
+            enforce_auth: true,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
+        })
+    }
+
     async fn request(method: &str, headers: &[(&str, &str)], body: &[u8]) -> crate::server::RequestExt {
         let mut builder = HyperRequest::builder().method(method).uri("http://localhost/");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        crate::server::RequestExt::from_hyper(
+            builder.body(Body::from(body.to_vec())).expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
+    }
+
+    async fn request_with_uri(
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> crate::server::RequestExt {
+        let mut builder = HyperRequest::builder().method(method).uri(uri);
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
@@ -1827,5 +1867,86 @@ mod s3_contract_tests {
         .await
         .expect("overwrite should respond");
         assert_eq!(overwrite_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_require_auth_for_object_post_multipart_routes() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let initiate = request_with_uri(
+            "POST",
+            "http://localhost/bucket/object.txt?uploads",
+            &[],
+            b"",
+        )
+        .await;
+        let initiate_response = object_post(
+            storage.clone(),
+            auth_enabled_config(),
+            "bucket",
+            "object.txt",
+            &initiate,
+            "req-auth-initiate".to_string(),
+        )
+        .await
+        .expect("initiate request should respond");
+        assert_eq!(initiate_response.status(), StatusCode::FORBIDDEN);
+
+        let complete = request_with_uri(
+            "POST",
+            "http://localhost/bucket/object.txt?uploadId=test-upload",
+            &[],
+            b"<CompleteMultipartUpload />",
+        )
+        .await;
+        let complete_response = object_post(
+            storage,
+            auth_enabled_config(),
+            "bucket",
+            "object.txt",
+            &complete,
+            "req-auth-complete".to_string(),
+        )
+        .await
+        .expect("complete request should respond");
+        assert_eq!(complete_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_invalid_part_number_for_non_numeric_upload_part_requests() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        let upload = storage
+            .create_multipart_upload("bucket", "object.txt".to_string())
+            .expect("multipart upload should be created");
+
+        let request = request_with_uri(
+            "PUT",
+            &format!(
+                "http://localhost/bucket/object.txt?uploadId={}&partNumber=abc",
+                upload.upload_id
+            ),
+            &[],
+            b"payload",
+        )
+        .await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "object.txt",
+            &request,
+            "req-invalid-part".to_string(),
+        )
+        .await
+        .expect("upload part request should respond");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("body should read");
+        let body = String::from_utf8(body.to_vec()).expect("body should be utf8");
+        assert!(body.contains("<Code>InvalidPartNumber</Code>"));
     }
 }

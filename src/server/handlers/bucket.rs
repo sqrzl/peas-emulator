@@ -73,6 +73,30 @@ const S3_REQUEST_PAYMENT_KEY: &str = "s3_requester_pays";
 const S3_WEBSITE_XML_KEY: &str = "s3_website_xml";
 const S3_CORS_XML_KEY: &str = "s3_cors_xml";
 
+fn bucket_get_action(req: &crate::server::http::Request) -> &'static str {
+    if req.has_query_param("requestPayment") {
+        "s3:GetBucketRequestPayment"
+    } else if req.has_query_param("website") {
+        "s3:GetBucketWebsite"
+    } else if req.has_query_param("cors") {
+        "s3:GetBucketCors"
+    } else if req.has_query_param("lifecycle") {
+        "s3:GetLifecycleConfiguration"
+    } else if req.has_query_param("policy") {
+        "s3:GetBucketPolicy"
+    } else if req.has_query_param("acl") {
+        "s3:GetBucketAcl"
+    } else if req.has_query_param("versioning") {
+        "s3:GetBucketVersioning"
+    } else if req.has_query_param("uploads") {
+        "s3:ListBucketMultipartUploads"
+    } else if req.has_query_param("versions") {
+        "s3:ListBucketVersions"
+    } else {
+        "s3:ListBucket"
+    }
+}
+
 fn metadata_value(xml: &str, tag: &[u8]) -> Option<String> {
     let mut reader = Reader::from_str(xml);
     reader.trim_text(true);
@@ -246,9 +270,15 @@ pub async fn list_buckets(
 
 pub async fn bucket_head(
     storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
     bucket: &str,
+    req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
+    if let Err(response) = check_authorization(req, &auth_config, &storage, bucket, None, "s3:ListBucket") {
+        return Ok(response);
+    }
+
     match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
         Ok(_) => Ok(empty_success_response(StatusCode::OK, &req_id)),
         Err(e) => Ok(storage_error_response(&e, &req_id)),
@@ -630,10 +660,22 @@ pub async fn bucket_put(
 #[allow(clippy::needless_return)]
 pub async fn bucket_get_or_list_objects(
     storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
     bucket: &str,
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
+    if let Err(response) = check_authorization(
+        req,
+        &auth_config,
+        &storage,
+        bucket,
+        None,
+        bucket_get_action(req),
+    ) {
+        return Ok(response);
+    }
+
     if req.has_query_param("requestPayment") {
         match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
             Ok(bucket_record) => {
@@ -1148,6 +1190,7 @@ pub async fn bucket_get_or_list_objects(
 
 pub async fn bucket_post(
     storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
     bucket: &str,
     req: &crate::server::http::Request,
     req_id: String,
@@ -1167,6 +1210,19 @@ pub async fn bucket_post(
         let body_str = String::from_utf8(req.body.to_vec())
             .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
         let objects = parse_delete_keys(&body_str);
+
+        for (key, _) in &objects {
+            if let Err(response) = check_authorization(
+                req,
+                &auth_config,
+                &storage,
+                bucket,
+                Some(key.as_str()),
+                "s3:DeleteObject",
+            ) {
+                return Ok(response);
+            }
+        }
 
         for (key, version) in &objects {
             let _ = tokio::task::block_in_place(|| {
@@ -1213,6 +1269,17 @@ pub async fn bucket_post(
             if let Some((key, data, file_content_type)) =
                 parse_multipart_form_upload(content_type, &req.body)
             {
+                if let Err(response) = check_authorization(
+                    req,
+                    &auth_config,
+                    &storage,
+                    bucket,
+                    Some(key.as_str()),
+                    "s3:PutObject",
+                ) {
+                    return Ok(response);
+                }
+
                 let object = crate::models::Object::new(
                     key.clone(),
                     data,
@@ -1274,6 +1341,18 @@ mod tests {
             access_key_id: None,
             secret_access_key: None,
             enforce_auth: false,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: std::time::Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
+        })
+    }
+
+    fn auth_enabled_config() -> Arc<AuthConfig> {
+        Arc::new(Config {
+            access_key_id: Some("test-access-key".to_string()),
+            secret_access_key: Some("test-secret-key".to_string()),
+            enforce_auth: true,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
@@ -1349,10 +1428,15 @@ mod tests {
         let req = parsed_request("http://localhost/bucket?versions").await;
 
         // Act
-        let resp =
-            bucket_get_or_list_objects(storage.clone(), "bucket", &req, "req-129".to_string())
-                .await
-                .expect("versions listing should complete");
+        let resp = bucket_get_or_list_objects(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            &req,
+            "req-129".to_string(),
+        )
+        .await
+        .expect("versions listing should complete");
 
         // Assert
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1393,6 +1477,7 @@ mod tests {
         // Act
         let first_resp = bucket_get_or_list_objects(
             storage.clone(),
+            auth_disabled_config(),
             "bucket",
             &first_req,
             "req-130".to_string(),
@@ -1418,6 +1503,7 @@ mod tests {
             parsed_request("http://localhost/bucket?list-type=2&continuation-token=beta.txt").await;
         let second_resp = bucket_get_or_list_objects(
             storage.clone(),
+            auth_disabled_config(),
             "bucket",
             &second_req,
             "req-131".to_string(),
@@ -1462,10 +1548,15 @@ mod tests {
                 .await;
 
         // Act
-        let resp =
-            bucket_get_or_list_objects(storage.clone(), "bucket", &req, "req-132".to_string())
-                .await
-                .expect("delimiter listing should complete");
+        let resp = bucket_get_or_list_objects(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            &req,
+            "req-132".to_string(),
+        )
+        .await
+        .expect("delimiter listing should complete");
 
         // Assert
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1544,6 +1635,7 @@ mod tests {
 
         let request_payment = bucket_get_or_list_objects(
             storage.clone(),
+            auth_disabled_config(),
             "bucket",
             &parsed_request("http://localhost/bucket?requestPayment").await,
             "req-136".to_string(),
@@ -1561,6 +1653,7 @@ mod tests {
 
         let website = bucket_get_or_list_objects(
             storage.clone(),
+            auth_disabled_config(),
             "bucket",
             &parsed_request("http://localhost/bucket?website").await,
             "req-137".to_string(),
@@ -1578,6 +1671,7 @@ mod tests {
 
         let cors = bucket_get_or_list_objects(
             storage.clone(),
+            auth_disabled_config(),
             "bucket",
             &parsed_request("http://localhost/bucket?cors").await,
             "req-138".to_string(),
@@ -1645,13 +1739,112 @@ mod tests {
         .await
         .expect("request should parse");
 
-        let response = bucket_post(storage.clone(), "bucket", &request, "req-post".to_string())
-            .await
-            .expect("bucket post should succeed");
+        let response = bucket_post(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            &request,
+            "req-post".to_string(),
+        )
+        .await
+        .expect("bucket post should succeed");
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         let stored = storage.get_object("bucket", "upload.txt").unwrap();
         assert_eq!(stored.data, b"browser upload");
         assert_eq!(stored.content_type, "text/plain");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_require_auth_for_bucket_list_and_head_routes() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let list_req = parsed_request("http://localhost/bucket").await;
+        let list_response = bucket_get_or_list_objects(
+            storage.clone(),
+            auth_enabled_config(),
+            "bucket",
+            &list_req,
+            "req-auth-list".to_string(),
+        )
+        .await
+        .expect("list request should respond");
+        assert_eq!(list_response.status(), StatusCode::FORBIDDEN);
+
+        let head_req = parsed_request_with_method("HEAD", "http://localhost/bucket", &[]).await;
+        let head_response = bucket_head(
+            storage,
+            auth_enabled_config(),
+            "bucket",
+            &head_req,
+            "req-auth-head".to_string(),
+        )
+        .await
+        .expect("head request should respond");
+        assert_eq!(head_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_require_auth_for_bucket_post_delete_and_browser_upload() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "delete-me.txt".to_string(),
+                Object::new(
+                    "delete-me.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let delete_body = br#"<Delete><Object><Key>delete-me.txt</Key></Object></Delete>"#;
+        let delete_request = parsed_request_with_method(
+            "POST",
+            "http://localhost/bucket?delete",
+            delete_body,
+        )
+        .await;
+        let delete_response = bucket_post(
+            storage.clone(),
+            auth_enabled_config(),
+            "bucket",
+            &delete_request,
+            "req-auth-delete".to_string(),
+        )
+        .await
+        .expect("delete request should respond");
+        assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+
+        let boundary = "----peas-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\nupload.txt\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"upload.txt\"\r\nContent-Type: text/plain\r\n\r\nbrowser upload\r\n--{boundary}--\r\n"
+        );
+        let upload_request = crate::server::RequestExt::from_hyper(
+            hyper::Request::builder()
+                .method("POST")
+                .uri("http://localhost/bucket")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(hyper::Body::from(body))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse");
+        let upload_response = bucket_post(
+            storage,
+            auth_enabled_config(),
+            "bucket",
+            &upload_request,
+            "req-auth-upload".to_string(),
+        )
+        .await
+        .expect("upload request should respond");
+        assert_eq!(upload_response.status(), StatusCode::FORBIDDEN);
     }
 }
