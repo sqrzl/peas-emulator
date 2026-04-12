@@ -96,6 +96,62 @@ fn metadata_value(xml: &str, tag: &[u8]) -> Option<String> {
     None
 }
 
+fn parse_multipart_form_upload(
+    content_type: &str,
+    body: &[u8],
+) -> Option<(String, Vec<u8>, String)> {
+    let boundary = content_type
+        .split(';')
+        .map(|part| part.trim())
+        .find_map(|part| part.strip_prefix("boundary="))?;
+    let boundary_marker = format!("--{}", boundary);
+    let payload = String::from_utf8_lossy(body);
+
+    let mut key: Option<String> = None;
+    let mut file: Option<Vec<u8>> = None;
+    let mut file_content_type = "application/octet-stream".to_string();
+
+    for raw_part in payload.split(&boundary_marker) {
+        let part = raw_part.trim();
+        if part.is_empty() || part == "--" {
+            continue;
+        }
+        let part = part.trim_start_matches("\r\n").trim_end_matches("--").trim_end();
+        let Some((raw_headers, raw_body)) = part.split_once("\r\n\r\n") else {
+            continue;
+        };
+        let body = raw_body.trim_end_matches("\r\n");
+
+        let mut field_name: Option<String> = None;
+        let mut filename: Option<String> = None;
+        for header in raw_headers.split("\r\n") {
+            let lower = header.to_ascii_lowercase();
+            if lower.starts_with("content-disposition:") {
+                for token in header.split(';').skip(1).map(|token| token.trim()) {
+                    if let Some(name) = token.strip_prefix("name=\"") {
+                        field_name = Some(name.trim_end_matches('"').to_string());
+                    } else if let Some(name) = token.strip_prefix("filename=\"") {
+                        filename = Some(name.trim_end_matches('"').to_string());
+                    }
+                }
+            } else if lower.starts_with("content-type:") {
+                file_content_type = header
+                    .split_once(':')
+                    .map(|(_, value)| value.trim().to_string())
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+            }
+        }
+
+        match field_name.as_deref() {
+            Some("key") => key = Some(body.to_string()),
+            Some("file") if filename.is_some() => file = Some(body.as_bytes().to_vec()),
+            _ => {}
+        }
+    }
+
+    Some((key?, file?, file_content_type))
+}
+
 fn with_bucket_metadata<F>(
     storage: &dyn Storage,
     bucket: &str,
@@ -1142,6 +1198,46 @@ pub async fn bucket_post(
             .build());
     }
 
+    if let Some(content_type) = req.header("content-type") {
+        if content_type.starts_with("multipart/form-data") {
+            if !tokio::task::block_in_place(|| bucket_service::bucket_exists(storage.as_ref(), bucket))?
+            {
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchBucket",
+                    "Bucket not found",
+                    &req_id,
+                ));
+            }
+
+            if let Some((key, data, file_content_type)) =
+                parse_multipart_form_upload(content_type, &req.body)
+            {
+                let object = crate::models::Object::new(
+                    key.clone(),
+                    data,
+                    file_content_type,
+                );
+                tokio::task::block_in_place(|| {
+                    object_service::put_object(storage.as_ref(), bucket, key.clone(), object)
+                })?;
+
+                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                    .header("Location", &format!("/{}/{}", bucket, key))
+                    .header("x-amz-request-id", &req_id)
+                    .header("x-amz-id-2", &header_utils::generate_request_id())
+                    .empty());
+            }
+
+            return Ok(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Unable to parse multipart form upload",
+                &req_id,
+            ));
+        }
+    }
+
     let xml = xml_utils::error_xml(
         "NotImplemented",
         "Bucket POST operations not yet implemented",
@@ -1523,5 +1619,39 @@ mod tests {
             .status(),
             StatusCode::NO_CONTENT
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_accept_browser_post_uploads() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let boundary = "----peas-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\nupload.txt\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"upload.txt\"\r\nContent-Type: text/plain\r\n\r\nbrowser upload\r\n--{boundary}--\r\n"
+        );
+
+        let request = crate::server::RequestExt::from_hyper(
+            hyper::Request::builder()
+                .method("POST")
+                .uri("http://localhost/bucket")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(hyper::Body::from(body))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse");
+
+        let response = bucket_post(storage.clone(), "bucket", &request, "req-post".to_string())
+            .await
+            .expect("bucket post should succeed");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let stored = storage.get_object("bucket", "upload.txt").unwrap();
+        assert_eq!(stored.data, b"browser upload");
+        assert_eq!(stored.content_type, "text/plain");
     }
 }

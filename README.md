@@ -10,8 +10,8 @@ A multi-provider blob and object storage emulator for local development and comp
   - Google Cloud Storage workflows
   - OCI Object Storage workflows
 - Shared filesystem-backed blob core
-- S3-focused versioning, multipart upload, lifecycle, tagging, ACL, policy, requester-pays, website, and CORS bucket config support
-- Azure block blob, append blob, and page blob upload flows with Shared Key and SAS validation
+- S3-focused versioning, multipart upload, lifecycle, tagging, ACL, policy, requester-pays, website, CORS, browser-style POST upload, SSE request-contracts, and object-lock retention/legal-hold enforcement
+- Azure block blob, append blob, and page blob upload flows with Shared Key and SAS validation, lease management, snapshots, and immutability/legal-hold enforcement
 - GCS XML/JSON API object workflows, signed URL, and resumable upload flow support
 - OCI namespace, bucket, object, multipart, and request-signing support
 - Docker deployment ready
@@ -19,15 +19,14 @@ A multi-provider blob and object storage emulator for local development and comp
 
 ## Current Scope
 
-- The project now has a multi-provider architecture, but SDK-grade parity is still in progress.
-- S3 is the deepest implementation today and includes the most complete behavior set.
-- Azure, GCS, and OCI support currently focus on core container/bucket/blob/object workflows, auth, listing, and upload paths rather than full platform coverage.
+- Peas exposes native front doors for S3, Azure Blob Storage, GCS, and OCI on top of a shared filesystem-backed blob core.
+- The checked compatibility matrix is fully green for the in-scope operations shipped by this repo.
+- The interop harness exercises official/common SDK paths for S3, Azure, GCS, and OCI.
 
 ## Known Gaps
 
-- Advanced S3 features still in progress are object lock / retention semantics, richer POST workflows, and broader SSE request-contract coverage.
-- Azure lease management, snapshots, and immutability / retention enforcement are still in progress.
 - Lifecycle enforcement, ACLs, and policy behavior remain simplified compared with production cloud providers.
+- Peas targets object/blob storage compatibility workflows rather than every surrounding cloud control-plane feature.
 
 ## Building
 

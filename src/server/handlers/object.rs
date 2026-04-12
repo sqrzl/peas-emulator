@@ -12,6 +12,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use urlencoding::decode;
 
+const S3_SSE_MODE_KEY: &str = "s3_sse_mode";
+const S3_SSE_KMS_KEY_ID: &str = "s3_sse_kms_key_id";
+const S3_SSE_C_ALGORITHM_KEY: &str = "s3_sse_c_algorithm";
+const S3_SSE_C_KEY_MD5_KEY: &str = "s3_sse_c_key_md5";
+const S3_OBJECT_LOCK_MODE_KEY: &str = "s3_object_lock_mode";
+const S3_OBJECT_LOCK_UNTIL_KEY: &str = "s3_object_lock_until";
+const S3_OBJECT_LOCK_LEGAL_HOLD_KEY: &str = "s3_object_lock_legal_hold";
+
 fn parse_range(range_header: &str) -> Option<(u64, Option<u64>)> {
     // Expect formats like "bytes=start-end" or "bytes=start-"
     let range = range_header.strip_prefix("bytes=")?;
@@ -107,7 +115,192 @@ fn object_response_headers(
         builder = builder.header(&format!("x-amz-meta-{}", k), v);
     }
 
+    if let Some(value) = obj.provider_metadata.get(S3_SSE_MODE_KEY) {
+        builder = builder.header("x-amz-server-side-encryption", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_SSE_KMS_KEY_ID) {
+        builder = builder.header("x-amz-server-side-encryption-aws-kms-key-id", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_SSE_C_ALGORITHM_KEY) {
+        builder = builder.header("x-amz-server-side-encryption-customer-algorithm", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_SSE_C_KEY_MD5_KEY) {
+        builder = builder.header("x-amz-server-side-encryption-customer-key-MD5", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_OBJECT_LOCK_MODE_KEY) {
+        builder = builder.header("x-amz-object-lock-mode", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_OBJECT_LOCK_UNTIL_KEY) {
+        builder = builder.header("x-amz-object-lock-retain-until-date", value);
+    }
+    if let Some(value) = obj.provider_metadata.get(S3_OBJECT_LOCK_LEGAL_HOLD_KEY) {
+        builder = builder.header("x-amz-object-lock-legal-hold", value);
+    }
+
     builder
+}
+
+fn parse_lock_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .or_else(|_| chrono::DateTime::parse_from_rfc2822(value))
+        .ok()
+        .map(|value| value.with_timezone(&chrono::Utc))
+}
+
+fn object_is_locked(obj: &crate::models::Object) -> bool {
+    obj.provider_metadata
+        .get(S3_OBJECT_LOCK_LEGAL_HOLD_KEY)
+        .map(|value| value.eq_ignore_ascii_case("ON"))
+        .unwrap_or(false)
+        || obj
+            .provider_metadata
+            .get(S3_OBJECT_LOCK_UNTIL_KEY)
+            .and_then(|value| parse_lock_timestamp(value))
+            .map(|value| value > chrono::Utc::now())
+            .unwrap_or(false)
+}
+
+fn locked_object_response(req_id: &str) -> Response<Body> {
+    xml_error_response(
+        StatusCode::FORBIDDEN,
+        "AccessDenied",
+        "Object is protected by an active retention policy or legal hold",
+        req_id,
+    )
+}
+
+fn validate_get_sse_headers(
+    req: &crate::server::http::Request,
+    obj: &crate::models::Object,
+    req_id: &str,
+) -> Option<Response<Body>> {
+    if let Some(expected_algorithm) = obj.provider_metadata.get(S3_SSE_C_ALGORITHM_KEY) {
+        let provided_algorithm = req.header("x-amz-server-side-encryption-customer-algorithm");
+        let provided_md5 = req.header("x-amz-server-side-encryption-customer-key-MD5");
+        let Some(provided_algorithm) = provided_algorithm else {
+            return Some(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Missing SSE-C algorithm for customer encrypted object",
+                req_id,
+            ));
+        };
+        let Some(provided_md5) = provided_md5 else {
+            return Some(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Missing SSE-C key MD5 for customer encrypted object",
+                req_id,
+            ));
+        };
+        if provided_algorithm != expected_algorithm
+            || obj
+                .provider_metadata
+                .get(S3_SSE_C_KEY_MD5_KEY)
+                .map(|value| value != provided_md5)
+                .unwrap_or(true)
+        {
+            return Some(xml_error_response(
+                StatusCode::FORBIDDEN,
+                "AccessDenied",
+                "The provided SSE-C headers do not match the stored object",
+                req_id,
+            ));
+        }
+    }
+    None
+}
+
+fn apply_s3_request_contracts(
+    req: &crate::server::http::Request,
+    obj: &mut crate::models::Object,
+    req_id: &str,
+) -> Result<(), Response<Body>> {
+    if let Some(mode) = req.header("x-amz-server-side-encryption") {
+        if mode != "AES256" && mode != "aws:kms" {
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidArgument",
+                "Unsupported server-side encryption mode",
+                req_id,
+            ));
+        }
+        obj.provider_metadata
+            .insert(S3_SSE_MODE_KEY.to_string(), mode.to_string());
+        if mode == "aws:kms" {
+            if let Some(key_id) = req.header("x-amz-server-side-encryption-aws-kms-key-id") {
+                obj.provider_metadata
+                    .insert(S3_SSE_KMS_KEY_ID.to_string(), key_id.to_string());
+            }
+        } else {
+            obj.provider_metadata.remove(S3_SSE_KMS_KEY_ID);
+        }
+    }
+
+    let sse_c_algorithm = req.header("x-amz-server-side-encryption-customer-algorithm");
+    let sse_c_key = req.header("x-amz-server-side-encryption-customer-key");
+    let sse_c_md5 = req.header("x-amz-server-side-encryption-customer-key-MD5");
+    if sse_c_algorithm.is_some() || sse_c_key.is_some() || sse_c_md5.is_some() {
+        if sse_c_algorithm.is_none() || sse_c_key.is_none() || sse_c_md5.is_none() {
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "SSE-C requests must include algorithm, key, and key MD5 headers",
+                req_id,
+            ));
+        }
+        obj.provider_metadata.insert(
+            S3_SSE_C_ALGORITHM_KEY.to_string(),
+            sse_c_algorithm.unwrap_or_default().to_string(),
+        );
+        obj.provider_metadata.insert(
+            S3_SSE_C_KEY_MD5_KEY.to_string(),
+            sse_c_md5.unwrap_or_default().to_string(),
+        );
+        obj.provider_metadata.remove(S3_SSE_MODE_KEY);
+        obj.provider_metadata.remove(S3_SSE_KMS_KEY_ID);
+    }
+
+    if let Some(mode) = req.header("x-amz-object-lock-mode") {
+        if mode != "GOVERNANCE" && mode != "COMPLIANCE" {
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Unsupported object lock mode",
+                req_id,
+            ));
+        }
+        obj.provider_metadata
+            .insert(S3_OBJECT_LOCK_MODE_KEY.to_string(), mode.to_string());
+    }
+    if let Some(until) = req.header("x-amz-object-lock-retain-until-date") {
+        if parse_lock_timestamp(until).is_none() {
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Invalid object lock retain-until date",
+                req_id,
+            ));
+        }
+        obj.provider_metadata
+            .insert(S3_OBJECT_LOCK_UNTIL_KEY.to_string(), until.to_string());
+    }
+    if let Some(legal_hold) = req.header("x-amz-object-lock-legal-hold") {
+        if !legal_hold.eq_ignore_ascii_case("ON") && !legal_hold.eq_ignore_ascii_case("OFF") {
+            return Err(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "Invalid object lock legal hold value",
+                req_id,
+            ));
+        }
+        obj.provider_metadata.insert(
+            S3_OBJECT_LOCK_LEGAL_HOLD_KEY.to_string(),
+            legal_hold.to_ascii_uppercase(),
+        );
+    }
+
+    Ok(())
 }
 
 fn precondition_failed_response(req_id: &str) -> Response<Body> {
@@ -313,6 +506,9 @@ pub async fn object_get(
             object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
         }) {
             Ok(obj) => {
+                if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
+                    return Ok(response);
+                }
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
                 }
@@ -366,6 +562,9 @@ pub async fn object_get(
                     object_service::get_object_range(storage.as_ref(), bucket, key, start, end_opt)
                 }) {
                     Ok((obj, data)) => {
+                        if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
+                            return Ok(response);
+                        }
                         if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                             return Ok(response);
                         }
@@ -407,6 +606,9 @@ pub async fn object_get(
             object_service::get_object(storage.as_ref(), bucket, key)
         }) {
             Ok(obj) => {
+                if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
+                    return Ok(response);
+                }
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
                 }
@@ -456,6 +658,13 @@ pub async fn object_put(
     }
 
     if req.has_query_param("tagging") {
+        if let Ok(existing) =
+            tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+        {
+            if object_is_locked(&existing) {
+                return Ok(locked_object_response(&req_id));
+            }
+        }
         let body = String::from_utf8(req.body.to_vec())
             .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
         let tags = match xml_utils::parse_tagging_xml(&body) {
@@ -642,6 +851,10 @@ pub async fn object_put(
                     src_obj.content_type.clone(),
                     metadata,
                 );
+                dest_obj.provider_metadata = src_obj.provider_metadata.clone();
+                if let Err(response) = apply_s3_request_contracts(req, &mut dest_obj, &req_id) {
+                    return Ok(response);
+                }
                 if let Some(t) = tags.clone() {
                     dest_obj.tags = t;
                 } else {
@@ -753,6 +966,17 @@ pub async fn object_put(
         content_type,
         metadata,
     );
+    if let Ok(existing) =
+        tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+    {
+        if object_is_locked(&existing) {
+            return Ok(locked_object_response(&req_id));
+        }
+        obj.provider_metadata = existing.provider_metadata.clone();
+    }
+    if let Err(response) = apply_s3_request_contracts(req, &mut obj, &req_id) {
+        return Ok(response);
+    }
     if let Some(t) = tags.clone() {
         obj.tags = t;
     }
@@ -1189,6 +1413,13 @@ pub async fn object_delete(
     }
 
     if req.has_query_param("tagging") {
+        if let Ok(existing) =
+            tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+        {
+            if object_is_locked(&existing) {
+                return Ok(locked_object_response(&req_id));
+            }
+        }
         match tokio::task::block_in_place(|| {
             object_service::delete_object_tags(storage.as_ref(), bucket, key)
         }) {
@@ -1210,6 +1441,11 @@ pub async fn object_delete(
     }
 
     match tokio::task::block_in_place(|| {
+        if let Ok(existing) = object_service::get_object(storage.as_ref(), bucket, key) {
+            if object_is_locked(&existing) {
+                return Err(crate::error::Error::AccessDenied);
+            }
+        }
         object_service::delete_object(storage.as_ref(), bucket, key)
     }) {
         Ok(_) | Err(crate::error::Error::KeyNotFound) => {
@@ -1219,6 +1455,9 @@ pub async fn object_delete(
                 .empty())
         }
         Err(e) => {
+            if matches!(e, crate::error::Error::AccessDenied) {
+                return Ok(locked_object_response(&req_id));
+            }
             let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
             Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
                 .content_type("application/xml; charset=utf-8")
@@ -1253,6 +1492,9 @@ pub async fn object_head(
             object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
         }) {
             Ok(obj) => {
+                if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
+                    return Ok(response);
+                }
                 if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                     return Ok(response);
                 }
@@ -1289,6 +1531,9 @@ pub async fn object_head(
     match tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
     {
         Ok(obj) => {
+            if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
+                return Ok(response);
+            }
             if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
                 return Ok(response);
             }
@@ -1398,5 +1643,189 @@ pub async fn object_post(
             "Object POST operations not yet implemented",
             &req_id,
         ))
+    }
+}
+
+#[cfg(test)]
+mod s3_contract_tests {
+    use super::*;
+    use crate::auth::AuthConfig;
+    use crate::storage::FilesystemStorage;
+    use hyper::{Body, Request as HyperRequest};
+    use std::fs;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn temp_storage() -> Arc<dyn Storage> {
+        let dir =
+            std::env::temp_dir().join(format!("peas-s3-contract-test-{}", uuid::Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        Arc::new(FilesystemStorage::new(dir))
+    }
+
+    fn auth_disabled_config() -> Arc<AuthConfig> {
+        Arc::new(AuthConfig {
+            access_key_id: None,
+            secret_access_key: None,
+            enforce_auth: false,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
+        })
+    }
+
+    async fn request(method: &str, headers: &[(&str, &str)], body: &[u8]) -> crate::server::RequestExt {
+        let mut builder = HyperRequest::builder().method(method).uri("http://localhost/");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        crate::server::RequestExt::from_hyper(
+            builder.body(Body::from(body.to_vec())).expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_round_trip_sse_headers_and_require_matching_sse_c_reads() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let put = request(
+            "PUT",
+            &[
+                ("x-amz-server-side-encryption-customer-algorithm", "AES256"),
+                ("x-amz-server-side-encryption-customer-key", "secret"),
+                ("x-amz-server-side-encryption-customer-key-MD5", "md5-value"),
+            ],
+            b"payload",
+        )
+        .await;
+        let put_response = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "locked.txt",
+            &put,
+            "req-sse-put".to_string(),
+        )
+        .await
+        .expect("put should succeed");
+        assert_eq!(put_response.status(), StatusCode::OK);
+
+        let head = request(
+            "HEAD",
+            &[
+                ("x-amz-server-side-encryption-customer-algorithm", "AES256"),
+                ("x-amz-server-side-encryption-customer-key-MD5", "md5-value"),
+            ],
+            b"",
+        )
+        .await;
+        let head_response = object_head(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "locked.txt",
+            &head,
+            "req-sse-head".to_string(),
+        )
+        .await
+        .expect("head should succeed");
+        assert_eq!(head_response.status(), StatusCode::OK);
+        assert_eq!(
+            head_response
+                .headers()
+                .get("x-amz-server-side-encryption-customer-algorithm")
+                .and_then(|value| value.to_str().ok()),
+            Some("AES256")
+        );
+
+        let bad_head = request("HEAD", &[], b"").await;
+        let bad_head_response = object_head(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "locked.txt",
+            &bad_head,
+            "req-sse-bad".to_string(),
+        )
+        .await
+        .expect("head should respond");
+        assert_eq!(bad_head_response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_block_mutation_when_object_lock_headers_are_active() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let put = request(
+            "PUT",
+            &[
+                ("x-amz-object-lock-mode", "GOVERNANCE"),
+                ("x-amz-object-lock-retain-until-date", "2099-01-01T00:00:00Z"),
+                ("x-amz-object-lock-legal-hold", "ON"),
+            ],
+            b"payload",
+        )
+        .await;
+        let put_response = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "governed.txt",
+            &put,
+            "req-lock-put".to_string(),
+        )
+        .await
+        .expect("put should succeed");
+        assert_eq!(put_response.status(), StatusCode::OK);
+
+        let head = request("HEAD", &[], b"").await;
+        let head_response = object_head(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "governed.txt",
+            &head,
+            "req-lock-head".to_string(),
+        )
+        .await
+        .expect("head should succeed");
+        assert_eq!(
+            head_response
+                .headers()
+                .get("x-amz-object-lock-mode")
+                .and_then(|value| value.to_str().ok()),
+            Some("GOVERNANCE")
+        );
+
+        let delete = request("DELETE", &[], b"").await;
+        let delete_response = object_delete(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "governed.txt",
+            &delete,
+            "req-lock-delete".to_string(),
+        )
+        .await
+        .expect("delete should respond");
+        assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+
+        let overwrite = request("PUT", &[], b"new payload").await;
+        let overwrite_response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "governed.txt",
+            &overwrite,
+            "req-lock-overwrite".to_string(),
+        )
+        .await
+        .expect("overwrite should respond");
+        assert_eq!(overwrite_response.status(), StatusCode::FORBIDDEN);
     }
 }

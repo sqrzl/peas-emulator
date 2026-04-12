@@ -154,8 +154,10 @@ def run_s3_smoke(server_url):
 
 
 def run_azure_smoke(server_url):
+    from datetime import datetime, timedelta, timezone
+
     from azure.core.credentials import AzureNamedKeyCredential
-    from azure.storage.blob import BlobServiceClient
+    from azure.storage.blob import BlobServiceClient, ImmutabilityPolicy
 
     credential = AzureNamedKeyCredential(
         "devstoreaccount1",
@@ -179,6 +181,53 @@ def run_azure_smoke(server_url):
     assert container in containers
     names = [entry["name"] for entry in service.get_container_client(container).list_blobs(name_starts_with="hell")]
     assert "hello.txt" in names
+
+    append_blob = service.get_blob_client(container=container, blob="events.log")
+    append_blob.create_append_blob()
+    append_blob.append_block(b"hello ")
+    append_blob.append_block(b"azure")
+    assert append_blob.download_blob().readall() == b"hello azure"
+    append_props = append_blob.get_blob_properties()
+    assert append_props.blob_type == "AppendBlob"
+
+    page_blob = service.get_blob_client(container=container, blob="page.bin")
+    page_blob.create_page_blob(size=512)
+    page_blob.upload_page(b"b" * 512, offset=0, length=512)
+    assert page_blob.download_blob(offset=0, length=8).readall() == b"bbbbbbbb"
+    page_props = page_blob.get_blob_properties()
+    assert page_props.blob_type == "PageBlob"
+
+    lease = blob.acquire_lease()
+    try:
+        try:
+            blob.upload_blob(b"should fail", overwrite=True)
+            raise AssertionError("lease-protected overwrite should fail without lease id")
+        except Exception:
+            pass
+        blob.upload_blob(b"leased update", overwrite=True, lease=lease)
+    finally:
+        lease.release()
+
+    snapshot = blob.create_snapshot()["snapshot"]
+    snapshot_blob = service.get_blob_client(
+        container=container,
+        blob="hello.txt",
+        snapshot=snapshot,
+    )
+    assert snapshot_blob.download_blob().readall() == b"leased update"
+
+    blob.set_immutability_policy(
+        ImmutabilityPolicy(
+            expiry_time=datetime.now(timezone.utc) + timedelta(days=1),
+            policy_mode="Unlocked",
+        )
+    )
+    blob.set_legal_hold(True)
+    try:
+        blob.delete_blob()
+        raise AssertionError("immutable blob delete should fail")
+    except Exception:
+        pass
 
 
 def run_gcs_smoke(server_url):

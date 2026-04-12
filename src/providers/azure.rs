@@ -5,7 +5,10 @@ use crate::blob::{
 };
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use http::{Method, StatusCode};
@@ -20,6 +23,16 @@ use std::sync::{Arc, Mutex};
 
 const AZURE_VERSION: &str = "2023-11-03";
 const AZURE_BLOB_TYPE_KEY: &str = "azure_blob_type";
+const AZURE_LEASE_ID_KEY: &str = "azure_lease_id";
+const AZURE_LEASE_STATE_KEY: &str = "azure_lease_state";
+const AZURE_LEASE_STATUS_KEY: &str = "azure_lease_status";
+const AZURE_LEASE_DURATION_KEY: &str = "azure_lease_duration";
+const AZURE_SNAPSHOT_TIME_KEY: &str = "azure_snapshot_time";
+const AZURE_SNAPSHOT_SOURCE_KEY: &str = "azure_snapshot_source";
+const AZURE_IMMUTABILITY_UNTIL_KEY: &str = "azure_immutability_until";
+const AZURE_IMMUTABILITY_MODE_KEY: &str = "azure_immutability_mode";
+const AZURE_LEGAL_HOLD_KEY: &str = "azure_legal_hold";
+const AZURE_SNAPSHOT_PREFIX: &str = "__peas_azure_snapshot__";
 
 #[derive(Default)]
 struct AzureBlockSession {
@@ -186,7 +199,7 @@ impl AzureBlobAdapter {
             escape_xml(container)
         );
 
-        for blob in blobs {
+        for blob in blobs.iter().filter(|blob| !Self::is_snapshot_storage_key(&blob.key)) {
             let blob_type = blob
                 .provider_metadata
                 .get(AZURE_BLOB_TYPE_KEY)
@@ -226,6 +239,163 @@ impl AzureBlobAdapter {
             .unwrap_or("BlockBlob")
     }
 
+    fn snapshot_storage_key(blob_key: &str, snapshot: &str) -> String {
+        format!(
+            "{}/{}/{}",
+            AZURE_SNAPSHOT_PREFIX,
+            URL_SAFE_NO_PAD.encode(blob_key.as_bytes()),
+            snapshot
+        )
+    }
+
+    fn is_snapshot_storage_key(key: &str) -> bool {
+        key.starts_with(AZURE_SNAPSHOT_PREFIX)
+    }
+
+    fn snapshot_query(req: &Request) -> Option<String> {
+        req.query_param("snapshot").map(|value| value.to_string())
+    }
+
+    fn snapshot_timestamp() -> String {
+        Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+    }
+
+    fn lease_id(blob: &crate::models::Object) -> Option<&str> {
+        blob.provider_metadata
+            .get(AZURE_LEASE_ID_KEY)
+            .map(|value| value.as_str())
+    }
+
+    fn lease_status(blob: &crate::models::Object) -> &str {
+        blob.provider_metadata
+            .get(AZURE_LEASE_STATUS_KEY)
+            .map(|value| value.as_str())
+            .unwrap_or("unlocked")
+    }
+
+    fn lease_state(blob: &crate::models::Object) -> &str {
+        blob.provider_metadata
+            .get(AZURE_LEASE_STATE_KEY)
+            .map(|value| value.as_str())
+            .unwrap_or("available")
+    }
+
+    fn lease_duration(blob: &crate::models::Object) -> Option<&str> {
+        blob.provider_metadata
+            .get(AZURE_LEASE_DURATION_KEY)
+            .map(|value| value.as_str())
+    }
+
+    fn has_active_lease(blob: &crate::models::Object) -> bool {
+        Self::lease_status(blob) == "locked" && Self::lease_id(blob).is_some()
+    }
+
+    fn retention_until(blob: &crate::models::Object) -> Option<DateTime<Utc>> {
+        blob.provider_metadata
+            .get(AZURE_IMMUTABILITY_UNTIL_KEY)
+            .and_then(|value| {
+                DateTime::parse_from_rfc3339(value)
+                    .or_else(|_| DateTime::parse_from_rfc2822(value))
+                    .ok()
+            })
+            .map(|value| value.with_timezone(&Utc))
+    }
+
+    fn has_legal_hold(blob: &crate::models::Object) -> bool {
+        blob.provider_metadata
+            .get(AZURE_LEGAL_HOLD_KEY)
+            .map(|value| value == "true")
+            .unwrap_or(false)
+    }
+
+    fn is_immutable(blob: &crate::models::Object) -> bool {
+        Self::has_legal_hold(blob)
+            || Self::retention_until(blob)
+                .map(|value| value > Utc::now())
+                .unwrap_or(false)
+    }
+
+    fn ensure_lease_allows(req: &Request, blob: &crate::models::Object) -> Result<(), Response<Body>> {
+        if !Self::has_active_lease(blob) {
+            return Ok(());
+        }
+
+        let Some(expected) = Self::lease_id(blob) else {
+            return Ok(());
+        };
+
+        match req.header("x-ms-lease-id") {
+            Some(provided) if provided == expected => Ok(()),
+            Some(_) => Err(Self::error_response(
+                StatusCode::PRECONDITION_FAILED,
+                "LeaseIdMismatchWithBlobOperation",
+                "The lease ID specified did not match the lease ID for the blob.",
+            )),
+            None => Err(Self::error_response(
+                StatusCode::PRECONDITION_FAILED,
+                "LeaseIdMissing",
+                "There is currently a lease on the blob and no lease ID was specified in the request.",
+            )),
+        }
+    }
+
+    fn ensure_mutation_allowed(
+        req: &Request,
+        blob: &crate::models::Object,
+    ) -> Result<(), Response<Body>> {
+        if Self::is_immutable(blob) {
+            return Err(Self::error_response(
+                StatusCode::CONFLICT,
+                "BlobImmutableDueToPolicy",
+                "The blob is immutable due to an active policy or legal hold.",
+            ));
+        }
+        Self::ensure_lease_allows(req, blob)
+    }
+
+    fn set_lease_state(
+        blob: &mut crate::models::Object,
+        lease_id: Option<String>,
+        state: &str,
+        status: &str,
+        duration: Option<String>,
+    ) {
+        match lease_id {
+            Some(lease_id) => {
+                blob.provider_metadata
+                    .insert(AZURE_LEASE_ID_KEY.to_string(), lease_id);
+            }
+            None => {
+                blob.provider_metadata.remove(AZURE_LEASE_ID_KEY);
+            }
+        }
+        blob.provider_metadata
+            .insert(AZURE_LEASE_STATE_KEY.to_string(), state.to_string());
+        blob.provider_metadata
+            .insert(AZURE_LEASE_STATUS_KEY.to_string(), status.to_string());
+        match duration {
+            Some(duration) => {
+                blob.provider_metadata
+                    .insert(AZURE_LEASE_DURATION_KEY.to_string(), duration);
+            }
+            None => {
+                blob.provider_metadata.remove(AZURE_LEASE_DURATION_KEY);
+            }
+        }
+    }
+
+    fn lookup_blob(
+        storage: &Arc<dyn Storage>,
+        container: &str,
+        blob_key: &str,
+        snapshot: Option<&str>,
+    ) -> Result<crate::models::Object, String> {
+        let key = snapshot
+            .map(|value| Self::snapshot_storage_key(blob_key, value))
+            .unwrap_or_else(|| blob_key.to_string());
+        storage.get_object(container, &key).map_err(|err| err.to_string())
+    }
+
     fn set_blob_type(blob: &mut crate::models::Object, blob_type: &str) {
         blob.provider_metadata
             .insert(AZURE_BLOB_TYPE_KEY.to_string(), blob_type.to_string());
@@ -244,6 +414,24 @@ impl AzureBlobAdapter {
             .header("etag", &format!("\"{}\"", blob.etag))
             .header("last-modified", &blob.last_modified.to_rfc2822())
             .header("x-ms-blob-type", Self::blob_type(blob));
+        if let Some(snapshot) = blob.provider_metadata.get(AZURE_SNAPSHOT_TIME_KEY) {
+            builder = builder.header("x-ms-snapshot", snapshot);
+        }
+        if let Some(value) = blob.provider_metadata.get(AZURE_IMMUTABILITY_UNTIL_KEY) {
+            builder = builder.header("x-ms-immutability-policy-until-date", value);
+        }
+        if let Some(value) = blob.provider_metadata.get(AZURE_IMMUTABILITY_MODE_KEY) {
+            builder = builder.header("x-ms-immutability-policy-mode", value);
+        }
+        if let Some(value) = blob.provider_metadata.get(AZURE_LEGAL_HOLD_KEY) {
+            builder = builder.header("x-ms-legal-hold", value);
+        }
+        builder = builder
+            .header("x-ms-lease-status", Self::lease_status(blob))
+            .header("x-ms-lease-state", Self::lease_state(blob));
+        if let Some(duration) = Self::lease_duration(blob) {
+            builder = builder.header("x-ms-lease-duration", duration);
+        }
         for (key, value) in &blob.metadata {
             builder = builder.header(&format!("x-ms-meta-{}", key), value);
         }
@@ -603,6 +791,194 @@ impl AzureBlobAdapter {
                 "Blob requests must include a blob name",
             ));
         };
+        let snapshot = Self::snapshot_query(&req);
+
+        if req.method() == Method::PUT && req.query_param("comp") == Some("lease") {
+            let action = req.header("x-ms-lease-action").unwrap_or("");
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            match action {
+                "acquire" => {
+                    if Self::has_active_lease(&blob) {
+                        return Ok(Self::error_response(
+                            StatusCode::CONFLICT,
+                            "LeaseAlreadyPresent",
+                            "The blob already has an active lease.",
+                        ));
+                    }
+                    let lease_id = req
+                        .header("x-ms-proposed-lease-id")
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    let duration = req
+                        .header("x-ms-lease-duration")
+                        .unwrap_or("-1")
+                        .to_string();
+                    Self::set_lease_state(
+                        &mut blob,
+                        Some(lease_id.clone()),
+                        "leased",
+                        "locked",
+                        Some(if duration == "-1" {
+                            "infinite".to_string()
+                        } else {
+                            "fixed".to_string()
+                        }),
+                    );
+                    storage
+                        .put_object(&container, blob_key.clone(), blob)
+                        .map_err(|err| err.to_string())?;
+                    return Ok(Self::response(StatusCode::CREATED)
+                        .header("x-ms-lease-id", &lease_id)
+                        .empty());
+                }
+                "renew" => {
+                    if let Err(response) = Self::ensure_lease_allows(&req, &blob) {
+                        return Ok(response);
+                    }
+                    storage
+                        .put_object(&container, blob_key.clone(), blob.clone())
+                        .map_err(|err| err.to_string())?;
+                    return Ok(Self::response(StatusCode::OK)
+                        .header("x-ms-lease-id", Self::lease_id(&blob).unwrap_or(""))
+                        .empty());
+                }
+                "release" => {
+                    if let Err(response) = Self::ensure_lease_allows(&req, &blob) {
+                        return Ok(response);
+                    }
+                    Self::set_lease_state(&mut blob, None, "available", "unlocked", None);
+                    storage
+                        .put_object(&container, blob_key.clone(), blob)
+                        .map_err(|err| err.to_string())?;
+                    return Ok(Self::empty_response(StatusCode::OK));
+                }
+                "break" => {
+                    Self::set_lease_state(&mut blob, None, "broken", "unlocked", None);
+                    storage
+                        .put_object(&container, blob_key.clone(), blob)
+                        .map_err(|err| err.to_string())?;
+                    return Ok(Self::response(StatusCode::ACCEPTED)
+                        .header("x-ms-lease-time", "0")
+                        .empty());
+                }
+                _ => {
+                    return Ok(Self::error_response(
+                        StatusCode::BAD_REQUEST,
+                        "InvalidHeaderValue",
+                        "Unsupported Azure lease action.",
+                    ));
+                }
+            }
+        }
+
+        if req.method() == Method::PUT && req.query_param("comp") == Some("snapshot") {
+            let blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            let snapshot_time = Self::snapshot_timestamp();
+            let snapshot_key = Self::snapshot_storage_key(&blob_key, &snapshot_time);
+            let mut snapshot_blob = blob.clone();
+            snapshot_blob.key = snapshot_key.clone();
+            snapshot_blob.provider_metadata.remove(AZURE_LEASE_ID_KEY);
+            snapshot_blob.provider_metadata.remove(AZURE_LEASE_STATE_KEY);
+            snapshot_blob.provider_metadata.remove(AZURE_LEASE_STATUS_KEY);
+            snapshot_blob.provider_metadata.remove(AZURE_LEASE_DURATION_KEY);
+            snapshot_blob.provider_metadata.insert(
+                AZURE_SNAPSHOT_TIME_KEY.to_string(),
+                snapshot_time.clone(),
+            );
+            snapshot_blob.provider_metadata.insert(
+                AZURE_SNAPSHOT_SOURCE_KEY.to_string(),
+                blob_key.clone(),
+            );
+            storage
+                .put_object(&container, snapshot_key, snapshot_blob)
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::response(StatusCode::CREATED)
+                .header("x-ms-snapshot", &snapshot_time)
+                .empty());
+        }
+
+        if req.method() == Method::PUT
+            && matches!(
+                req.query_param("comp"),
+                Some("immutabilityPolicies") | Some("immutabilitypolicy")
+            )
+        {
+            let until = req
+                .header("x-ms-immutability-policy-until-date")
+                .ok_or_else(|| "Missing immutability policy until date".to_string())?;
+            let mode = req
+                .header("x-ms-immutability-policy-mode")
+                .unwrap_or("Unlocked");
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            blob.provider_metadata.insert(
+                AZURE_IMMUTABILITY_UNTIL_KEY.to_string(),
+                until.to_string(),
+            );
+            blob.provider_metadata.insert(
+                AZURE_IMMUTABILITY_MODE_KEY.to_string(),
+                mode.to_string(),
+            );
+            storage
+                .put_object(&container, blob_key.clone(), blob)
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::response(StatusCode::OK)
+                .header("x-ms-immutability-policy-until-date", until)
+                .header("x-ms-immutability-policy-mode", mode)
+                .empty());
+        }
+
+        if req.method() == Method::DELETE
+            && matches!(
+                req.query_param("comp"),
+                Some("immutabilityPolicies") | Some("immutabilitypolicy")
+            )
+        {
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            blob.provider_metadata.remove(AZURE_IMMUTABILITY_UNTIL_KEY);
+            blob.provider_metadata.remove(AZURE_IMMUTABILITY_MODE_KEY);
+            storage
+                .put_object(&container, blob_key.clone(), blob)
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::empty_response(StatusCode::ACCEPTED));
+        }
+
+        if req.method() == Method::PUT && req.query_param("comp") == Some("legalhold") {
+            let enabled = req
+                .header("x-ms-legal-hold")
+                .map(|value| value.eq_ignore_ascii_case("true"))
+                .or_else(|| {
+                    String::from_utf8(req.body.to_vec())
+                        .ok()
+                        .map(|body| body.to_ascii_lowercase().contains("true"))
+                })
+                .unwrap_or(false);
+            let mut blob = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            blob.provider_metadata.insert(
+                AZURE_LEGAL_HOLD_KEY.to_string(),
+                enabled.to_string(),
+            );
+            storage
+                .put_object(&container, blob_key.clone(), blob)
+                .map_err(|err| err.to_string())?;
+            return Ok(Self::response(StatusCode::OK)
+                .header("x-ms-legal-hold", &enabled.to_string())
+                .empty());
+        }
 
         if req.method() == Method::PUT && req.query_param("comp") == Some("block") {
             let block_id = req
@@ -681,6 +1057,13 @@ impl AzureBlobAdapter {
         }
 
         if req.query_param("comp") == Some("metadata") && req.method() == Method::PUT {
+            let existing = storage
+                .as_ref()
+                .get_blob(&container, &blob_key)
+                .map_err(|err| err.to_string())?;
+            if let Err(response) = Self::ensure_mutation_allowed(&req, &existing) {
+                return Ok(response);
+            }
             storage
                 .as_ref()
                 .update_blob_metadata(UpdateBlobMetadataRequest {
@@ -712,6 +1095,9 @@ impl AzureBlobAdapter {
                 .as_ref()
                 .get_blob(&container, &blob_key)
                 .map_err(|err| err.to_string())?;
+            if let Err(response) = Self::ensure_mutation_allowed(&req, &blob) {
+                return Ok(response);
+            }
             if Self::blob_type(&blob) != "AppendBlob" {
                 return Ok(Self::error_response(
                     StatusCode::CONFLICT,
@@ -765,6 +1151,9 @@ impl AzureBlobAdapter {
                 .as_ref()
                 .get_blob(&container, &blob_key)
                 .map_err(|err| err.to_string())?;
+            if let Err(response) = Self::ensure_mutation_allowed(&req, &blob) {
+                return Ok(response);
+            }
             if Self::blob_type(&blob) != "PageBlob" {
                 return Ok(Self::error_response(
                     StatusCode::CONFLICT,
@@ -801,6 +1190,18 @@ impl AzureBlobAdapter {
 
         match req.method() {
             &Method::PUT => {
+                if snapshot.is_some() {
+                    return Ok(Self::error_response(
+                        StatusCode::BAD_REQUEST,
+                        "InvalidQueryParameterValue",
+                        "Snapshots are read-only.",
+                    ));
+                }
+                if let Ok(existing) = storage.as_ref().get_blob(&container, &blob_key) {
+                    if let Err(response) = Self::ensure_mutation_allowed(&req, &existing) {
+                        return Ok(response);
+                    }
+                }
                 let blob_type = req.header("x-ms-blob-type").unwrap_or("BlockBlob");
                 let stored = if blob_type == "AppendBlob" {
                     let mut object = crate::models::Object::new_with_metadata(
@@ -869,23 +1270,28 @@ impl AzureBlobAdapter {
                     .empty())
             }
             &Method::GET => {
+                let blob = match Self::lookup_blob(&storage, &container, &blob_key, snapshot.as_deref()) {
+                    Ok(blob) => blob,
+                    Err(err) => return Err(err),
+                };
                 if let Some(range_header) = Self::requested_range(&req) {
-                    let blob = storage
-                        .as_ref()
-                        .get_blob(&container, &blob_key)
-                        .map_err(|err| err.to_string())?;
                     if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
-                        let payload = storage
-                            .as_ref()
-                            .get_blob_range(
-                                &container,
-                                &blob_key,
-                                BlobRange {
-                                    start: start as u64,
-                                    end: end as u64,
-                                },
-                            )
-                            .map_err(|err| err.to_string())?;
+                        let payload = if snapshot.is_some() {
+                            let data = blob.data[start..=end].to_vec();
+                            crate::blob::BlobPayload { blob: blob.clone(), data }
+                        } else {
+                            storage
+                                .as_ref()
+                                .get_blob_range(
+                                    &container,
+                                    &blob_key,
+                                    BlobRange {
+                                        start: start as u64,
+                                        end: end as u64,
+                                    },
+                                )
+                                .map_err(|err| err.to_string())?
+                        };
                         return Ok(Self::blob_response(
                             StatusCode::PARTIAL_CONTENT,
                             &payload.blob,
@@ -901,16 +1307,30 @@ impl AzureBlobAdapter {
                         "The requested range is not satisfiable.",
                     ));
                 }
-                let blob = storage.as_ref().get_blob(&container, &blob_key).map_err(|err| err.to_string())?;
                 Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None)
                     .body(blob.data)
                     .build())
             }
             &Method::HEAD => {
-                let blob = storage.as_ref().get_blob(&container, &blob_key).map_err(|err| err.to_string())?;
+                let blob = Self::lookup_blob(&storage, &container, &blob_key, snapshot.as_deref())?;
                 Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None).empty())
             }
             &Method::DELETE => {
+                if let Some(snapshot) = snapshot.as_deref() {
+                    let snapshot_key = Self::snapshot_storage_key(&blob_key, snapshot);
+                    storage
+                        .as_ref()
+                        .delete_blob(&container, &snapshot_key)
+                        .map_err(|err| err.to_string())?;
+                    return Ok(Self::empty_response(StatusCode::ACCEPTED));
+                }
+                let blob = storage
+                    .as_ref()
+                    .get_blob(&container, &blob_key)
+                    .map_err(|err| err.to_string())?;
+                if let Err(response) = Self::ensure_mutation_allowed(&req, &blob) {
+                    return Ok(response);
+                }
                 storage.as_ref().delete_blob(&container, &blob_key).map_err(|err| err.to_string())?;
                 Ok(Self::empty_response(StatusCode::ACCEPTED))
             }
@@ -1537,5 +1957,241 @@ mod tests {
             .await
             .expect("body should read");
         assert_eq!(body.as_ref(), b"aaaaaaaa");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_manage_leases_snapshots_and_immutability() {
+        let adapter = AzureBlobAdapter::new();
+        let storage = temp_storage();
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state?restype=container",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("container create should succeed");
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"initial",
+                )
+                .await,
+            )
+            .await
+            .expect("blob create should succeed");
+
+        let lease_response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt?comp=lease",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-lease-action", "acquire"),
+                        ("x-ms-lease-duration", "-1"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("lease acquire should succeed");
+        assert_eq!(lease_response.status(), StatusCode::CREATED);
+        let lease_id = lease_response
+            .headers()
+            .get("x-ms-lease-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("lease id")
+            .to_string();
+
+        let denied = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "DELETE",
+                    "http://localhost/devstoreaccount1/state/lease.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("delete should return a response");
+        assert_eq!(denied.status(), StatusCode::PRECONDITION_FAILED);
+
+        let release = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt?comp=lease",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-lease-action", "release"),
+                        ("x-ms-lease-id", &lease_id),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("lease release should succeed");
+        assert_eq!(release.status(), StatusCode::OK);
+
+        let snapshot = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt?comp=snapshot",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("snapshot create should succeed");
+        assert_eq!(snapshot.status(), StatusCode::CREATED);
+        let snapshot_id = snapshot
+            .headers()
+            .get("x-ms-snapshot")
+            .and_then(|value| value.to_str().ok())
+            .expect("snapshot id")
+            .to_string();
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"updated",
+                )
+                .await,
+            )
+            .await
+            .expect("overwrite should succeed");
+
+        let snapshot_get = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    &format!(
+                        "http://localhost/devstoreaccount1/state/lease.txt?snapshot={}",
+                        snapshot_id
+                    ),
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("snapshot get should succeed");
+        let snapshot_body = hyper::body::to_bytes(snapshot_get.into_body())
+            .await
+            .expect("snapshot body should read");
+        assert_eq!(snapshot_body.as_ref(), b"initial");
+
+        let retention_response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt?comp=immutabilitypolicy",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-immutability-policy-until-date", "2099-01-01T00:00:00Z"),
+                        ("x-ms-immutability-policy-mode", "Unlocked"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("immutability policy should succeed");
+        assert_eq!(retention_response.status(), StatusCode::OK);
+
+        let legal_hold = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/state/lease.txt?comp=legalhold",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"<LegalHold>true</LegalHold>",
+                )
+                .await,
+            )
+            .await
+            .expect("legal hold should succeed");
+        assert_eq!(legal_hold.status(), StatusCode::OK);
+
+        let immutable_delete = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "DELETE",
+                    "http://localhost/devstoreaccount1/state/lease.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("immutable delete should return a response");
+        assert_eq!(immutable_delete.status(), StatusCode::CONFLICT);
+
+        let head = adapter
+            .handle_request(
+                storage,
+                auth_disabled(),
+                parsed_request(
+                    "HEAD",
+                    "http://localhost/devstoreaccount1/state/lease.txt",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("head should succeed");
+        assert_eq!(
+            head.headers()
+                .get("x-ms-immutability-policy-until-date")
+                .and_then(|value| value.to_str().ok()),
+            Some("2099-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            head.headers()
+                .get("x-ms-legal-hold")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
     }
 }
