@@ -108,6 +108,14 @@ pub fn list_parts(storage: &dyn Storage, bucket: &str, upload_id: &str) -> Resul
     storage.list_parts(bucket, upload_id)
 }
 
+pub fn get_multipart_upload(
+    storage: &dyn Storage,
+    bucket: &str,
+    upload_id: &str,
+) -> Result<MultipartUpload> {
+    storage.get_multipart_upload(bucket, upload_id)
+}
+
 pub fn upload_part(
     storage: &dyn Storage,
     bucket: &str,

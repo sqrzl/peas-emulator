@@ -129,22 +129,26 @@ fn parse_multipart_form_upload(
         .map(|part| part.trim())
         .find_map(|part| part.strip_prefix("boundary="))?;
     let boundary_marker = format!("--{}", boundary);
-    let payload = String::from_utf8_lossy(body);
+    let boundary_bytes = boundary_marker.as_bytes();
 
     let mut key: Option<String> = None;
     let mut file: Option<Vec<u8>> = None;
     let mut file_content_type = "application/octet-stream".to_string();
 
-    for raw_part in payload.split(&boundary_marker) {
-        let part = raw_part.trim();
-        if part.is_empty() || part == "--" {
+    for raw_part in split_bytes(body, boundary_bytes) {
+        let part = raw_part.strip_prefix(b"\r\n").unwrap_or(raw_part);
+        if part.is_empty() || part == b"--\r\n" || part == b"--" {
             continue;
         }
-        let part = part.trim_start_matches("\r\n").trim_end_matches("--").trim_end();
-        let Some((raw_headers, raw_body)) = part.split_once("\r\n\r\n") else {
+        let part = part
+            .strip_suffix(b"--\r\n")
+            .or_else(|| part.strip_suffix(b"--"))
+            .unwrap_or(part);
+        let Some((raw_headers, raw_body)) = split_once_bytes(part, b"\r\n\r\n") else {
             continue;
         };
-        let body = raw_body.trim_end_matches("\r\n");
+        let field_body = raw_body.strip_suffix(b"\r\n").unwrap_or(raw_body);
+        let raw_headers = std::str::from_utf8(raw_headers).ok()?;
 
         let mut field_name: Option<String> = None;
         let mut filename: Option<String> = None;
@@ -167,13 +171,40 @@ fn parse_multipart_form_upload(
         }
 
         match field_name.as_deref() {
-            Some("key") => key = Some(body.to_string()),
-            Some("file") if filename.is_some() => file = Some(body.as_bytes().to_vec()),
+            Some("key") => key = Some(String::from_utf8(field_body.to_vec()).ok()?),
+            Some("file") if filename.is_some() => file = Some(field_body.to_vec()),
             _ => {}
         }
     }
 
     Some((key?, file?, file_content_type))
+}
+
+fn split_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Vec<&'a [u8]> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+
+    while let Some(offset) = find_subslice(&haystack[start..], needle) {
+        let end = start + offset;
+        parts.push(&haystack[start..end]);
+        start = end + needle.len();
+    }
+
+    parts.push(&haystack[start..]);
+    parts
+}
+
+fn split_once_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    let index = find_subslice(haystack, needle)?;
+    Some((&haystack[..index], &haystack[index + needle.len()..]))
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 fn with_bucket_metadata<F>(
@@ -1384,6 +1415,40 @@ mod tests {
             .expect("request should parse")
     }
 
+    async fn browser_upload_request(
+        boundary: &str,
+        key: &str,
+        file_content_type: &str,
+        file_name: &str,
+        file_data: &[u8],
+    ) -> RequestExt {
+        let mut body = Vec::new();
+        body.extend_from_slice(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\n{key}\r\n"
+        )
+        .as_bytes());
+        body.extend_from_slice(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: {file_content_type}\r\n\r\n"
+        )
+        .as_bytes());
+        body.extend_from_slice(file_data);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        RequestExt::from_hyper(
+            HyperRequest::builder()
+                .method("POST")
+                .uri("http://localhost/bucket")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn should_list_version_history_when_versions_query_is_requested() {
         // Arrange
@@ -1721,23 +1786,14 @@ mod tests {
         storage.create_bucket("bucket".to_string()).unwrap();
 
         let boundary = "----peas-boundary";
-        let body = format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\nupload.txt\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"upload.txt\"\r\nContent-Type: text/plain\r\n\r\nbrowser upload\r\n--{boundary}--\r\n"
-        );
-
-        let request = crate::server::RequestExt::from_hyper(
-            hyper::Request::builder()
-                .method("POST")
-                .uri("http://localhost/bucket")
-                .header(
-                    "content-type",
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .body(hyper::Body::from(body))
-                .expect("request should build"),
+        let request = browser_upload_request(
+            boundary,
+            "upload.txt",
+            "text/plain",
+            "upload.txt",
+            b"browser upload",
         )
-        .await
-        .expect("request should parse");
+        .await;
 
         let response = bucket_post(
             storage.clone(),
@@ -1753,6 +1809,65 @@ mod tests {
         let stored = storage.get_object("bucket", "upload.txt").unwrap();
         assert_eq!(stored.data, b"browser upload");
         assert_eq!(stored.content_type, "text/plain");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_preserve_exact_binary_bytes_for_browser_post_uploads() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let request = browser_upload_request(
+            "----peas-boundary",
+            "binary.bin",
+            "application/octet-stream",
+            "binary.bin",
+            &[0x00, 0x7f, 0x80, 0xff, b'A', b'\r', b'\n', b' '],
+        )
+        .await;
+
+        let response = bucket_post(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            &request,
+            "req-post-binary".to_string(),
+        )
+        .await
+        .expect("bucket post should succeed");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let stored = storage.get_object("bucket", "binary.bin").unwrap();
+        assert_eq!(stored.data, vec![0x00, 0x7f, 0x80, 0xff, b'A', b'\r', b'\n', b' ']);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_preserve_trailing_whitespace_for_browser_post_uploads() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let payload = b"line one\r\nline two\r\n\r\n ";
+        let request = browser_upload_request(
+            "----peas-boundary",
+            "whitespace.txt",
+            "text/plain",
+            "whitespace.txt",
+            payload,
+        )
+        .await;
+
+        let response = bucket_post(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            &request,
+            "req-post-whitespace".to_string(),
+        )
+        .await
+        .expect("bucket post should succeed");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let stored = storage.get_object("bucket", "whitespace.txt").unwrap();
+        assert_eq!(stored.data, payload);
     }
 
     #[tokio::test(flavor = "multi_thread")]

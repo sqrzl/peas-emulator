@@ -20,6 +20,15 @@ const S3_OBJECT_LOCK_MODE_KEY: &str = "s3_object_lock_mode";
 const S3_OBJECT_LOCK_UNTIL_KEY: &str = "s3_object_lock_until";
 const S3_OBJECT_LOCK_LEGAL_HOLD_KEY: &str = "s3_object_lock_legal_hold";
 
+fn upload_key_mismatch_response(req_id: &str) -> Response<Body> {
+    xml_error_response(
+        StatusCode::BAD_REQUEST,
+        "InvalidRequest",
+        "The upload ID is not valid for the specified object",
+        req_id,
+    )
+}
+
 fn parse_range(range_header: &str) -> Option<(u64, Option<u64>)> {
     // Expect formats like "bytes=start-end" or "bytes=start-"
     let range = range_header.strip_prefix("bytes=")?;
@@ -1346,6 +1355,53 @@ pub async fn object_delete(
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
+    if req.has_query_param("uploadId") {
+        let upload_id = req.query_param("uploadId").unwrap_or("");
+        let upload = match tokio::task::block_in_place(|| {
+            object_service::get_multipart_upload(storage.as_ref(), bucket, upload_id)
+        }) {
+            Ok(upload) => upload,
+            Err(crate::error::Error::NoSuchUpload) => {
+                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                    .header("x-amz-request-id", &req_id)
+                    .header("x-amz-id-2", &header_utils::generate_request_id())
+                    .empty())
+            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
+        };
+
+        if upload.key != key {
+            return Ok(upload_key_mismatch_response(&req_id));
+        }
+
+        if let Err(response) = check_authorization(
+            req,
+            &auth_config,
+            &storage,
+            bucket,
+            Some(upload.key.as_str()),
+            "s3:DeleteObject",
+        ) {
+            return Ok(response);
+        }
+
+        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config) {
+            return Ok(response);
+        }
+
+        match tokio::task::block_in_place(|| {
+            object_service::abort_multipart_upload(storage.as_ref(), bucket, upload_id)
+        }) {
+            Ok(_) | Err(crate::error::Error::NoSuchUpload) => {
+                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                    .header("x-amz-request-id", &req_id)
+                    .header("x-amz-id-2", &header_utils::generate_request_id())
+                    .empty());
+            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
+        }
+    }
+
     if let Err(response) = check_authorization(
         req,
         &auth_config,
@@ -1360,28 +1416,6 @@ pub async fn object_delete(
     // Verify presigned URL if present
     if let Err(response) = verify_presigned_url(req, bucket, key, &auth_config) {
         return Ok(response);
-    }
-
-    if req.has_query_param("uploadId") {
-        let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| {
-            object_service::abort_multipart_upload(storage.as_ref(), bucket, upload_id)
-        }) {
-            Ok(_) | Err(crate::error::Error::NoSuchUpload) => {
-                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ));
-            }
-        }
     }
 
     if req.has_query_param("versionId") {
@@ -1562,24 +1596,42 @@ pub async fn object_post(
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
-    if let Err(response) = check_authorization(
-        req,
-        &auth_config,
-        &storage,
-        bucket,
-        Some(key),
-        "s3:PutObject",
-    ) {
-        return Ok(response);
-    }
-
-    if let Err(response) = verify_presigned_url(req, bucket, key, &auth_config) {
-        return Ok(response);
-    }
-
-    // Complete multipart upload
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
+        let upload = match tokio::task::block_in_place(|| {
+            object_service::get_multipart_upload(storage.as_ref(), bucket, upload_id)
+        }) {
+            Ok(upload) => upload,
+            Err(crate::error::Error::NoSuchUpload) => {
+                return Ok(xml_error_response(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchUpload",
+                    "Upload not found",
+                    &req_id,
+                ))
+            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
+        };
+
+        if upload.key != key {
+            return Ok(upload_key_mismatch_response(&req_id));
+        }
+
+        if let Err(response) = check_authorization(
+            req,
+            &auth_config,
+            &storage,
+            bucket,
+            Some(upload.key.as_str()),
+            "s3:PutObject",
+        ) {
+            return Ok(response);
+        }
+
+        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config) {
+            return Ok(response);
+        }
+
         match tokio::task::block_in_place(|| {
             object_service::complete_multipart_upload(storage.as_ref(), bucket, upload_id)
         }) {
@@ -1600,23 +1652,23 @@ pub async fn object_post(
 
                 return Ok(builder.body(xml.into_bytes()).build());
             }
-            Err(crate::error::Error::NoSuchUpload) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchUpload",
-                    "Upload not found",
-                    &req_id,
-                ));
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ));
-            }
+            Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
+    }
+
+    if let Err(response) = check_authorization(
+        req,
+        &auth_config,
+        &storage,
+        bucket,
+        Some(key),
+        "s3:PutObject",
+    ) {
+        return Ok(response);
+    }
+
+    if let Err(response) = verify_presigned_url(req, bucket, key, &auth_config) {
+        return Ok(response);
     }
 
     // Handle initiate multipart upload
@@ -1873,6 +1925,9 @@ mod s3_contract_tests {
     async fn should_require_auth_for_object_post_multipart_routes() {
         let storage = temp_storage();
         storage.create_bucket("bucket".to_string()).unwrap();
+        let upload = storage
+            .create_multipart_upload("bucket", "object.txt".to_string())
+            .expect("multipart upload should be created");
 
         let initiate = request_with_uri(
             "POST",
@@ -1895,7 +1950,10 @@ mod s3_contract_tests {
 
         let complete = request_with_uri(
             "POST",
-            "http://localhost/bucket/object.txt?uploadId=test-upload",
+            &format!(
+                "http://localhost/bucket/object.txt?uploadId={}",
+                upload.upload_id
+            ),
             &[],
             b"<CompleteMultipartUpload />",
         )
@@ -1948,5 +2006,126 @@ mod s3_contract_tests {
             .expect("body should read");
         let body = String::from_utf8(body.to_vec()).expect("body should be utf8");
         assert!(body.contains("<Code>InvalidPartNumber</Code>"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_reject_complete_multipart_when_upload_id_targets_different_key() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        let upload = storage
+            .create_multipart_upload("bucket", "real.txt".to_string())
+            .expect("multipart upload should be created");
+        storage
+            .upload_part("bucket", &upload.upload_id, 1, b"payload".to_vec())
+            .expect("part upload should succeed");
+
+        let mismatched = request_with_uri(
+            "POST",
+            &format!(
+                "http://localhost/bucket/other.txt?uploadId={}",
+                upload.upload_id
+            ),
+            &[],
+            b"<CompleteMultipartUpload />",
+        )
+        .await;
+        let mismatched_response = object_post(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "other.txt",
+            &mismatched,
+            "req-mismatch-complete".to_string(),
+        )
+        .await
+        .expect("complete request should respond");
+        assert_eq!(mismatched_response.status(), StatusCode::BAD_REQUEST);
+
+        assert!(storage.get_multipart_upload("bucket", &upload.upload_id).is_ok());
+
+        let matching = request_with_uri(
+            "POST",
+            &format!(
+                "http://localhost/bucket/real.txt?uploadId={}",
+                upload.upload_id
+            ),
+            &[],
+            b"<CompleteMultipartUpload />",
+        )
+        .await;
+        let matching_response = object_post(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "real.txt",
+            &matching,
+            "req-match-complete".to_string(),
+        )
+        .await
+        .expect("complete request should respond");
+        assert_eq!(matching_response.status(), StatusCode::OK);
+        assert_eq!(
+            storage.get_object("bucket", "real.txt").unwrap().data,
+            b"payload".to_vec()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_reject_abort_multipart_when_upload_id_targets_different_key() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        let upload = storage
+            .create_multipart_upload("bucket", "real.txt".to_string())
+            .expect("multipart upload should be created");
+
+        let mismatched = request_with_uri(
+            "DELETE",
+            &format!(
+                "http://localhost/bucket/other.txt?uploadId={}",
+                upload.upload_id
+            ),
+            &[],
+            b"",
+        )
+        .await;
+        let mismatched_response = object_delete(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "other.txt",
+            &mismatched,
+            "req-mismatch-abort".to_string(),
+        )
+        .await
+        .expect("abort request should respond");
+        assert_eq!(mismatched_response.status(), StatusCode::BAD_REQUEST);
+
+        assert!(storage.get_multipart_upload("bucket", &upload.upload_id).is_ok());
+
+        let matching = request_with_uri(
+            "DELETE",
+            &format!(
+                "http://localhost/bucket/real.txt?uploadId={}",
+                upload.upload_id
+            ),
+            &[],
+            b"",
+        )
+        .await;
+        let matching_response = object_delete(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "real.txt",
+            &matching,
+            "req-match-abort".to_string(),
+        )
+        .await
+        .expect("abort request should respond");
+        assert_eq!(matching_response.status(), StatusCode::NO_CONTENT);
+        assert!(matches!(
+            storage.get_multipart_upload("bucket", &upload.upload_id),
+            Err(crate::error::Error::NoSuchUpload)
+        ));
     }
 }
