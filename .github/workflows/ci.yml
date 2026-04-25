@@ -15,8 +15,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Validate compatibility matrix
-        shell: pwsh
-        run: ./tools/check_compat_matrix.ps1
+        run: cargo test compatibility_matrix_should_use_checked_schema_and_known_verifiers
 
       - name: Build
         run: cargo build --all-targets

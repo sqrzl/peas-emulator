@@ -1,0 +1,62 @@
+mod common;
+
+use common::e2e::{auth_disabled, auth_enabled, text_body, LiveServer};
+use hyper::{Body, Request, StatusCode};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_round_trip_bucket_and_object_given_live_server_when_using_basic_s3_crud_flows() {
+    let server = LiveServer::start_s3(auth_disabled()).await;
+
+    let create_bucket = Request::builder()
+        .method("PUT")
+        .uri(format!("{}/e2e-s3", server.base_url))
+        .body(Body::empty())
+        .expect("bucket create request should build");
+    let create_bucket_response = server.request(create_bucket).await;
+    assert_eq!(create_bucket_response.status(), StatusCode::OK);
+
+    let put_object = Request::builder()
+        .method("PUT")
+        .uri(format!("{}/e2e-s3/hello.txt", server.base_url))
+        .header("content-type", "text/plain")
+        .body(Body::from("hello over tcp"))
+        .expect("object put request should build");
+    let put_object_response = server.request(put_object).await;
+    assert_eq!(put_object_response.status(), StatusCode::OK);
+
+    let get_object = Request::builder()
+        .method("GET")
+        .uri(format!("{}/e2e-s3/hello.txt", server.base_url))
+        .body(Body::empty())
+        .expect("object get request should build");
+    let get_object_response = server.request(get_object).await;
+    assert_eq!(get_object_response.status(), StatusCode::OK);
+    assert_eq!(text_body(get_object_response).await, "hello over tcp");
+
+    let list_objects = Request::builder()
+        .method("GET")
+        .uri(format!("{}/e2e-s3?list-type=2", server.base_url))
+        .body(Body::empty())
+        .expect("object list request should build");
+    let list_objects_response = server.request(list_objects).await;
+    assert_eq!(list_objects_response.status(), StatusCode::OK);
+    let listing = text_body(list_objects_response).await;
+    assert!(listing.contains("hello.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_reject_unsigned_request_given_live_server_when_s3_auth_is_enforced() {
+    let server = LiveServer::start_s3(auth_enabled("test", "test-secret")).await;
+
+    let list_buckets = Request::builder()
+        .method("GET")
+        .uri(format!("{}/", server.base_url))
+        .body(Body::empty())
+        .expect("bucket list request should build");
+    let response = server.request(list_buckets).await;
+
+    assert!(matches!(
+        response.status(),
+        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
+    ));
+}
