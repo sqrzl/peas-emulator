@@ -239,10 +239,15 @@ impl FilesystemStorage {
             .map_err(|e| Error::InternalError(format!("Failed to parse bucket metadata: {}", e)))
     }
 
-    fn write_bucket_metadata(&self, bucket: &str, metadata: &HashMap<String, String>) -> Result<()> {
+    fn write_bucket_metadata(
+        &self,
+        bucket: &str,
+        metadata: &HashMap<String, String>,
+    ) -> Result<()> {
         let path = self.bucket_metadata_path(bucket);
-        let json = serde_json::to_string_pretty(metadata)
-            .map_err(|e| Error::InternalError(format!("Failed to serialize bucket metadata: {}", e)))?;
+        let json = serde_json::to_string_pretty(metadata).map_err(|e| {
+            Error::InternalError(format!("Failed to serialize bucket metadata: {}", e))
+        })?;
         fs::write(&path, json)
             .map_err(|e| Error::InternalError(format!("Failed to write bucket metadata: {}", e)))
     }
@@ -359,7 +364,11 @@ impl Storage for FilesystemStorage {
         Ok(self.bucket_dir(name).exists())
     }
 
-    fn update_bucket_metadata(&self, bucket: &str, metadata: HashMap<String, String>) -> Result<Bucket> {
+    fn update_bucket_metadata(
+        &self,
+        bucket: &str,
+        metadata: HashMap<String, String>,
+    ) -> Result<Bucket> {
         if !self.bucket_exists(bucket)? {
             return Err(Error::BucketNotFound);
         }

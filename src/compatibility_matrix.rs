@@ -97,13 +97,21 @@ mod tests {
                     );
                     let auth_only_operation = matches!(
                         operation_name.as_str(),
-                        "sigv4" | "shared_key_auth" | "sas_auth" | "signed_url_v2" | "request_signing"
+                        "sigv4"
+                            | "shared_key_auth"
+                            | "sas_auth"
+                            | "signed_url_v2"
+                            | "request_signing"
                     );
                     if !auth_only_operation {
                         assert!(
-                            verifiers.iter().filter_map(|value| value.as_str()).any(|verifier| {
-                                verifier.starts_with("interop::") || verifier.starts_with("server::")
-                            }),
+                            verifiers
+                                .iter()
+                                .filter_map(|value| value.as_str())
+                                .any(|verifier| {
+                                    verifier.starts_with("interop::")
+                                        || verifier.starts_with("server::")
+                                }),
                             "pass status for {}.{} must include an interop or black-box verifier",
                             provider_name,
                             operation_name

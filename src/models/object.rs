@@ -64,6 +64,9 @@ mod tests {
 
     #[test]
     fn should_compute_md5_etag_for_single_part_objects() {
-        assert_eq!(compute_etag(b"hello world"), "5eb63bbbe01eeed093cb22bb8f5acdc3");
+        assert_eq!(
+            compute_etag(b"hello world"),
+            "5eb63bbbe01eeed093cb22bb8f5acdc3"
+        );
     }
 }

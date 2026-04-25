@@ -1,4 +1,6 @@
+use super::acl;
 use super::auth::{check_authorization, verify_presigned_url};
+use super::cors;
 use super::ResponseBuilder;
 use crate::auth::AuthConfig;
 use crate::services::{
@@ -220,6 +222,7 @@ fn validate_get_sse_headers(
     None
 }
 
+#[allow(clippy::result_large_err)]
 fn apply_s3_request_contracts(
     req: &crate::server::http::Request,
     obj: &mut crate::models::Object,
@@ -451,6 +454,15 @@ pub async fn object_get(
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
+    if cors::is_preflight(req) {
+        return Ok(cors::preflight_response(
+            storage.as_ref(),
+            bucket,
+            req,
+            &req_id,
+        ));
+    }
+
     if let Err(response) = check_authorization(
         req,
         &auth_config,
@@ -530,7 +542,14 @@ pub async fn object_get(
                     &req_id,
                 );
 
-                return Ok(builder.body(obj.data).build());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .body(obj.data)
+                .build());
             }
             Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
@@ -592,7 +611,14 @@ pub async fn object_get(
                             &req_id,
                         );
 
-                        Ok(builder.body(data).build())
+                        Ok(cors::apply_actual_request_headers(
+                            storage.as_ref(),
+                            bucket,
+                            req,
+                            builder,
+                        )
+                        .body(data)
+                        .build())
                     }
                     Err(e) => Ok(xml_error_response(
                         StatusCode::RANGE_NOT_SATISFIABLE,
@@ -630,7 +656,11 @@ pub async fn object_get(
                     &req_id,
                 );
 
-                Ok(builder.body(obj.data).build())
+                Ok(
+                    cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder)
+                        .body(obj.data)
+                        .build(),
+                )
             }
             Err(e) => Ok(xml_error_response(
                 StatusCode::NOT_FOUND,
@@ -667,9 +697,9 @@ pub async fn object_put(
     }
 
     if req.has_query_param("tagging") {
-        if let Ok(existing) =
-            tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
-        {
+        if let Ok(existing) = tokio::task::block_in_place(|| {
+            object_service::get_object(storage.as_ref(), bucket, key)
+        }) {
             if object_is_locked(&existing) {
                 return Ok(locked_object_response(&req_id));
             }
@@ -691,10 +721,16 @@ pub async fn object_put(
             object_service::put_object_tags(storage.as_ref(), bucket, key, tags)
         }) {
             Ok(_) => {
-                return Ok(ResponseBuilder::new(StatusCode::OK)
+                let builder = ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
                 return Ok(xml_error_response(
@@ -716,21 +752,35 @@ pub async fn object_put(
     }
 
     if req.has_query_param("acl") {
-        let canned_acl_str = req.header("x-amz-acl").unwrap_or("private");
-        let canned_acl: crate::models::policy::CannedAcl =
-            serde_json::from_value(serde_json::json!(canned_acl_str)).unwrap_or_default();
-        let acl = crate::models::policy::Acl {
-            canned: canned_acl,
-            grants: vec![],
+        let acl = match if req.body.is_empty() {
+            acl::acl_from_headers(req).map_err(|message| ("InvalidArgument", message))
+        } else {
+            acl::acl_from_xml_body(&req.body).map_err(|message| ("MalformedXML", message))
+        } {
+            Ok(acl) => acl,
+            Err((code, message)) => {
+                return Ok(xml_error_response(
+                    StatusCode::BAD_REQUEST,
+                    code,
+                    &message,
+                    &req_id,
+                ))
+            }
         };
         match tokio::task::block_in_place(|| {
             object_service::put_object_acl(storage.as_ref(), bucket, key, acl)
         }) {
             Ok(_) => {
-                return Ok(ResponseBuilder::new(StatusCode::OK)
+                let builder = ResponseBuilder::new(StatusCode::OK)
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
                 return Ok(xml_error_response(
@@ -767,11 +817,17 @@ pub async fn object_put(
             )
         }) {
             Ok(etag) => {
-                return Ok(ResponseBuilder::new(StatusCode::OK)
+                let builder = ResponseBuilder::new(StatusCode::OK)
                     .header("ETag", &etag)
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(e) => {
                 return Ok(storage_error_response(&e, &req_id));
@@ -892,7 +948,14 @@ pub async fn object_put(
                             .content_type("application/xml; charset=utf-8")
                             .header("x-amz-request-id", &req_id);
                         builder = add_version_header(builder, stored_version_id.as_deref());
-                        return Ok(builder.body(xml.into_bytes()).build());
+                        return Ok(cors::apply_actual_request_headers(
+                            storage.as_ref(),
+                            bucket,
+                            req,
+                            builder,
+                        )
+                        .body(xml.into_bytes())
+                        .build());
                     }
                     Err(e) => {
                         return Ok(xml_error_response(
@@ -1005,7 +1068,7 @@ pub async fn object_put(
 
             builder = add_version_header(builder, stored_version_id.as_deref());
 
-            Ok(builder.empty())
+            Ok(cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder).empty())
         }
         Err(e) => Ok(xml_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1385,7 +1448,8 @@ pub async fn object_delete(
             return Ok(response);
         }
 
-        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config) {
+        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config)
+        {
             return Ok(response);
         }
 
@@ -1393,10 +1457,16 @@ pub async fn object_delete(
             object_service::abort_multipart_upload(storage.as_ref(), bucket, upload_id)
         }) {
             Ok(_) | Err(crate::error::Error::NoSuchUpload) => {
-                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                let builder = ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
@@ -1424,11 +1494,17 @@ pub async fn object_delete(
             object_service::delete_object_version(storage.as_ref(), bucket, key, version_id)
         }) {
             Ok(_) | Err(crate::error::Error::KeyNotFound) => {
-                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                let builder = ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
                     .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .header("x-amz-version-id", version_id)
-                    .empty());
+                    .header("x-amz-version-id", version_id);
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(e) => {
                 return Ok(xml_error_response(
@@ -1442,9 +1518,9 @@ pub async fn object_delete(
     }
 
     if req.has_query_param("tagging") {
-        if let Ok(existing) =
-            tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
-        {
+        if let Ok(existing) = tokio::task::block_in_place(|| {
+            object_service::get_object(storage.as_ref(), bucket, key)
+        }) {
             if object_is_locked(&existing) {
                 return Ok(locked_object_response(&req_id));
             }
@@ -1453,10 +1529,16 @@ pub async fn object_delete(
             object_service::delete_object_tags(storage.as_ref(), bucket, key)
         }) {
             Ok(_) | Err(crate::error::Error::KeyNotFound) => {
-                return Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+                let builder = ResponseBuilder::new(StatusCode::NO_CONTENT)
                     .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id())
-                    .empty());
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(e) => {
                 let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
@@ -1478,10 +1560,10 @@ pub async fn object_delete(
         object_service::delete_object(storage.as_ref(), bucket, key)
     }) {
         Ok(_) | Err(crate::error::Error::KeyNotFound) => {
-            Ok(ResponseBuilder::new(StatusCode::NO_CONTENT)
+            let builder = ResponseBuilder::new(StatusCode::NO_CONTENT)
                 .header("x-amz-request-id", &req_id)
-                .header("x-amz-id-2", &header_utils::generate_request_id())
-                .empty())
+                .header("x-amz-id-2", &header_utils::generate_request_id());
+            Ok(cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder).empty())
         }
         Err(e) => {
             if matches!(e, crate::error::Error::AccessDenied) {
@@ -1536,7 +1618,13 @@ pub async fn object_head(
                     &req_id,
                 );
 
-                return Ok(builder.empty());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .empty());
             }
             Err(crate::error::Error::KeyNotFound) => {
                 return Ok(xml_error_response(
@@ -1575,7 +1663,7 @@ pub async fn object_head(
                 &req_id,
             );
 
-            Ok(builder.empty())
+            Ok(cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder).empty())
         }
         Err(e) => {
             let xml = xml_utils::error_xml("NoSuchKey", &e.to_string(), &req_id);
@@ -1628,7 +1716,8 @@ pub async fn object_post(
             return Ok(response);
         }
 
-        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config) {
+        if let Err(response) = verify_presigned_url(req, bucket, upload.key.as_str(), &auth_config)
+        {
             return Ok(response);
         }
 
@@ -1650,7 +1739,14 @@ pub async fn object_post(
 
                 builder = add_version_header(builder, stored_version_id.as_deref());
 
-                return Ok(builder.body(xml.into_bytes()).build());
+                return Ok(cors::apply_actual_request_headers(
+                    storage.as_ref(),
+                    bucket,
+                    req,
+                    builder,
+                )
+                .body(xml.into_bytes())
+                .build());
             }
             Err(e) => return Ok(storage_error_response(&e, &req_id)),
         }
@@ -1686,11 +1782,15 @@ pub async fn object_post(
 </InitiateMultipartUploadResult>"#,
                     bucket, upload.key, upload.upload_id
                 );
-                Ok(ResponseBuilder::new(StatusCode::OK)
+                let builder = ResponseBuilder::new(StatusCode::OK)
                     .content_type("application/xml; charset=utf-8")
                     .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build())
+                    .header("x-amz-id-2", &header_utils::generate_request_id());
+                Ok(
+                    cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder)
+                        .body(xml.into_bytes())
+                        .build(),
+                )
             }
             Err(e) => Ok(xml_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1713,6 +1813,7 @@ pub async fn object_post(
 mod s3_contract_tests {
     use super::*;
     use crate::auth::AuthConfig;
+    use crate::services::bucket as bucket_service;
     use crate::storage::FilesystemStorage;
     use hyper::{Body, Request as HyperRequest};
     use std::fs;
@@ -1750,13 +1851,21 @@ mod s3_contract_tests {
         })
     }
 
-    async fn request(method: &str, headers: &[(&str, &str)], body: &[u8]) -> crate::server::RequestExt {
-        let mut builder = HyperRequest::builder().method(method).uri("http://localhost/");
+    async fn request(
+        method: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> crate::server::RequestExt {
+        let mut builder = HyperRequest::builder()
+            .method(method)
+            .uri("http://localhost/");
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
         crate::server::RequestExt::from_hyper(
-            builder.body(Body::from(body.to_vec())).expect("request should build"),
+            builder
+                .body(Body::from(body.to_vec()))
+                .expect("request should build"),
         )
         .await
         .expect("request should parse")
@@ -1773,7 +1882,9 @@ mod s3_contract_tests {
             builder = builder.header(*name, *value);
         }
         crate::server::RequestExt::from_hyper(
-            builder.body(Body::from(body.to_vec())).expect("request should build"),
+            builder
+                .body(Body::from(body.to_vec()))
+                .expect("request should build"),
         )
         .await
         .expect("request should parse")
@@ -1857,7 +1968,10 @@ mod s3_contract_tests {
             "PUT",
             &[
                 ("x-amz-object-lock-mode", "GOVERNANCE"),
-                ("x-amz-object-lock-retain-until-date", "2099-01-01T00:00:00Z"),
+                (
+                    "x-amz-object-lock-retain-until-date",
+                    "2099-01-01T00:00:00Z",
+                ),
                 ("x-amz-object-lock-legal-hold", "ON"),
             ],
             b"payload",
@@ -1906,7 +2020,6 @@ mod s3_contract_tests {
         .await
         .expect("delete should respond");
         assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
-
         let overwrite = request("PUT", &[], b"new payload").await;
         let overwrite_response = object_put(
             storage,
@@ -1919,6 +2032,418 @@ mod s3_contract_tests {
         .await
         .expect("overwrite should respond");
         assert_eq!(overwrite_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_apply_cors_headers_to_object_get_and_head_responses() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                crate::models::Object::new(
+                    "notes.txt".to_string(),
+                    b"hello cors".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let mut metadata = bucket_service::get_bucket(storage.as_ref(), "bucket")
+            .unwrap()
+            .metadata;
+        metadata.insert(
+            "s3_cors_xml".to_string(),
+            r#"<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>https://app.example</AllowedOrigin><AllowedMethod>GET</AllowedMethod><ExposeHeader>ETag</ExposeHeader></CORSRule></CORSConfiguration>"#
+                .to_string(),
+        );
+        bucket_service::update_bucket_metadata(storage.as_ref(), "bucket", metadata).unwrap();
+
+        let get_request = request_with_uri(
+            "GET",
+            "http://localhost/bucket/notes.txt",
+            &[("Origin", "https://app.example")],
+            b"",
+        )
+        .await;
+        let get_response = object_get(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &get_request,
+            "req-cors-get".to_string(),
+        )
+        .await
+        .expect("get should succeed");
+        assert_eq!(get_response.status(), StatusCode::OK);
+        assert_eq!(
+            get_response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+        assert_eq!(
+            get_response
+                .headers()
+                .get("Access-Control-Expose-Headers")
+                .and_then(|value| value.to_str().ok()),
+            Some("ETag")
+        );
+
+        let head_request = request_with_uri(
+            "HEAD",
+            "http://localhost/bucket/notes.txt",
+            &[("Origin", "https://app.example")],
+            b"",
+        )
+        .await;
+        let head_response = object_head(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &head_request,
+            "req-cors-head".to_string(),
+        )
+        .await
+        .expect("head should succeed");
+        assert_eq!(head_response.status(), StatusCode::OK);
+        assert_eq!(
+            head_response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_answer_object_preflight_requests_from_bucket_cors_configuration() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut metadata = bucket_service::get_bucket(storage.as_ref(), "bucket")
+            .unwrap()
+            .metadata;
+        metadata.insert(
+            "s3_cors_xml".to_string(),
+            r#"<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>https://app.example</AllowedOrigin><AllowedMethod>PUT</AllowedMethod><AllowedHeader>content-type</AllowedHeader><AllowedHeader>x-amz-meta-demo</AllowedHeader><MaxAgeSeconds>300</MaxAgeSeconds></CORSRule></CORSConfiguration>"#
+                .to_string(),
+        );
+        bucket_service::update_bucket_metadata(storage.as_ref(), "bucket", metadata).unwrap();
+
+        let preflight_request = request_with_uri(
+            "OPTIONS",
+            "http://localhost/bucket/upload.txt",
+            &[
+                ("Origin", "https://app.example"),
+                ("Access-Control-Request-Method", "PUT"),
+                (
+                    "Access-Control-Request-Headers",
+                    "content-type, x-amz-meta-demo",
+                ),
+            ],
+            b"",
+        )
+        .await;
+        let preflight_response = object_get(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "upload.txt",
+            &preflight_request,
+            "req-cors-options".to_string(),
+        )
+        .await
+        .expect("preflight should respond");
+
+        assert_eq!(preflight_response.status(), StatusCode::OK);
+        assert_eq!(
+            preflight_response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+        assert_eq!(
+            preflight_response
+                .headers()
+                .get("Access-Control-Allow-Methods")
+                .and_then(|value| value.to_str().ok()),
+            Some("PUT")
+        );
+        assert_eq!(
+            preflight_response
+                .headers()
+                .get("Access-Control-Allow-Headers")
+                .and_then(|value| value.to_str().ok()),
+            Some("content-type, x-amz-meta-demo")
+        );
+        assert_eq!(
+            preflight_response
+                .headers()
+                .get("Access-Control-Max-Age")
+                .and_then(|value| value.to_str().ok()),
+            Some("300")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_apply_cors_headers_to_object_put_and_delete_responses() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut metadata = bucket_service::get_bucket(storage.as_ref(), "bucket")
+            .unwrap()
+            .metadata;
+        metadata.insert(
+            "s3_cors_xml".to_string(),
+            r#"<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>https://app.example</AllowedOrigin><AllowedMethod>PUT</AllowedMethod><AllowedMethod>DELETE</AllowedMethod><ExposeHeader>ETag</ExposeHeader></CORSRule></CORSConfiguration>"#
+                .to_string(),
+        );
+        bucket_service::update_bucket_metadata(storage.as_ref(), "bucket", metadata).unwrap();
+
+        let put_request = request_with_uri(
+            "PUT",
+            "http://localhost/bucket/notes.txt",
+            &[
+                ("Origin", "https://app.example"),
+                ("Content-Type", "text/plain"),
+            ],
+            b"hello cors",
+        )
+        .await;
+        let put_response = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put_request,
+            "req-cors-put".to_string(),
+        )
+        .await
+        .expect("put should succeed");
+        assert_eq!(put_response.status(), StatusCode::OK);
+        assert_eq!(
+            put_response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+        assert_eq!(
+            put_response
+                .headers()
+                .get("Access-Control-Expose-Headers")
+                .and_then(|value| value.to_str().ok()),
+            Some("ETag")
+        );
+
+        let delete_request = request_with_uri(
+            "DELETE",
+            "http://localhost/bucket/notes.txt",
+            &[("Origin", "https://app.example")],
+            b"",
+        )
+        .await;
+        let delete_response = object_delete(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &delete_request,
+            "req-cors-delete".to_string(),
+        )
+        .await
+        .expect("delete should succeed");
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            delete_response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_apply_cors_headers_to_multipart_initiate_post_responses() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut metadata = bucket_service::get_bucket(storage.as_ref(), "bucket")
+            .unwrap()
+            .metadata;
+        metadata.insert(
+            "s3_cors_xml".to_string(),
+            r#"<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>https://app.example</AllowedOrigin><AllowedMethod>POST</AllowedMethod></CORSRule></CORSConfiguration>"#
+                .to_string(),
+        );
+        bucket_service::update_bucket_metadata(storage.as_ref(), "bucket", metadata).unwrap();
+
+        let request = request_with_uri(
+            "POST",
+            "http://localhost/bucket/upload.txt?uploads",
+            &[("Origin", "https://app.example")],
+            b"",
+        )
+        .await;
+        let response = object_post(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "upload.txt",
+            &request,
+            "req-cors-initiate".to_string(),
+        )
+        .await
+        .expect("initiate should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("https://app.example")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_store_object_acl_grants_from_header_inputs() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                crate::models::Object::new(
+                    "notes.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let put_acl = request_with_uri(
+            "PUT",
+            "http://localhost/bucket/notes.txt?acl",
+            &[("x-amz-grant-full-control", "id=\"integration-tester\"")],
+            b"",
+        )
+        .await;
+        let put_response = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put_acl,
+            "req-object-acl-put".to_string(),
+        )
+        .await
+        .expect("object acl put should complete");
+        assert_eq!(put_response.status(), StatusCode::OK);
+
+        let get_acl =
+            request_with_uri("GET", "http://localhost/bucket/notes.txt?acl", &[], b"").await;
+        let get_response = object_get(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &get_acl,
+            "req-object-acl-get".to_string(),
+        )
+        .await
+        .expect("object acl get should complete");
+        let body = String::from_utf8(
+            hyper::body::to_bytes(get_response.into_body())
+                .await
+                .expect("body should read")
+                .to_vec(),
+        )
+        .expect("body should be utf8");
+        assert!(body.contains("integration-tester"));
+        assert!(
+            body.matches("<Permission>FULL_CONTROL</Permission>")
+                .count()
+                >= 2
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_store_object_acl_grants_from_xml_body_inputs() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                crate::models::Object::new(
+                    "notes.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let put_acl = request_with_uri(
+            "PUT",
+            "http://localhost/bucket/notes.txt?acl",
+            &[],
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <AccessControlList>
+    <Grant>
+      <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+        <ID>integration-tester</ID>
+      </Grantee>
+      <Permission>FULL_CONTROL</Permission>
+    </Grant>
+  </AccessControlList>
+</AccessControlPolicy>"#,
+        )
+        .await;
+        let put_response = object_put(
+            storage.clone(),
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put_acl,
+            "req-object-acl-xml-put".to_string(),
+        )
+        .await
+        .expect("object acl put should complete");
+        assert_eq!(put_response.status(), StatusCode::OK);
+
+        let get_acl =
+            request_with_uri("GET", "http://localhost/bucket/notes.txt?acl", &[], b"").await;
+        let get_response = object_get(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &get_acl,
+            "req-object-acl-xml-get".to_string(),
+        )
+        .await
+        .expect("object acl get should complete");
+        let body = String::from_utf8(
+            hyper::body::to_bytes(get_response.into_body())
+                .await
+                .expect("body should read")
+                .to_vec(),
+        )
+        .expect("body should be utf8");
+        assert!(body.contains("integration-tester"));
+        assert_eq!(
+            body.matches("<Permission>FULL_CONTROL</Permission>")
+                .count(),
+            2
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2041,7 +2566,9 @@ mod s3_contract_tests {
         .expect("complete request should respond");
         assert_eq!(mismatched_response.status(), StatusCode::BAD_REQUEST);
 
-        assert!(storage.get_multipart_upload("bucket", &upload.upload_id).is_ok());
+        assert!(storage
+            .get_multipart_upload("bucket", &upload.upload_id)
+            .is_ok());
 
         let matching = request_with_uri(
             "POST",
@@ -2100,7 +2627,9 @@ mod s3_contract_tests {
         .expect("abort request should respond");
         assert_eq!(mismatched_response.status(), StatusCode::BAD_REQUEST);
 
-        assert!(storage.get_multipart_upload("bucket", &upload.upload_id).is_ok());
+        assert!(storage
+            .get_multipart_upload("bucket", &upload.upload_id)
+            .is_ok());
 
         let matching = request_with_uri(
             "DELETE",

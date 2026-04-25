@@ -97,7 +97,11 @@ impl Storage for IndexedStorage {
         self.inner.bucket_exists(name)
     }
 
-    fn update_bucket_metadata(&self, bucket: &str, metadata: HashMap<String, String>) -> Result<Bucket> {
+    fn update_bucket_metadata(
+        &self,
+        bucket: &str,
+        metadata: HashMap<String, String>,
+    ) -> Result<Bucket> {
         self.inner.update_bucket_metadata(bucket, metadata)
     }
 

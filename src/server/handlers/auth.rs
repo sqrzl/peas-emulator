@@ -29,7 +29,8 @@ fn default_owner(config: &AuthConfig) -> Owner {
 mod tests {
     use super::*;
     use crate::models::policy::{
-        ActionList, BucketPolicyDocument, PolicyStatementDocument, Principal, ResourceList,
+        Acl, ActionList, BucketPolicyDocument, Grant, Grantee, Permission, PolicyStatementDocument,
+        Principal, ResourceList,
     };
     use crate::server::http::Request as ParsedRequest;
     use crate::storage::FilesystemStorage;
@@ -141,6 +142,90 @@ mod tests {
         assert_eq!(
             canonical,
             "GET\n/example-bucket/photos/kitten.jpg\nlist-type=2&prefix=a&prefix=z\nhost:example-bucket.localhost:9000\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:20240101T120000Z\n\nhost;x-amz-content-sha256;x-amz-date\nUNSIGNED-PAYLOAD"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_authorize_authenticated_requests_via_explicit_acl_group_grants() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                crate::models::Object::new(
+                    "notes.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+        object_service::put_object_acl(
+            storage.as_ref(),
+            "bucket",
+            "notes.txt",
+            Acl {
+                canned: Default::default(),
+                grants: vec![
+                    Grant {
+                        grantee: Grantee::CanonicalUser {
+                            id: "integration-tester".to_string(),
+                            display_name: None,
+                        },
+                        permission: Permission::FullControl,
+                    },
+                    Grant {
+                        grantee: Grantee::Group {
+                            uri: "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
+                                .to_string(),
+                        },
+                        permission: Permission::Read,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        let auth_config = crate::config::Config {
+            access_key_id: Some("integration-tester".to_string()),
+            secret_access_key: Some("secret".to_string()),
+            enforce_auth: true,
+            blobs_path: "./blobs".to_string(),
+            lifecycle_interval: std::time::Duration::from_secs(3600),
+            api_port: 9000,
+            ui_port: 9001,
+        };
+
+        let allowed_req = parsed_request(
+            "http://localhost/bucket/notes.txt?X-Amz-Credential=integration-tester%2F20240101%2Fus-east-1%2Fs3%2Faws4_request",
+            &[],
+        )
+        .await;
+        let denied_req = parsed_request("http://localhost/bucket/notes.txt", &[]).await;
+
+        let allowed = check_authorization(
+            &allowed_req,
+            &auth_config,
+            &storage,
+            "bucket",
+            Some("notes.txt"),
+            "s3:GetObject",
+        );
+        let denied = check_authorization(
+            &denied_req,
+            &auth_config,
+            &storage,
+            "bucket",
+            Some("notes.txt"),
+            "s3:GetObject",
+        );
+
+        assert!(allowed.is_ok());
+        assert_eq!(
+            denied
+                .expect_err("anonymous request should be denied")
+                .status(),
+            StatusCode::FORBIDDEN
         );
     }
 }
@@ -430,7 +515,7 @@ fn canonical_query_string(query: Option<&str>) -> String {
         })
         .collect();
 
-    params.sort_by(|left, right| left.cmp(right));
+    params.sort();
 
     params
         .into_iter()

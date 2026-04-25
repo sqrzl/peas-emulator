@@ -115,7 +115,8 @@ pub trait BlobBackend: Send + Sync {
     ) -> Result<Vec<BlobRecord>>;
     fn list_blob_versions(&self, namespace: &str, prefix: Option<&str>) -> Result<Vec<BlobRecord>>;
 
-    fn create_upload_session(&self, request: CreateUploadSessionRequest) -> Result<MultipartUpload>;
+    fn create_upload_session(&self, request: CreateUploadSessionRequest)
+        -> Result<MultipartUpload>;
     fn upload_session_part(
         &self,
         namespace: &str,
@@ -231,7 +232,10 @@ impl<T: Storage + ?Sized> BlobBackend for T {
             .collect())
     }
 
-    fn create_upload_session(&self, request: CreateUploadSessionRequest) -> Result<MultipartUpload> {
+    fn create_upload_session(
+        &self,
+        request: CreateUploadSessionRequest,
+    ) -> Result<MultipartUpload> {
         self.create_multipart_upload_with_metadata(
             &request.namespace,
             request.key,
@@ -290,11 +294,7 @@ mod tests {
             .expect("put should succeed");
 
         let range = backend
-            .get_blob_range(
-                "docs",
-                "guide.txt",
-                BlobRange { start: 6, end: 12 },
-            )
+            .get_blob_range("docs", "guide.txt", BlobRange { start: 6, end: 12 })
             .expect("range get should succeed");
         assert_eq!(range.data, b"backend".to_vec());
 
@@ -307,7 +307,9 @@ mod tests {
             .expect("metadata update should succeed");
         assert_eq!(updated.metadata.get("owner"), Some(&"bob".to_string()));
 
-        storage.enable_versioning("docs").expect("versioning should enable");
+        storage
+            .enable_versioning("docs")
+            .expect("versioning should enable");
         backend
             .put_blob(PutBlobRequest {
                 namespace: "docs".to_string(),
@@ -353,10 +355,9 @@ mod tests {
             b"hello".to_vec(),
             "text/plain".to_string(),
         );
-        object.provider_metadata.insert(
-            "azure_blob_type".to_string(),
-            "AppendBlob".to_string(),
-        );
+        object
+            .provider_metadata
+            .insert("azure_blob_type".to_string(), "AppendBlob".to_string());
         storage
             .put_object("azure", "append.log".to_string(), object)
             .expect("put should succeed");

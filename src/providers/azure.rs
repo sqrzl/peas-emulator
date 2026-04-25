@@ -53,6 +53,12 @@ pub struct AzureBlobAdapter {
     committed_blocks: Mutex<HashMap<String, Vec<String>>>,
 }
 
+impl Default for AzureBlobAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AzureBlobAdapter {
     pub fn new() -> Self {
         Self {
@@ -199,7 +205,10 @@ impl AzureBlobAdapter {
             escape_xml(container)
         );
 
-        for blob in blobs.iter().filter(|blob| !Self::is_snapshot_storage_key(&blob.key)) {
+        for blob in blobs
+            .iter()
+            .filter(|blob| !Self::is_snapshot_storage_key(&blob.key))
+        {
             let blob_type = blob
                 .provider_metadata
                 .get(AZURE_BLOB_TYPE_KEY)
@@ -315,7 +324,11 @@ impl AzureBlobAdapter {
                 .unwrap_or(false)
     }
 
-    fn ensure_lease_allows(req: &Request, blob: &crate::models::Object) -> Result<(), Response<Body>> {
+    #[allow(clippy::result_large_err)]
+    fn ensure_lease_allows(
+        req: &Request,
+        blob: &crate::models::Object,
+    ) -> Result<(), Response<Body>> {
         if !Self::has_active_lease(blob) {
             return Ok(());
         }
@@ -339,6 +352,7 @@ impl AzureBlobAdapter {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn ensure_mutation_allowed(
         req: &Request,
         blob: &crate::models::Object,
@@ -393,7 +407,9 @@ impl AzureBlobAdapter {
         let key = snapshot
             .map(|value| Self::snapshot_storage_key(blob_key, value))
             .unwrap_or_else(|| blob_key.to_string());
-        storage.get_object(container, &key).map_err(|err| err.to_string())
+        storage
+            .get_object(container, &key)
+            .map_err(|err| err.to_string())
     }
 
     fn set_blob_type(blob: &mut crate::models::Object, blob_type: &str) {
@@ -484,7 +500,10 @@ impl AzureBlobAdapter {
 
     fn shared_key_secret(config: &AuthConfig) -> Option<Vec<u8>> {
         let secret = config.secret_key()?;
-        BASE64.decode(secret).ok().or_else(|| Some(secret.as_bytes().to_vec()))
+        BASE64
+            .decode(secret)
+            .ok()
+            .or_else(|| Some(secret.as_bytes().to_vec()))
     }
 
     fn shared_key_string_to_sign(req: &Request, account: &str) -> String {
@@ -528,8 +547,8 @@ impl AzureBlobAdapter {
         let provided = authorization
             .strip_prefix(&prefix)
             .ok_or_else(|| "Unsupported Azure authorization scheme".to_string())?;
-        let key =
-            Self::shared_key_secret(config).ok_or_else(|| "Missing Azure shared key".to_string())?;
+        let key = Self::shared_key_secret(config)
+            .ok_or_else(|| "Missing Azure shared key".to_string())?;
         let expected = sign_hmac_base64(&key, &Self::shared_key_string_to_sign(req, account))?;
 
         if provided == expected {
@@ -602,8 +621,8 @@ impl AzureBlobAdapter {
             format!("/blob/{}", resource.account)
         };
 
-        let key =
-            Self::shared_key_secret(config).ok_or_else(|| "Missing Azure shared key".to_string())?;
+        let key = Self::shared_key_secret(config)
+            .ok_or_else(|| "Missing Azure shared key".to_string())?;
         let expected = sign_hmac_base64(
             &key,
             &Self::sas_string_to_sign(
@@ -623,6 +642,7 @@ impl AzureBlobAdapter {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn authorize(
         req: &Request,
         config: &AuthConfig,
@@ -653,23 +673,23 @@ impl AzureBlobAdapter {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(event)) => {
-                    if matches!(event.name().as_ref(), b"Latest" | b"Committed" | b"Uncommitted")
-                    {
+                    if matches!(
+                        event.name().as_ref(),
+                        b"Latest" | b"Committed" | b"Uncommitted"
+                    ) {
                         in_name = true;
                     }
                 }
                 Ok(Event::End(event)) => {
-                    if matches!(event.name().as_ref(), b"Latest" | b"Committed" | b"Uncommitted")
-                    {
+                    if matches!(
+                        event.name().as_ref(),
+                        b"Latest" | b"Committed" | b"Uncommitted"
+                    ) {
                         in_name = false;
                     }
                 }
                 Ok(Event::Text(text)) if in_name => {
-                    block_ids.push(
-                        text.unescape()
-                            .map_err(|err| err.to_string())?
-                            .to_string(),
-                    );
+                    block_ids.push(text.unescape().map_err(|err| err.to_string())?.to_string());
                 }
                 Ok(Event::Eof) => break,
                 Err(err) => return Err(err.to_string()),
@@ -721,7 +741,13 @@ impl AzureBlobAdapter {
     ) -> Result<Response<Body>, String> {
         let resource = match Self::parse_resource(&req) {
             Ok(resource) => resource,
-            Err(msg) => return Ok(Self::error_response(StatusCode::BAD_REQUEST, "InvalidUri", &msg)),
+            Err(msg) => {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidUri",
+                    &msg,
+                ))
+            }
         };
 
         if let Err(response) = Self::authorize(&req, &auth_config, &resource) {
@@ -730,7 +756,10 @@ impl AzureBlobAdapter {
 
         if resource.container.is_none() {
             if req.method() == Method::GET && req.query_param("comp") == Some("list") {
-                let namespaces = storage.as_ref().list_namespaces().map_err(|err| err.to_string())?;
+                let namespaces = storage
+                    .as_ref()
+                    .list_namespaces()
+                    .map_err(|err| err.to_string())?;
                 return Ok(Self::xml_response(
                     StatusCode::OK,
                     Self::list_containers_xml(&resource.account, &namespaces),
@@ -746,16 +775,22 @@ impl AzureBlobAdapter {
 
         let container = resource.container.clone().unwrap_or_default();
         if req.query_param("restype") == Some("container") {
-            return match req.method() {
-                &Method::PUT => {
-                    storage.as_ref().create_namespace(container).map_err(|err| err.to_string())?;
+            return match *req.method() {
+                Method::PUT => {
+                    storage
+                        .as_ref()
+                        .create_namespace(container)
+                        .map_err(|err| err.to_string())?;
                     Ok(Self::empty_response(StatusCode::CREATED))
                 }
-                &Method::DELETE => {
-                    storage.as_ref().delete_namespace(&container).map_err(|err| err.to_string())?;
+                Method::DELETE => {
+                    storage
+                        .as_ref()
+                        .delete_namespace(&container)
+                        .map_err(|err| err.to_string())?;
                     Ok(Self::empty_response(StatusCode::ACCEPTED))
                 }
-                &Method::GET => {
+                Method::GET => {
                     if req.query_param("comp") == Some("list") {
                         let blobs = storage
                             .as_ref()
@@ -772,7 +807,10 @@ impl AzureBlobAdapter {
                             Self::list_blobs_xml(&container, &blobs),
                         ))
                     } else {
-                        storage.as_ref().get_namespace(&container).map_err(|err| err.to_string())?;
+                        storage
+                            .as_ref()
+                            .get_namespace(&container)
+                            .map_err(|err| err.to_string())?;
                         Ok(Self::empty_response(StatusCode::OK))
                     }
                 }
@@ -884,17 +922,21 @@ impl AzureBlobAdapter {
             let mut snapshot_blob = blob.clone();
             snapshot_blob.key = snapshot_key.clone();
             snapshot_blob.provider_metadata.remove(AZURE_LEASE_ID_KEY);
-            snapshot_blob.provider_metadata.remove(AZURE_LEASE_STATE_KEY);
-            snapshot_blob.provider_metadata.remove(AZURE_LEASE_STATUS_KEY);
-            snapshot_blob.provider_metadata.remove(AZURE_LEASE_DURATION_KEY);
-            snapshot_blob.provider_metadata.insert(
-                AZURE_SNAPSHOT_TIME_KEY.to_string(),
-                snapshot_time.clone(),
-            );
-            snapshot_blob.provider_metadata.insert(
-                AZURE_SNAPSHOT_SOURCE_KEY.to_string(),
-                blob_key.clone(),
-            );
+            snapshot_blob
+                .provider_metadata
+                .remove(AZURE_LEASE_STATE_KEY);
+            snapshot_blob
+                .provider_metadata
+                .remove(AZURE_LEASE_STATUS_KEY);
+            snapshot_blob
+                .provider_metadata
+                .remove(AZURE_LEASE_DURATION_KEY);
+            snapshot_blob
+                .provider_metadata
+                .insert(AZURE_SNAPSHOT_TIME_KEY.to_string(), snapshot_time.clone());
+            snapshot_blob
+                .provider_metadata
+                .insert(AZURE_SNAPSHOT_SOURCE_KEY.to_string(), blob_key.clone());
             storage
                 .put_object(&container, snapshot_key, snapshot_blob)
                 .map_err(|err| err.to_string())?;
@@ -919,14 +961,10 @@ impl AzureBlobAdapter {
                 .as_ref()
                 .get_blob(&container, &blob_key)
                 .map_err(|err| err.to_string())?;
-            blob.provider_metadata.insert(
-                AZURE_IMMUTABILITY_UNTIL_KEY.to_string(),
-                until.to_string(),
-            );
-            blob.provider_metadata.insert(
-                AZURE_IMMUTABILITY_MODE_KEY.to_string(),
-                mode.to_string(),
-            );
+            blob.provider_metadata
+                .insert(AZURE_IMMUTABILITY_UNTIL_KEY.to_string(), until.to_string());
+            blob.provider_metadata
+                .insert(AZURE_IMMUTABILITY_MODE_KEY.to_string(), mode.to_string());
             storage
                 .put_object(&container, blob_key.clone(), blob)
                 .map_err(|err| err.to_string())?;
@@ -968,10 +1006,8 @@ impl AzureBlobAdapter {
                 .as_ref()
                 .get_blob(&container, &blob_key)
                 .map_err(|err| err.to_string())?;
-            blob.provider_metadata.insert(
-                AZURE_LEGAL_HOLD_KEY.to_string(),
-                enabled.to_string(),
-            );
+            blob.provider_metadata
+                .insert(AZURE_LEGAL_HOLD_KEY.to_string(), enabled.to_string());
             storage
                 .put_object(&container, blob_key.clone(), blob)
                 .map_err(|err| err.to_string())?;
@@ -994,7 +1030,9 @@ impl AzureBlobAdapter {
                 .and_modify(|session| {
                     session.content_type = Some(Self::content_type(&req));
                     session.metadata = Self::metadata_from_headers(&req);
-                    session.blocks.insert(block_id.to_string(), req.body.to_vec());
+                    session
+                        .blocks
+                        .insert(block_id.to_string(), req.body.to_vec());
                 })
                 .or_insert_with(|| {
                     let mut session = AzureBlockSession {
@@ -1002,7 +1040,9 @@ impl AzureBlobAdapter {
                         content_type: Some(Self::content_type(&req)),
                         metadata: Self::metadata_from_headers(&req),
                     };
-                    session.blocks.insert(block_id.to_string(), req.body.to_vec());
+                    session
+                        .blocks
+                        .insert(block_id.to_string(), req.body.to_vec());
                     session
                 });
 
@@ -1039,7 +1079,12 @@ impl AzureBlobAdapter {
                     .ok_or_else(|| format!("Unknown block id {}", block_id))?;
                 storage
                     .as_ref()
-                    .upload_session_part(&container, &upload.upload_id, index as u32 + 1, block.clone())
+                    .upload_session_part(
+                        &container,
+                        &upload.upload_id,
+                        index as u32 + 1,
+                        block.clone(),
+                    )
                     .map_err(|err| err.to_string())?;
             }
 
@@ -1119,7 +1164,10 @@ impl AzureBlobAdapter {
                 .map_err(|err| err.to_string())?;
             return Ok(Self::response(StatusCode::CREATED)
                 .header("etag", &format!("\"{}\"", stored.etag))
-                .header("x-ms-blob-append-offset", &(stored.size - req.body.len() as u64).to_string())
+                .header(
+                    "x-ms-blob-append-offset",
+                    &(stored.size - req.body.len() as u64).to_string(),
+                )
                 .header("x-ms-blob-committed-block-count", "1")
                 .empty());
         }
@@ -1188,8 +1236,8 @@ impl AzureBlobAdapter {
             return Ok(Self::response(StatusCode::CREATED).empty());
         }
 
-        match req.method() {
-            &Method::PUT => {
+        match *req.method() {
+            Method::PUT => {
                 if snapshot.is_some() {
                     return Ok(Self::error_response(
                         StatusCode::BAD_REQUEST,
@@ -1214,14 +1262,17 @@ impl AzureBlobAdapter {
                     storage
                         .put_object(&container, blob_key.clone(), object)
                         .map_err(|err| err.to_string())?;
-                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                    storage
+                        .as_ref()
+                        .get_object(&container, &blob_key)
+                        .map_err(|err| err.to_string())?
                 } else if blob_type == "PageBlob" {
                     let declared_len = req
                         .header("x-ms-blob-content-length")
                         .or_else(|| req.header("content-length"))
                         .and_then(|value| value.parse::<usize>().ok())
                         .unwrap_or(req.body.len());
-                    if declared_len % 512 != 0 {
+                    if !declared_len.is_multiple_of(512) {
                         return Ok(Self::error_response(
                             StatusCode::BAD_REQUEST,
                             "InvalidHeaderValue",
@@ -1238,7 +1289,10 @@ impl AzureBlobAdapter {
                     storage
                         .put_object(&container, blob_key.clone(), object)
                         .map_err(|err| err.to_string())?;
-                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                    storage
+                        .as_ref()
+                        .get_object(&container, &blob_key)
+                        .map_err(|err| err.to_string())?
                 } else {
                     let mut stored = storage
                         .as_ref()
@@ -1261,7 +1315,10 @@ impl AzureBlobAdapter {
                     storage
                         .put_object(&container, blob_key.clone(), object)
                         .map_err(|err| err.to_string())?;
-                    storage.as_ref().get_object(&container, &blob_key).map_err(|err| err.to_string())?
+                    storage
+                        .as_ref()
+                        .get_object(&container, &blob_key)
+                        .map_err(|err| err.to_string())?
                 };
                 Ok(Self::response(StatusCode::CREATED)
                     .header("etag", &format!("\"{}\"", stored.etag))
@@ -1269,16 +1326,20 @@ impl AzureBlobAdapter {
                     .header("x-ms-blob-type", Self::blob_type(&stored))
                     .empty())
             }
-            &Method::GET => {
-                let blob = match Self::lookup_blob(&storage, &container, &blob_key, snapshot.as_deref()) {
-                    Ok(blob) => blob,
-                    Err(err) => return Err(err),
-                };
+            Method::GET => {
+                let blob =
+                    match Self::lookup_blob(&storage, &container, &blob_key, snapshot.as_deref()) {
+                        Ok(blob) => blob,
+                        Err(err) => return Err(err),
+                    };
                 if let Some(range_header) = Self::requested_range(&req) {
                     if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
                         let payload = if snapshot.is_some() {
                             let data = blob.data[start..=end].to_vec();
-                            crate::blob::BlobPayload { blob: blob.clone(), data }
+                            crate::blob::BlobPayload {
+                                blob: blob.clone(),
+                                data,
+                            }
                         } else {
                             storage
                                 .as_ref()
@@ -1298,8 +1359,8 @@ impl AzureBlobAdapter {
                             payload.data.len(),
                             Some(format!("bytes {}-{}/{}", start, end, blob.size)),
                         )
-                            .body(payload.data)
-                            .build());
+                        .body(payload.data)
+                        .build());
                     }
                     return Ok(Self::error_response(
                         StatusCode::RANGE_NOT_SATISFIABLE,
@@ -1307,15 +1368,17 @@ impl AzureBlobAdapter {
                         "The requested range is not satisfiable.",
                     ));
                 }
-                Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None)
-                    .body(blob.data)
-                    .build())
+                Ok(
+                    Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None)
+                        .body(blob.data)
+                        .build(),
+                )
             }
-            &Method::HEAD => {
+            Method::HEAD => {
                 let blob = Self::lookup_blob(&storage, &container, &blob_key, snapshot.as_deref())?;
                 Ok(Self::blob_response(StatusCode::OK, &blob, blob.size as usize, None).empty())
             }
-            &Method::DELETE => {
+            Method::DELETE => {
                 if let Some(snapshot) = snapshot.as_deref() {
                     let snapshot_key = Self::snapshot_storage_key(&blob_key, snapshot);
                     storage
@@ -1331,7 +1394,10 @@ impl AzureBlobAdapter {
                 if let Err(response) = Self::ensure_mutation_allowed(&req, &blob) {
                     return Ok(response);
                 }
-                storage.as_ref().delete_blob(&container, &blob_key).map_err(|err| err.to_string())?;
+                storage
+                    .as_ref()
+                    .delete_blob(&container, &blob_key)
+                    .map_err(|err| err.to_string())?;
                 Ok(Self::empty_response(StatusCode::ACCEPTED))
             }
             _ => Ok(Self::error_response(
@@ -1345,8 +1411,8 @@ impl AzureBlobAdapter {
 
 fn sign_hmac_base64(key: &[u8], payload: &str) -> Result<String, String> {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac =
-        HmacSha256::new_from_slice(key).map_err(|err| format!("Invalid Azure signing key: {}", err))?;
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|err| format!("Invalid Azure signing key: {}", err))?;
     mac.update(payload.as_bytes());
     Ok(BASE64.encode(mac.finalize().into_bytes()))
 }
@@ -1408,9 +1474,13 @@ mod tests {
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
-        Request::from_hyper(builder.body(Body::from(body.to_vec())).expect("request should build"))
-            .await
-            .expect("request should parse")
+        Request::from_hyper(
+            builder
+                .body(Body::from(body.to_vec()))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
     }
 
     fn signed_headers(req: &Request, config: &AuthConfig, account: &str) -> String {
@@ -1423,7 +1493,12 @@ mod tests {
         )
     }
 
-    fn sas_signature(resource: &str, config: &AuthConfig, permissions: &str, expires: &str) -> String {
+    fn sas_signature(
+        resource: &str,
+        config: &AuthConfig,
+        permissions: &str,
+        expires: &str,
+    ) -> String {
         let key = AzureBlobAdapter::shared_key_secret(config).expect("key should exist");
         let payload = AzureBlobAdapter::sas_string_to_sign(
             resource,
@@ -1495,7 +1570,9 @@ mod tests {
         let body = hyper::body::to_bytes(response.into_body())
             .await
             .expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("xml").contains("kitten.txt"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("xml")
+            .contains("kitten.txt"));
 
         let response = adapter
             .handle_request(
@@ -1539,7 +1616,10 @@ mod tests {
 
         let block_one = BASE64.encode("block-001");
         let block_two = BASE64.encode("block-002");
-        for (block_id, payload) in [(&block_one, b"abc".as_slice()), (&block_two, b"def".as_slice())] {
+        for (block_id, payload) in [
+            (&block_one, b"abc".as_slice()),
+            (&block_two, b"def".as_slice()),
+        ] {
             let response = adapter
                 .handle_request(
                     storage.clone(),
@@ -1571,7 +1651,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/devstoreaccount1/archive/report.txt?comp=blocklist",
-                    &[("x-ms-version", AZURE_VERSION), ("content-type", "application/xml")],
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("content-type", "application/xml"),
+                    ],
                     block_list.as_bytes(),
                 )
                 .await,
@@ -1684,7 +1767,10 @@ mod tests {
 
         let block_one = BASE64.encode("block-a");
         let block_two = BASE64.encode("block-b");
-        for (block_id, payload) in [(&block_one, b"hello ".as_slice()), (&block_two, b"azure".as_slice())] {
+        for (block_id, payload) in [
+            (&block_one, b"hello ".as_slice()),
+            (&block_two, b"azure".as_slice()),
+        ] {
             adapter
                 .handle_request(
                     storage.clone(),
@@ -1715,7 +1801,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/devstoreaccount1/media/greeting.txt?comp=blocklist",
-                    &[("x-ms-version", AZURE_VERSION), ("content-type", "application/xml")],
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("content-type", "application/xml"),
+                    ],
                     block_list.as_bytes(),
                 )
                 .await,
@@ -1847,7 +1936,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/devstoreaccount1/state/events.log",
-                    &[("x-ms-version", AZURE_VERSION), ("x-ms-blob-type", "AppendBlob")],
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("x-ms-blob-type", "AppendBlob"),
+                    ],
                     b"hello",
                 )
                 .await,
@@ -1856,7 +1948,10 @@ mod tests {
             .expect("append blob create should succeed");
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(
-            response.headers().get("x-ms-blob-type").and_then(|v| v.to_str().ok()),
+            response
+                .headers()
+                .get("x-ms-blob-type")
+                .and_then(|v| v.to_str().ok()),
             Some("AppendBlob")
         );
 
@@ -1914,7 +2009,10 @@ mod tests {
             .expect("page blob create should succeed");
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(
-            response.headers().get("x-ms-blob-type").and_then(|v| v.to_str().ok()),
+            response
+                .headers()
+                .get("x-ms-blob-type")
+                .and_then(|v| v.to_str().ok()),
             Some("PageBlob")
         );
 
@@ -1943,10 +2041,7 @@ mod tests {
                 parsed_request(
                     "GET",
                     "http://localhost/devstoreaccount1/state/page.bin",
-                    &[
-                        ("x-ms-version", AZURE_VERSION),
-                        ("x-ms-range", "bytes=0-7"),
-                    ],
+                    &[("x-ms-version", AZURE_VERSION), ("x-ms-range", "bytes=0-7")],
                     b"",
                 )
                 .await,
@@ -2124,7 +2219,10 @@ mod tests {
                     "http://localhost/devstoreaccount1/state/lease.txt?comp=immutabilitypolicy",
                     &[
                         ("x-ms-version", AZURE_VERSION),
-                        ("x-ms-immutability-policy-until-date", "2099-01-01T00:00:00Z"),
+                        (
+                            "x-ms-immutability-policy-until-date",
+                            "2099-01-01T00:00:00Z",
+                        ),
                         ("x-ms-immutability-policy-mode", "Unlocked"),
                     ],
                     b"",

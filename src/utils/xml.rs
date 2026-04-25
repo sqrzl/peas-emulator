@@ -1,3 +1,4 @@
+use crate::models::policy::{Grant, Grantee, Permission};
 /// XML response builders for S3-compliant responses
 use crate::models::{Acl, Bucket, CannedAcl, MultipartUpload, Object, Owner, Part};
 use quick_xml::events::Event;
@@ -551,8 +552,41 @@ pub fn list_multipart_uploads_xml(uploads: &[MultipartUpload], bucket: &str) -> 
 pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
     let mut grants = String::new();
 
-    grants.push_str(&format!(
-        r#"
+    if !acl.grants.is_empty() {
+        for grant in &acl.grants {
+            let grantee_xml = match &grant.grantee {
+                crate::models::policy::Grantee::CanonicalUser { id, display_name } => format!(
+                    r#"<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>{}</ID>{}</Grantee>"#,
+                    escape_xml(id),
+                    display_name
+                        .as_ref()
+                        .map(|name| format!("<DisplayName>{}</DisplayName>", escape_xml(name)))
+                        .unwrap_or_default(),
+                ),
+                crate::models::policy::Grantee::Group { uri } => format!(
+                    r#"<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group"><URI>{}</URI></Grantee>"#,
+                    escape_xml(uri),
+                ),
+            };
+            let permission = match grant.permission {
+                crate::models::policy::Permission::Read => "READ",
+                crate::models::policy::Permission::Write => "WRITE",
+                crate::models::policy::Permission::ReadAcp => "READ_ACP",
+                crate::models::policy::Permission::WriteAcp => "WRITE_ACP",
+                crate::models::policy::Permission::FullControl => "FULL_CONTROL",
+            };
+            grants.push_str(&format!(
+                r#"
+        <Grant>
+            {}
+            <Permission>{}</Permission>
+        </Grant>"#,
+                grantee_xml, permission
+            ));
+        }
+    } else {
+        grants.push_str(&format!(
+            r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
                 <ID>{}</ID>
@@ -560,26 +594,26 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
             </Grantee>
             <Permission>FULL_CONTROL</Permission>
         </Grant>"#,
-        escape_xml(&owner.id),
-        escape_xml(&owner.display_name)
-    ));
+            escape_xml(&owner.id),
+            escape_xml(&owner.display_name)
+        ));
 
-    match acl.canned {
-        CannedAcl::Private => {}
-        CannedAcl::PublicRead => {
-            grants.push_str(
-                r#"
+        match acl.canned {
+            CannedAcl::Private => {}
+            CannedAcl::PublicRead => {
+                grants.push_str(
+                    r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
                 <URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
             </Grantee>
             <Permission>READ</Permission>
         </Grant>"#,
-            );
-        }
-        CannedAcl::PublicReadWrite => {
-            grants.push_str(
-                r#"
+                );
+            }
+            CannedAcl::PublicReadWrite => {
+                grants.push_str(
+                    r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
                 <URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
@@ -592,26 +626,21 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
             </Grantee>
             <Permission>WRITE</Permission>
         </Grant>"#,
-            );
-        }
-        CannedAcl::AuthenticatedRead => {
-            grants.push_str(
-                r#"
+                );
+            }
+            CannedAcl::AuthenticatedRead => {
+                grants.push_str(
+                    r#"
         <Grant>
             <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
                 <URI>http://acs.amazonaws.com/groups/global/AuthenticatedUsers</URI>
             </Grantee>
             <Permission>READ</Permission>
         </Grant>"#,
-            );
-        }
-        CannedAcl::BucketOwnerRead => {
-            // Bucket owner read - owner has full control, requester has read
-            // For simplicity, we don't add additional grants as owner already has full control
-        }
-        CannedAcl::BucketOwnerFullControl => {
-            // Bucket owner full control - owner has full control
-            // For simplicity, we don't add additional grants as owner already has full control
+                );
+            }
+            CannedAcl::BucketOwnerRead => {}
+            CannedAcl::BucketOwnerFullControl => {}
         }
     }
 
@@ -630,6 +659,91 @@ pub fn acl_xml(owner: &Owner, acl: &Acl) -> String {
         escape_xml(&owner.display_name),
         grants
     )
+}
+
+pub fn parse_acl_xml(body: &str) -> Result<Acl, String> {
+    let mut reader = Reader::from_str(body);
+    reader.trim_text(true);
+    let mut buf = Vec::new();
+    let mut grants = Vec::new();
+    let mut in_grant = false;
+    let mut current_tag: Option<Vec<u8>> = None;
+    let mut current_id: Option<String> = None;
+    let mut current_display_name: Option<String> = None;
+    let mut current_uri: Option<String> = None;
+    let mut current_permission: Option<Permission> = None;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = e.name().as_ref().to_vec();
+                if name.as_slice() == b"Grant" {
+                    in_grant = true;
+                    current_id = None;
+                    current_display_name = None;
+                    current_uri = None;
+                    current_permission = None;
+                }
+                current_tag = Some(name);
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"Grant" {
+                    let permission = current_permission
+                        .take()
+                        .ok_or_else(|| "Missing ACL permission".to_string())?;
+                    let grantee = if let Some(id) = current_id.take() {
+                        Grantee::CanonicalUser {
+                            id,
+                            display_name: current_display_name.take(),
+                        }
+                    } else if let Some(uri) = current_uri.take() {
+                        Grantee::Group { uri }
+                    } else {
+                        return Err("Missing ACL grantee".to_string());
+                    };
+                    grants.push(Grant {
+                        grantee,
+                        permission,
+                    });
+                    in_grant = false;
+                }
+                current_tag = None;
+            }
+            Ok(Event::Text(e)) => {
+                if !in_grant {
+                    buf.clear();
+                    continue;
+                }
+
+                let text = e.unescape().map_err(|err| err.to_string())?.to_string();
+                match current_tag.as_deref() {
+                    Some(b"ID") => current_id = Some(text),
+                    Some(b"DisplayName") => current_display_name = Some(text),
+                    Some(b"URI") => current_uri = Some(text),
+                    Some(b"Permission") => {
+                        current_permission = Some(match text.as_str() {
+                            "READ" => Permission::Read,
+                            "WRITE" => Permission::Write,
+                            "READ_ACP" => Permission::ReadAcp,
+                            "WRITE_ACP" => Permission::WriteAcp,
+                            "FULL_CONTROL" => Permission::FullControl,
+                            _ => return Err(format!("Unsupported ACL permission: {}", text)),
+                        })
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("XML parse error: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(Acl {
+        canned: CannedAcl::Private,
+        grants,
+    })
 }
 
 /// List parts response
@@ -1328,5 +1442,37 @@ mod tests {
         assert!(xml.contains("<Permission>READ</Permission>"));
         assert_eq!(xml.matches("<Grant>").count(), 2);
         assert_eq!(xml.matches("<Permission>READ</Permission>").count(), 1);
+    }
+
+    #[test]
+    fn should_parse_acl_xml_with_canonical_and_group_grants() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Owner>
+        <ID>owner-id</ID>
+        <DisplayName>Owner</DisplayName>
+    </Owner>
+    <AccessControlList>
+        <Grant>
+            <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+                <ID>owner-id</ID>
+            </Grantee>
+            <Permission>FULL_CONTROL</Permission>
+        </Grant>
+        <Grant>
+            <Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+                <URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+            </Grantee>
+            <Permission>READ</Permission>
+        </Grant>
+    </AccessControlList>
+</AccessControlPolicy>"#;
+
+        let acl = parse_acl_xml(xml).expect("acl xml should parse");
+
+        assert_eq!(acl.grants.len(), 2);
+        assert!(matches!(acl.grants[0].permission, Permission::FullControl));
+        assert!(matches!(acl.grants[1].grantee, Grantee::Group { .. }));
+        assert!(matches!(acl.grants[1].permission, Permission::Read));
     }
 }

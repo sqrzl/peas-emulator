@@ -15,6 +15,12 @@ use std::sync::Arc;
 
 pub struct OciAdapter;
 
+impl Default for OciAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OciAdapter {
     pub fn new() -> Self {
         Self
@@ -67,7 +73,11 @@ impl OciAdapter {
         }
         Ok((
             parts.get(1).copied().unwrap_or("peas-emulator").to_string(),
-            parts.iter().skip(2).map(|segment| (*segment).to_string()).collect(),
+            parts
+                .iter()
+                .skip(2)
+                .map(|segment| (*segment).to_string())
+                .collect(),
         ))
     }
 
@@ -135,40 +145,77 @@ impl OciAdapter {
         builder
     }
 
+    #[allow(clippy::result_large_err)]
     fn authorize(req: &Request, config: &AuthConfig) -> Result<(), Response<Body>> {
         if !config.enforce_auth {
             return Ok(());
         }
 
         let Some(auth) = req.header("authorization") else {
-            return Err(Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "Missing authorization"));
+            return Err(Self::error_response(
+                StatusCode::UNAUTHORIZED,
+                "NotAuthenticated",
+                "Missing authorization",
+            ));
         };
         if !auth.starts_with("Signature ") {
-            return Err(Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "Unsupported OCI auth scheme"));
+            return Err(Self::error_response(
+                StatusCode::UNAUTHORIZED,
+                "NotAuthenticated",
+                "Unsupported OCI auth scheme",
+            ));
         }
         let signature = auth
             .split(',')
-            .find_map(|part| part.trim().strip_prefix("signature=\"").map(|value| value.trim_end_matches('"').to_string()))
-            .ok_or_else(|| Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "Missing OCI signature"))?;
+            .find_map(|part| {
+                part.trim()
+                    .strip_prefix("signature=\"")
+                    .map(|value| value.trim_end_matches('"').to_string())
+            })
+            .ok_or_else(|| {
+                Self::error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "NotAuthenticated",
+                    "Missing OCI signature",
+                )
+            })?;
         let key_id = auth
             .split(',')
-            .find_map(|part| part.trim().strip_prefix("Signature keyId=\"").or_else(|| part.trim().strip_prefix("keyId=\"")).map(|value| value.trim_end_matches('"').to_string()))
+            .find_map(|part| {
+                part.trim()
+                    .strip_prefix("Signature keyId=\"")
+                    .or_else(|| part.trim().strip_prefix("keyId=\""))
+                    .map(|value| value.trim_end_matches('"').to_string())
+            })
             .unwrap_or_default();
 
         if config.access_key() != Some(key_id.as_str()) {
-            return Err(Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "Invalid OCI keyId"));
+            return Err(Self::error_response(
+                StatusCode::UNAUTHORIZED,
+                "NotAuthenticated",
+                "Invalid OCI keyId",
+            ));
         }
 
         type HmacSha256 = Hmac<Sha256>;
         let secret = config.secret_key().unwrap_or_default().as_bytes().to_vec();
-        let mut mac = HmacSha256::new_from_slice(&secret)
-            .map_err(|_| Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "Invalid OCI key"))?;
+        let mut mac = HmacSha256::new_from_slice(&secret).map_err(|_| {
+            Self::error_response(
+                StatusCode::UNAUTHORIZED,
+                "NotAuthenticated",
+                "Invalid OCI key",
+            )
+        })?;
         mac.update(Self::signing_string(req).as_bytes());
         let expected = BASE64.encode(mac.finalize().into_bytes());
         if expected == signature {
             Ok(())
         } else {
-            Err(Self::error_response(StatusCode::UNAUTHORIZED, "NotAuthenticated", "OCI signature mismatch"))
+            Err(Self::error_response(
+                StatusCode::UNAUTHORIZED,
+                "NotAuthenticated",
+                "OCI signature mismatch",
+            ))
         }
     }
 
@@ -180,7 +227,13 @@ impl OciAdapter {
     ) -> Result<Response<Body>, String> {
         let (namespace, parts) = match Self::parse_path(&req) {
             Ok(parsed) => parsed,
-            Err(msg) => return Ok(Self::error_response(StatusCode::BAD_REQUEST, "InvalidParameter", &msg)),
+            Err(msg) => {
+                return Ok(Self::error_response(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidParameter",
+                    &msg,
+                ))
+            }
         };
 
         if let Err(response) = Self::authorize(&req, &auth_config) {
@@ -191,12 +244,16 @@ impl OciAdapter {
             if req.method() == Method::GET {
                 return Ok(Self::text_response(StatusCode::OK, &namespace));
             }
-            return Ok(Self::error_response(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Unsupported OCI namespace operation"));
+            return Ok(Self::error_response(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "MethodNotAllowed",
+                "Unsupported OCI namespace operation",
+            ));
         }
 
-        if parts.len() >= 1 && parts[0] == "b" && parts.len() == 1 {
-            return match req.method() {
-                &Method::POST => {
+        if !parts.is_empty() && parts[0] == "b" && parts.len() == 1 {
+            return match *req.method() {
+                Method::POST => {
                     let payload: serde_json::Value =
                         serde_json::from_slice(&req.body).map_err(|err| err.to_string())?;
                     let bucket = payload
@@ -209,40 +266,66 @@ impl OciAdapter {
                         .map_err(|err| err.to_string())?;
                     Ok(Self::json_response(
                         StatusCode::OK,
-                        &format!("{{\"name\":\"{}\",\"namespace\":\"{}\"}}", bucket, namespace),
+                        &format!(
+                            "{{\"name\":\"{}\",\"namespace\":\"{}\"}}",
+                            bucket, namespace
+                        ),
                     ))
                 }
-                _ => Ok(Self::error_response(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Unsupported OCI bucket collection operation")),
+                _ => Ok(Self::error_response(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "MethodNotAllowed",
+                    "Unsupported OCI bucket collection operation",
+                )),
             };
         }
 
         if parts.len() >= 2 && parts[0] == "b" && parts.len() == 2 {
             let bucket = parts[1].clone();
-            return match req.method() {
-                &Method::PUT => {
-                    storage.as_ref().create_namespace(bucket).map_err(|err| err.to_string())?;
-                    Ok(Self::json_response(StatusCode::OK, "{\"etag\":\"created\"}"))
-                }
-                &Method::DELETE => {
-                    storage.as_ref().delete_namespace(&bucket).map_err(|err| err.to_string())?;
-                    Ok(Self::json_response(StatusCode::NO_CONTENT, ""))
-                }
-                &Method::GET => {
-                    storage.as_ref().get_namespace(&bucket).map_err(|err| err.to_string())?;
+            return match *req.method() {
+                Method::PUT => {
+                    storage
+                        .as_ref()
+                        .create_namespace(bucket)
+                        .map_err(|err| err.to_string())?;
                     Ok(Self::json_response(
                         StatusCode::OK,
-                        &format!("{{\"name\":\"{}\",\"namespace\":\"{}\"}}", bucket, namespace),
+                        "{\"etag\":\"created\"}",
                     ))
                 }
-                _ => Ok(Self::error_response(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Unsupported OCI bucket operation")),
+                Method::DELETE => {
+                    storage
+                        .as_ref()
+                        .delete_namespace(&bucket)
+                        .map_err(|err| err.to_string())?;
+                    Ok(Self::json_response(StatusCode::NO_CONTENT, ""))
+                }
+                Method::GET => {
+                    storage
+                        .as_ref()
+                        .get_namespace(&bucket)
+                        .map_err(|err| err.to_string())?;
+                    Ok(Self::json_response(
+                        StatusCode::OK,
+                        &format!(
+                            "{{\"name\":\"{}\",\"namespace\":\"{}\"}}",
+                            bucket, namespace
+                        ),
+                    ))
+                }
+                _ => Ok(Self::error_response(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "MethodNotAllowed",
+                    "Unsupported OCI bucket operation",
+                )),
             };
         }
 
         if parts.len() >= 3 && parts[0] == "b" && parts[2] == "u" {
             let bucket = parts[1].clone();
             if parts.len() == 3 {
-                return match req.method() {
-                    &Method::POST => {
+                return match *req.method() {
+                    Method::POST => {
                         let payload: serde_json::Value =
                             serde_json::from_slice(&req.body).map_err(|err| err.to_string())?;
                         let object = payload
@@ -285,13 +368,11 @@ impl OciAdapter {
                             .to_string(),
                         ))
                     }
-                    _ => {
-                        Ok(Self::error_response(
-                            StatusCode::METHOD_NOT_ALLOWED,
-                            "MethodNotAllowed",
-                            "Unsupported OCI multipart collection operation",
-                        ))
-                    }
+                    _ => Ok(Self::error_response(
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        "MethodNotAllowed",
+                        "Unsupported OCI multipart collection operation",
+                    )),
                 };
             }
 
@@ -299,8 +380,8 @@ impl OciAdapter {
             let upload_id = req
                 .query_param("uploadId")
                 .ok_or_else(|| "Missing uploadId query parameter".to_string())?;
-            return match req.method() {
-                &Method::PUT => {
+            return match *req.method() {
+                Method::PUT => {
                     let part_number = req
                         .query_param("uploadPartNum")
                         .ok_or_else(|| "Missing uploadPartNum query parameter".to_string())?
@@ -312,7 +393,7 @@ impl OciAdapter {
                         .map_err(|err| err.to_string())?;
                     Ok(Self::response(StatusCode::OK).header("etag", &etag).empty())
                 }
-                &Method::POST => {
+                Method::POST => {
                     let payload: serde_json::Value =
                         serde_json::from_slice(&req.body).map_err(|err| err.to_string())?;
                     let upload = storage
@@ -325,8 +406,9 @@ impl OciAdapter {
                             "Multipart upload object did not match upload session",
                         ));
                     }
-                    if let Some(parts_to_commit) =
-                        payload.get("partsToCommit").and_then(|value| value.as_array())
+                    if let Some(parts_to_commit) = payload
+                        .get("partsToCommit")
+                        .and_then(|value| value.as_array())
                     {
                         for part in parts_to_commit {
                             let part_num = part
@@ -358,7 +440,7 @@ impl OciAdapter {
                         .map_err(|err| err.to_string())?;
                     Ok(Self::response(StatusCode::OK).header("etag", &etag).empty())
                 }
-                &Method::DELETE => {
+                Method::DELETE => {
                     storage
                         .abort_multipart_upload(&bucket, upload_id)
                         .map_err(|err| err.to_string())?;
@@ -388,34 +470,52 @@ impl OciAdapter {
                         ))
                         .collect::<Vec<_>>()
                         .join(",");
-                    return Ok(Self::json_response(StatusCode::OK, &format!("{{\"objects\":[{}]}}", items)));
+                    return Ok(Self::json_response(
+                        StatusCode::OK,
+                        &format!("{{\"objects\":[{}]}}", items),
+                    ));
                 }
-                return Ok(Self::error_response(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Unsupported OCI object list operation"));
+                return Ok(Self::error_response(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "MethodNotAllowed",
+                    "Unsupported OCI object list operation",
+                ));
             }
 
             let object = parts[3..].join("/");
-            return match req.method() {
-                &Method::PUT => {
+            return match *req.method() {
+                Method::PUT => {
                     let stored = storage
                         .as_ref()
                         .put_blob(PutBlobRequest {
                             namespace: bucket.clone(),
                             key: object.clone(),
                             data: req.body.to_vec(),
-                            content_type: req.header("content-type").unwrap_or("application/octet-stream").to_string(),
+                            content_type: req
+                                .header("content-type")
+                                .unwrap_or("application/octet-stream")
+                                .to_string(),
                             metadata: Self::metadata_from_headers(&req),
                             tags: HashMap::new(),
                         })
                         .map_err(|err| err.to_string())?;
                     Ok(Self::json_response(
                         StatusCode::OK,
-                        &format!("{{\"etag\":\"{}\",\"name\":\"{}\"}}", stored.etag, stored.key),
+                        &format!(
+                            "{{\"etag\":\"{}\",\"name\":\"{}\"}}",
+                            stored.etag, stored.key
+                        ),
                     ))
                 }
-                &Method::GET => {
-                    let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                Method::GET => {
+                    let blob = storage
+                        .as_ref()
+                        .get_blob(&bucket, &object)
+                        .map_err(|err| err.to_string())?;
                     if let Some(range_header) = req.header("range") {
-                        if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
+                        if let Some((start, end)) =
+                            Self::parse_range_header(range_header, blob.size)
+                        {
                             let payload = storage
                                 .as_ref()
                                 .get_blob_range(
@@ -427,11 +527,17 @@ impl OciAdapter {
                                     },
                                 )
                                 .map_err(|err| err.to_string())?;
-                            return Ok(Self::object_response(StatusCode::PARTIAL_CONTENT, &payload.blob)
-                                .header("content-length", &payload.data.len().to_string())
-                                .header("content-range", &format!("bytes {}-{}/{}", start, end, blob.size))
-                                .body(payload.data)
-                                .build());
+                            return Ok(Self::object_response(
+                                StatusCode::PARTIAL_CONTENT,
+                                &payload.blob,
+                            )
+                            .header("content-length", &payload.data.len().to_string())
+                            .header(
+                                "content-range",
+                                &format!("bytes {}-{}/{}", start, end, blob.size),
+                            )
+                            .body(payload.data)
+                            .build());
                         }
                         return Ok(Self::error_response(
                             StatusCode::RANGE_NOT_SATISFIABLE,
@@ -439,21 +545,37 @@ impl OciAdapter {
                             "The requested range is not satisfiable",
                         ));
                     }
-                    Ok(Self::object_response(StatusCode::OK, &blob).body(blob.data).build())
+                    Ok(Self::object_response(StatusCode::OK, &blob)
+                        .body(blob.data)
+                        .build())
                 }
-                &Method::HEAD => {
-                    let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                Method::HEAD => {
+                    let blob = storage
+                        .as_ref()
+                        .get_blob(&bucket, &object)
+                        .map_err(|err| err.to_string())?;
                     Ok(Self::object_response(StatusCode::OK, &blob).empty())
                 }
-                &Method::DELETE => {
-                    storage.as_ref().delete_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                Method::DELETE => {
+                    storage
+                        .as_ref()
+                        .delete_blob(&bucket, &object)
+                        .map_err(|err| err.to_string())?;
                     Ok(Self::json_response(StatusCode::NO_CONTENT, ""))
                 }
-                _ => Ok(Self::error_response(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Unsupported OCI object operation")),
+                _ => Ok(Self::error_response(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "MethodNotAllowed",
+                    "Unsupported OCI object operation",
+                )),
             };
         }
 
-        Ok(Self::error_response(StatusCode::BAD_REQUEST, "InvalidParameter", "Unsupported OCI path"))
+        Ok(Self::error_response(
+            StatusCode::BAD_REQUEST,
+            "InvalidParameter",
+            "Unsupported OCI path",
+        ))
     }
 }
 
@@ -528,9 +650,13 @@ mod tests {
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
-        Request::from_hyper(builder.body(Body::from(body.to_vec())).expect("request should build"))
-            .await
-            .expect("request should parse")
+        Request::from_hyper(
+            builder
+                .body(Body::from(body.to_vec()))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
     }
 
     fn authorization(req: &Request) -> String {
@@ -597,13 +723,21 @@ mod tests {
         let body = hyper::body::to_bytes(response.into_body())
             .await
             .expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("json").contains("report.txt"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("json")
+            .contains("report.txt"));
 
         let response = adapter
             .handle_request(
                 storage,
                 auth_disabled(),
-                parsed_request("GET", "http://localhost/n/tenant/b/archive/o/report.txt", &[], b"").await,
+                parsed_request(
+                    "GET",
+                    "http://localhost/n/tenant/b/archive/o/report.txt",
+                    &[],
+                    b"",
+                )
+                .await,
             )
             .await
             .expect("object get should succeed");
@@ -621,7 +755,10 @@ mod tests {
         let mut request = parsed_request(
             "GET",
             "http://localhost/n/tenant",
-            &[("date", "Sat, 01 Jan 2024 00:00:00 +0000"), ("host", "objectstorage.localhost")],
+            &[
+                ("date", "Sat, 01 Jan 2024 00:00:00 +0000"),
+                ("host", "objectstorage.localhost"),
+            ],
             b"",
         )
         .await;
@@ -831,7 +968,9 @@ mod tests {
         let body = hyper::body::to_bytes(response.into_body())
             .await
             .expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("json").contains("\"sdk-bucket\""));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("json")
+            .contains("\"sdk-bucket\""));
     }
 
     #[tokio::test(flavor = "multi_thread")]

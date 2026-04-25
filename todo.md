@@ -10,4 +10,5 @@
 Remaining gaps to call out:
 - Lifecycle rules are stored but not enforced.
 - Advanced copy semantics (range, conditionals) still absent.
-- ACLs/policies are simplified; requester-pays, CORS, SSE, website hosting, and object lock are not implemented.
+- ACLs/policies are implemented for common workflows but still simplified in advanced cases.
+- Compatibility hardening is still needed for mutation-path CORS coverage, XML ACL request variants, and broader interop edge-case validation.

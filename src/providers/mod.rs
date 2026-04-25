@@ -31,18 +31,20 @@ pub struct AdapterRegistry {
     adapters: Vec<Arc<dyn ProviderAdapter>>,
 }
 
+impl Default for AdapterRegistry {
+    fn default() -> Self {
+        Self::new(vec![
+            Arc::new(AzureBlobAdapter::default()),
+            Arc::new(GcsAdapter::default()),
+            Arc::new(OciAdapter),
+            Arc::new(S3Adapter),
+        ])
+    }
+}
+
 impl AdapterRegistry {
     pub fn new(adapters: Vec<Arc<dyn ProviderAdapter>>) -> Self {
         Self { adapters }
-    }
-
-    pub fn default() -> Self {
-        Self::new(vec![
-            Arc::new(AzureBlobAdapter::new()),
-            Arc::new(GcsAdapter::new()),
-            Arc::new(OciAdapter::new()),
-            Arc::new(S3Adapter::new()),
-        ])
     }
 
     pub async fn handle(

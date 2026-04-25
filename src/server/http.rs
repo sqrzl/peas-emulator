@@ -226,6 +226,40 @@ mod tests {
             route => panic!("unexpected route: {:?}", route),
         }
     }
+
+    #[tokio::test]
+    async fn should_route_options_requests_to_existing_bucket_and_object_paths() {
+        let bucket_request = HyperRequest::builder()
+            .method("OPTIONS")
+            .uri("http://localhost/media")
+            .body(Body::empty())
+            .expect("request should build");
+        let bucket_parsed = Request::from_hyper(bucket_request)
+            .await
+            .expect("request should parse");
+
+        match Router::route(&bucket_parsed) {
+            RouteMatch::BucketGet(bucket) => assert_eq!(bucket, "media"),
+            route => panic!("unexpected route: {:?}", route),
+        }
+
+        let object_request = HyperRequest::builder()
+            .method("OPTIONS")
+            .uri("http://localhost/media/kitten.jpg")
+            .body(Body::empty())
+            .expect("request should build");
+        let object_parsed = Request::from_hyper(object_request)
+            .await
+            .expect("request should parse");
+
+        match Router::route(&object_parsed) {
+            RouteMatch::ObjectGet(bucket, key) => {
+                assert_eq!(bucket, "media");
+                assert_eq!(key, "kitten.jpg");
+            }
+            route => panic!("unexpected route: {:?}", route),
+        }
+    }
 }
 
 /// Router for S3 API endpoints
@@ -273,6 +307,7 @@ impl Router {
             [] if method == Method::GET && host_bucket.is_none() => RouteMatch::ListBuckets,
             [] if host_bucket.is_some() => match *method {
                 Method::GET => RouteMatch::BucketGet(host_bucket.unwrap_or_default()),
+                Method::OPTIONS => RouteMatch::BucketGet(host_bucket.unwrap_or_default()),
                 Method::PUT => RouteMatch::BucketPut(host_bucket.unwrap_or_default()),
                 Method::DELETE => RouteMatch::BucketDelete(host_bucket.unwrap_or_default()),
                 Method::HEAD => RouteMatch::BucketHead(host_bucket.unwrap_or_default()),
@@ -281,11 +316,12 @@ impl Router {
             },
 
             // Virtual-hosted-style object operations take precedence over path-style parsing.
-            [key @ ..] if !key.is_empty() && host_bucket.is_some() => {
+            key if !key.is_empty() && host_bucket.is_some() => {
                 let key = key.join("/");
                 let bucket = host_bucket.unwrap_or_default();
                 match *method {
                     Method::GET => RouteMatch::ObjectGet(bucket, key),
+                    Method::OPTIONS => RouteMatch::ObjectGet(bucket, key),
                     Method::PUT => RouteMatch::ObjectPut(bucket, key),
                     Method::DELETE => RouteMatch::ObjectDelete(bucket, key),
                     Method::HEAD => RouteMatch::ObjectHead(bucket, key),
@@ -297,6 +333,7 @@ impl Router {
             // Bucket operations
             [bucket] => match *method {
                 Method::GET => RouteMatch::BucketGet(bucket.to_string()),
+                Method::OPTIONS => RouteMatch::BucketGet(bucket.to_string()),
                 Method::PUT => RouteMatch::BucketPut(bucket.to_string()),
                 Method::DELETE => RouteMatch::BucketDelete(bucket.to_string()),
                 Method::HEAD => RouteMatch::BucketHead(bucket.to_string()),
@@ -309,6 +346,7 @@ impl Router {
                 let key = key.join("/");
                 match *method {
                     Method::GET => RouteMatch::ObjectGet(bucket.to_string(), key),
+                    Method::OPTIONS => RouteMatch::ObjectGet(bucket.to_string(), key),
                     Method::PUT => RouteMatch::ObjectPut(bucket.to_string(), key),
                     Method::DELETE => RouteMatch::ObjectDelete(bucket.to_string(), key),
                     Method::HEAD => RouteMatch::ObjectHead(bucket.to_string(), key),

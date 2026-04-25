@@ -9,6 +9,12 @@ use std::sync::Arc;
 
 pub struct S3Adapter;
 
+impl Default for S3Adapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl S3Adapter {
     pub fn new() -> Self {
         Self

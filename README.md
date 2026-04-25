@@ -25,7 +25,9 @@ A multi-provider blob and object storage emulator for local development and comp
 
 ## Known Gaps
 
-- Lifecycle enforcement, ACLs, and policy behavior remain simplified compared with production cloud providers.
+- Lifecycle configurations are stored and returned, but rule enforcement remains incomplete compared with production providers.
+- ACL and policy behavior now covers common bucket/object workflows, but advanced semantics still remain simplified compared with production providers.
+- Some advanced request semantics, especially around copy conditionals and edge-case parity, remain intentionally narrower than full cloud implementations.
 - Peas targets object/blob storage compatibility workflows rather than every surrounding cloud control-plane feature.
 
 ## Building

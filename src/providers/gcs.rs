@@ -28,6 +28,14 @@ pub struct GcsAdapter {
     resumable_sessions: Mutex<HashMap<String, ResumableSession>>,
 }
 
+impl Default for GcsAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+type MultipartUploadParts = (String, String, HashMap<String, String>, Vec<u8>);
+
 impl GcsAdapter {
     pub fn new() -> Self {
         Self {
@@ -174,7 +182,11 @@ impl GcsAdapter {
             .map_err(|err| err.to_string())
     }
 
-    fn check_gcs_preconditions(req: &Request, blob: &crate::models::Object) -> Result<(), Response<Body>> {
+    #[allow(clippy::result_large_err)]
+    fn check_gcs_preconditions(
+        req: &Request,
+        blob: &crate::models::Object,
+    ) -> Result<(), Response<Body>> {
         let generation = Self::generation(blob);
         let metageneration = Self::metageneration(blob);
 
@@ -270,21 +282,19 @@ impl GcsAdapter {
     }
 
     fn multipart_boundary(content_type: &str) -> Option<String> {
-        content_type
-            .split(';')
-            .find_map(|part| {
-                let part = part.trim();
-                part.strip_prefix("boundary=")
-                    .map(|value| value.trim_matches('"').to_string())
-            })
+        content_type.split(';').find_map(|part| {
+            let part = part.trim();
+            part.strip_prefix("boundary=")
+                .map(|value| value.trim_matches('"').to_string())
+        })
     }
 
     fn parse_multipart_upload(
         content_type: &str,
         body: &[u8],
-    ) -> Result<(String, String, HashMap<String, String>, Vec<u8>), String> {
-        let boundary =
-            Self::multipart_boundary(content_type).ok_or_else(|| "Missing multipart boundary".to_string())?;
+    ) -> Result<MultipartUploadParts, String> {
+        let boundary = Self::multipart_boundary(content_type)
+            .ok_or_else(|| "Missing multipart boundary".to_string())?;
         let marker = format!("--{}", boundary);
         let payload = String::from_utf8_lossy(body);
         let mut object_name = None;
@@ -322,7 +332,9 @@ impl GcsAdapter {
                     .and_then(|value| value.as_object())
                     .map(|map| {
                         map.iter()
-                            .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
+                            .filter_map(|(key, value)| {
+                                value.as_str().map(|value| (key.clone(), value.to_string()))
+                            })
                             .collect::<HashMap<_, _>>()
                     })
                     .unwrap_or_default();
@@ -369,7 +381,10 @@ impl GcsAdapter {
         let secret = config
             .secret_key()
             .ok_or_else(|| "Missing GCS secret key".to_string())?;
-        let key = BASE64.decode(secret).ok().unwrap_or_else(|| secret.as_bytes().to_vec());
+        let key = BASE64
+            .decode(secret)
+            .ok()
+            .unwrap_or_else(|| secret.as_bytes().to_vec());
         let mut mac =
             HmacSha1::new_from_slice(&key).map_err(|err| format!("Invalid GCS key: {}", err))?;
         mac.update(payload.as_bytes());
@@ -393,6 +408,7 @@ impl GcsAdapter {
         )
     }
 
+    #[allow(clippy::result_large_err)]
     fn authorize(
         req: &Request,
         config: &AuthConfig,
@@ -409,10 +425,16 @@ impl GcsAdapter {
             req.query_param("Signature"),
         ) {
             if config.access_key() != Some(access_id) {
-                return Err(Self::error_response(StatusCode::FORBIDDEN, "AccessDenied", "Invalid access id"));
+                return Err(Self::error_response(
+                    StatusCode::FORBIDDEN,
+                    "AccessDenied",
+                    "Invalid access id",
+                ));
             }
             let expected = Self::sign(config, &Self::string_to_sign(req, bucket, object, expires))
-                .map_err(|msg| Self::error_response(StatusCode::FORBIDDEN, "SignatureDoesNotMatch", &msg))?;
+                .map_err(|msg| {
+                    Self::error_response(StatusCode::FORBIDDEN, "SignatureDoesNotMatch", &msg)
+                })?;
             if expected == signature {
                 return Ok(());
             }
@@ -424,15 +446,25 @@ impl GcsAdapter {
         }
 
         let Some(authorization) = req.header("authorization") else {
-            return Err(Self::error_response(StatusCode::FORBIDDEN, "AccessDenied", "Missing authorization"));
+            return Err(Self::error_response(
+                StatusCode::FORBIDDEN,
+                "AccessDenied",
+                "Missing authorization",
+            ));
         };
         let prefix = format!("GOOG1 {}:", config.access_key().unwrap_or_default());
         let Some(signature) = authorization.strip_prefix(&prefix) else {
-            return Err(Self::error_response(StatusCode::FORBIDDEN, "AccessDenied", "Unsupported authorization"));
+            return Err(Self::error_response(
+                StatusCode::FORBIDDEN,
+                "AccessDenied",
+                "Unsupported authorization",
+            ));
         };
         let date = req.header("date").unwrap_or("");
         let expected = Self::sign(config, &Self::string_to_sign(req, bucket, object, date))
-            .map_err(|msg| Self::error_response(StatusCode::FORBIDDEN, "SignatureDoesNotMatch", &msg))?;
+            .map_err(|msg| {
+                Self::error_response(StatusCode::FORBIDDEN, "SignatureDoesNotMatch", &msg)
+            })?;
         if expected == signature {
             Ok(())
         } else {
@@ -446,6 +478,7 @@ impl GcsAdapter {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::config::Config;
@@ -493,9 +526,13 @@ mod tests {
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
-        Request::from_hyper(builder.body(Body::from(body.to_vec())).expect("request should build"))
-            .await
-            .expect("request should parse")
+        Request::from_hyper(
+            builder
+                .body(Body::from(body.to_vec()))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should parse")
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -525,7 +562,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/photos/kitten.txt",
-                    &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "text/plain"),
+                    ],
                     b"hello gcs",
                 )
                 .await,
@@ -550,7 +590,9 @@ mod tests {
         let body = hyper::body::to_bytes(response.into_body())
             .await
             .expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("xml").contains("kitten.txt"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("xml")
+            .contains("kitten.txt"));
 
         let response = adapter
             .handle_request(
@@ -606,8 +648,13 @@ mod tests {
             .handle_request(
                 storage.clone(),
                 auth_disabled(),
-                parsed_request("PUT", &location, &[("host", "storage.googleapis.com")], b"chunked")
-                    .await,
+                parsed_request(
+                    "PUT",
+                    &location,
+                    &[("host", "storage.googleapis.com")],
+                    b"chunked",
+                )
+                .await,
             )
             .await
             .expect("resumable commit should succeed");
@@ -623,8 +670,11 @@ mod tests {
             b"",
         )
         .await;
-        let signature = GcsAdapter::sign(&gcs_auth(), &GcsAdapter::string_to_sign(&request, "videos", Some("movie.txt"), expires))
-            .expect("signature should build");
+        let signature = GcsAdapter::sign(
+            &gcs_auth(),
+            &GcsAdapter::string_to_sign(&request, "videos", Some("movie.txt"), expires),
+        )
+        .expect("signature should build");
         let signed_request = parsed_request(
             "GET",
             &format!(
@@ -764,7 +814,10 @@ mod tests {
                 parsed_request(
                     "POST",
                     "http://localhost/storage/v1/b?project=test-project",
-                    &[("host", "storage.googleapis.com"), ("content-type", "application/json")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "application/json"),
+                    ],
                     br#"{"name":"json-bucket"}"#,
                 )
                 .await,
@@ -802,8 +855,13 @@ mod tests {
             .handle_request(
                 storage.clone(),
                 auth_disabled(),
-                parsed_request("PUT", &location, &[("host", "storage.googleapis.com")], b"json api")
-                    .await,
+                parsed_request(
+                    "PUT",
+                    &location,
+                    &[("host", "storage.googleapis.com")],
+                    b"json api",
+                )
+                .await,
             )
             .await
             .expect("resumable upload should succeed");
@@ -873,7 +931,9 @@ mod tests {
     async fn should_support_gcs_json_api_multipart_uploads() {
         let adapter = GcsAdapter::new();
         let storage = temp_storage();
-        storage.create_bucket("multipart-bucket".to_string()).unwrap();
+        storage
+            .create_bucket("multipart-bucket".to_string())
+            .unwrap();
 
         let boundary = "peas-boundary";
         let body = format!(
@@ -933,7 +993,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/gens/item.txt",
-                    &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "text/plain"),
+                    ],
                     b"v1",
                 )
                 .await,
@@ -954,7 +1017,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/gens/item.txt",
-                    &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "text/plain"),
+                    ],
                     b"v2",
                 )
                 .await,
@@ -987,8 +1053,14 @@ mod tests {
             .await
             .expect("body should read");
         let json: serde_json::Value = serde_json::from_slice(&body).expect("json should parse");
-        assert_eq!(json.get("generation").and_then(|value| value.as_str()), Some(second_generation.as_str()));
-        assert_eq!(json.get("metageneration").and_then(|value| value.as_str()), Some("1"));
+        assert_eq!(
+            json.get("generation").and_then(|value| value.as_str()),
+            Some(second_generation.as_str())
+        );
+        assert_eq!(
+            json.get("metageneration").and_then(|value| value.as_str()),
+            Some("1")
+        );
 
         let response = adapter
             .handle_request(
@@ -997,7 +1069,10 @@ mod tests {
                 parsed_request(
                     "PATCH",
                     "http://localhost/storage/v1/b/gens/o/item.txt?ifMetagenerationMatch=1",
-                    &[("host", "storage.googleapis.com"), ("content-type", "application/json")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "application/json"),
+                    ],
                     br#"{"metadata":{"owner":"sdk"}}"#,
                 )
                 .await,
@@ -1008,8 +1083,14 @@ mod tests {
             .await
             .expect("body should read");
         let json: serde_json::Value = serde_json::from_slice(&body).expect("json should parse");
-        assert_eq!(json.get("generation").and_then(|value| value.as_str()), Some(second_generation.as_str()));
-        assert_eq!(json.get("metageneration").and_then(|value| value.as_str()), Some("2"));
+        assert_eq!(
+            json.get("generation").and_then(|value| value.as_str()),
+            Some(second_generation.as_str())
+        );
+        assert_eq!(
+            json.get("metageneration").and_then(|value| value.as_str()),
+            Some("2")
+        );
         assert_eq!(
             json.get("metadata")
                 .and_then(|value| value.get("owner"))
@@ -1031,7 +1112,10 @@ mod tests {
                 parsed_request(
                     "PUT",
                     "http://localhost/conds/check.txt",
-                    &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "text/plain"),
+                    ],
                     b"check",
                 )
                 .await,
@@ -1105,7 +1189,10 @@ mod tests {
                 parsed_request(
                     "PATCH",
                     "http://localhost/storage/v1/b/conds/o/check.txt?ifMetagenerationMatch=999",
-                    &[("host", "storage.googleapis.com"), ("content-type", "application/json")],
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("content-type", "application/json"),
+                    ],
                     br#"{"metadata":{"owner":"blocked"}}"#,
                 )
                 .await,
@@ -1164,7 +1251,10 @@ impl GcsAdapter {
         let (bucket, object) = Self::parse_path(&req);
         let Some(bucket) = bucket else {
             if req.method() == Method::GET {
-                let buckets = storage.as_ref().list_namespaces().map_err(|err| err.to_string())?;
+                let buckets = storage
+                    .as_ref()
+                    .list_namespaces()
+                    .map_err(|err| err.to_string())?;
                 let body = format!(
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets>{}</Buckets></ListAllMyBucketsResult>",
                     buckets
@@ -1176,7 +1266,11 @@ impl GcsAdapter {
                 return Ok(Self::xml_response(StatusCode::OK, body));
             }
 
-            return Ok(Self::error_response(StatusCode::BAD_REQUEST, "InvalidURI", "Missing bucket"));
+            return Ok(Self::error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidURI",
+                "Missing bucket",
+            ));
         };
 
         if let Err(response) = Self::authorize(&req, &auth_config, &bucket, object.as_deref()) {
@@ -1185,11 +1279,17 @@ impl GcsAdapter {
 
         match (req.method(), object) {
             (&Method::PUT, None) => {
-                storage.as_ref().create_namespace(bucket).map_err(|err| err.to_string())?;
+                storage
+                    .as_ref()
+                    .create_namespace(bucket)
+                    .map_err(|err| err.to_string())?;
                 Ok(Self::empty_response(StatusCode::OK))
             }
             (&Method::DELETE, None) => {
-                storage.as_ref().delete_namespace(&bucket).map_err(|err| err.to_string())?;
+                storage
+                    .as_ref()
+                    .delete_namespace(&bucket)
+                    .map_err(|err| err.to_string())?;
                 Ok(Self::empty_response(StatusCode::NO_CONTENT))
             }
             (&Method::GET, None) => {
@@ -1230,20 +1330,31 @@ impl GcsAdapter {
                         namespace: bucket,
                         key: object,
                         data: req.body.to_vec(),
-                        content_type: req.header("content-type").unwrap_or("application/octet-stream").to_string(),
+                        content_type: req
+                            .header("content-type")
+                            .unwrap_or("application/octet-stream")
+                            .to_string(),
                         metadata: Self::metadata_from_headers(&req),
                         tags: HashMap::new(),
                     })
                     .map_err(|err| err.to_string())?;
                 Ok(Self::response(StatusCode::OK)
                     .header("etag", &format!("\"{}\"", stored.etag))
-                    .header("x-goog-generation", &stored.version_id.clone().unwrap_or_else(|| stored.last_modified.timestamp_millis().max(1).to_string()))
+                    .header(
+                        "x-goog-generation",
+                        &stored.version_id.clone().unwrap_or_else(|| {
+                            stored.last_modified.timestamp_millis().max(1).to_string()
+                        }),
+                    )
                     .header("x-goog-metageneration", "1")
                     .empty())
             }
             (&Method::GET, Some(object)) => {
                 if let Some(range_header) = req.header("range") {
-                    let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                    let blob = storage
+                        .as_ref()
+                        .get_blob(&bucket, &object)
+                        .map_err(|err| err.to_string())?;
                     if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
                         let payload = storage
                             .as_ref()
@@ -1262,8 +1373,8 @@ impl GcsAdapter {
                             payload.data.len(),
                             Some(format!("bytes {}-{}/{}", start, end, blob.size)),
                         )
-                            .body(payload.data)
-                            .build());
+                        .body(payload.data)
+                        .build());
                     }
                     return Ok(Self::error_response(
                         StatusCode::RANGE_NOT_SATISFIABLE,
@@ -1271,17 +1382,28 @@ impl GcsAdapter {
                         "The requested range is not satisfiable",
                     ));
                 }
-                let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
-                Ok(Self::object_response(StatusCode::OK, &blob, blob.size as usize, None)
-                    .body(blob.data)
-                    .build())
+                let blob = storage
+                    .as_ref()
+                    .get_blob(&bucket, &object)
+                    .map_err(|err| err.to_string())?;
+                Ok(
+                    Self::object_response(StatusCode::OK, &blob, blob.size as usize, None)
+                        .body(blob.data)
+                        .build(),
+                )
             }
             (&Method::HEAD, Some(object)) => {
-                let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                let blob = storage
+                    .as_ref()
+                    .get_blob(&bucket, &object)
+                    .map_err(|err| err.to_string())?;
                 Ok(Self::object_response(StatusCode::OK, &blob, blob.size as usize, None).empty())
             }
             (&Method::DELETE, Some(object)) => {
-                storage.as_ref().delete_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                storage
+                    .as_ref()
+                    .delete_blob(&bucket, &object)
+                    .map_err(|err| err.to_string())?;
                 Ok(Self::empty_response(StatusCode::NO_CONTENT))
             }
             _ => Ok(Self::error_response(
@@ -1314,8 +1436,7 @@ impl GcsAdapter {
                 let content_type = req.header("content-type").unwrap_or("multipart/related");
                 let (key, object_content_type, metadata, data) =
                     Self::parse_multipart_upload(content_type, &req.body)?;
-                let stored = storage
-                    .as_ref();
+                let stored = storage.as_ref();
                 let stored = Self::put_blob_with_generation(
                     stored,
                     bucket,
@@ -1349,7 +1470,10 @@ impl GcsAdapter {
                     ResumableSession {
                         bucket,
                         key,
-                        content_type: req.header("x-upload-content-type").unwrap_or("application/octet-stream").to_string(),
+                        content_type: req
+                            .header("x-upload-content-type")
+                            .unwrap_or("application/octet-stream")
+                            .to_string(),
                         metadata: Self::metadata_from_headers(&req),
                     },
                 );
@@ -1376,8 +1500,7 @@ impl GcsAdapter {
             let session = sessions
                 .remove(session_id)
                 .ok_or_else(|| "Unknown resumable upload session".to_string())?;
-            let stored = storage
-                .as_ref();
+            let stored = storage.as_ref();
             let stored = Self::put_blob_with_generation(
                 stored,
                 session.bucket,
@@ -1421,9 +1544,12 @@ impl GcsAdapter {
 
         if parts.starts_with(&["storage", "v1", "b"]) {
             if parts.len() == 3 {
-                return match req.method() {
-                    &Method::GET => {
-                        let buckets = storage.as_ref().list_namespaces().map_err(|err| err.to_string())?;
+                return match *req.method() {
+                    Method::GET => {
+                        let buckets = storage
+                            .as_ref()
+                            .list_namespaces()
+                            .map_err(|err| err.to_string())?;
                         Ok(Self::json_response(
                             StatusCode::OK,
                             &serde_json::json!({
@@ -1436,7 +1562,7 @@ impl GcsAdapter {
                             .to_string(),
                         ))
                     }
-                    &Method::POST => {
+                    Method::POST => {
                         let payload: serde_json::Value =
                             serde_json::from_slice(&req.body).map_err(|err| err.to_string())?;
                         let bucket = payload
@@ -1475,8 +1601,8 @@ impl GcsAdapter {
             }
 
             if parts.len() == 4 {
-                return match req.method() {
-                    &Method::GET => {
+                return match *req.method() {
+                    Method::GET => {
                         let namespace = storage
                             .as_ref()
                             .get_namespace(&bucket)
@@ -1491,7 +1617,7 @@ impl GcsAdapter {
                             .to_string(),
                         ))
                     }
-                    &Method::DELETE => {
+                    Method::DELETE => {
                         storage
                             .as_ref()
                             .delete_namespace(&bucket)
@@ -1542,15 +1668,20 @@ impl GcsAdapter {
                 }
                 let alt_media = req.query_param("alt") == Some("media")
                     || req.path().starts_with("/download/storage/v1/");
-                return match req.method() {
-                    &Method::GET => {
-                        let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                return match *req.method() {
+                    Method::GET => {
+                        let blob = storage
+                            .as_ref()
+                            .get_blob(&bucket, &object)
+                            .map_err(|err| err.to_string())?;
                         if let Err(response) = Self::check_gcs_preconditions(&req, &blob) {
                             return Ok(response);
                         }
                         if alt_media {
                             if let Some(range_header) = req.header("range") {
-                                if let Some((start, end)) = Self::parse_range_header(range_header, blob.size) {
+                                if let Some((start, end)) =
+                                    Self::parse_range_header(range_header, blob.size)
+                                {
                                     let payload = storage
                                         .as_ref()
                                         .get_blob_range(
@@ -1577,9 +1708,14 @@ impl GcsAdapter {
                                     "The requested range is not satisfiable",
                                 ));
                             }
-                            Ok(Self::object_response(StatusCode::OK, &blob, blob.size as usize, None)
-                                .body(blob.data)
-                                .build())
+                            Ok(Self::object_response(
+                                StatusCode::OK,
+                                &blob,
+                                blob.size as usize,
+                                None,
+                            )
+                            .body(blob.data)
+                            .build())
                         } else {
                             Ok(Self::json_response(
                                 StatusCode::OK,
@@ -1597,8 +1733,11 @@ impl GcsAdapter {
                             ))
                         }
                     }
-                    &Method::PATCH => {
-                        let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                    Method::PATCH => {
+                        let blob = storage
+                            .as_ref()
+                            .get_blob(&bucket, &object)
+                            .map_err(|err| err.to_string())?;
                         if let Err(response) = Self::check_gcs_preconditions(&req, &blob) {
                             return Ok(response);
                         }
@@ -1647,12 +1786,18 @@ impl GcsAdapter {
                             .to_string(),
                         ));
                     }
-                    &Method::DELETE => {
-                        let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                    Method::DELETE => {
+                        let blob = storage
+                            .as_ref()
+                            .get_blob(&bucket, &object)
+                            .map_err(|err| err.to_string())?;
                         if let Err(response) = Self::check_gcs_preconditions(&req, &blob) {
                             return Ok(response);
                         }
-                        storage.as_ref().delete_blob(&bucket, &object).map_err(|err| err.to_string())?;
+                        storage
+                            .as_ref()
+                            .delete_blob(&bucket, &object)
+                            .map_err(|err| err.to_string())?;
                         Ok(Self::empty_response(StatusCode::NO_CONTENT))
                     }
                     _ => Ok(Self::error_response(
@@ -1670,7 +1815,10 @@ impl GcsAdapter {
             if let Err(response) = Self::authorize(&req, &auth_config, &bucket, Some(&object)) {
                 return Ok(response);
             }
-            let blob = storage.as_ref().get_blob(&bucket, &object).map_err(|err| err.to_string())?;
+            let blob = storage
+                .as_ref()
+                .get_blob(&bucket, &object)
+                .map_err(|err| err.to_string())?;
             if let Err(response) = Self::check_gcs_preconditions(&req, &blob) {
                 return Ok(response);
             }
@@ -1702,9 +1850,11 @@ impl GcsAdapter {
                     "The requested range is not satisfiable",
                 ));
             }
-            return Ok(Self::object_response(StatusCode::OK, &blob, blob.size as usize, None)
-                .body(blob.data)
-                .build());
+            return Ok(
+                Self::object_response(StatusCode::OK, &blob, blob.size as usize, None)
+                    .body(blob.data)
+                    .build(),
+            );
         }
 
         Ok(Self::error_response(

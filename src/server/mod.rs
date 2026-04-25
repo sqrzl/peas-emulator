@@ -10,8 +10,8 @@ use tracing::error;
 mod handlers;
 mod http;
 
-pub use http::{Request as RequestExt, ResponseBuilder, RouteMatch, Router};
 pub(crate) use handlers::handle_request as handle_s3_request;
+pub use http::{Request as RequestExt, ResponseBuilder, RouteMatch, Router};
 
 pub struct Server {
     storage: Arc<dyn Storage>,
@@ -70,10 +70,7 @@ async fn handle_request(
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
     match http::Request::from_hyper(req).await {
-        Ok(parsed_req) => match adapters
-            .handle(storage, auth_config, parsed_req)
-            .await
-        {
+        Ok(parsed_req) => match adapters.handle(storage, auth_config, parsed_req).await {
             Ok(response) => Ok(response),
             Err(e) => {
                 error!("Handler error: {}", e);
@@ -120,10 +117,7 @@ mod adapter_routing_tests {
         })
     }
 
-    async fn call(
-        storage: Arc<dyn Storage>,
-        req: HyperRequest<Body>,
-    ) -> Response<Body> {
+    async fn call(storage: Arc<dyn Storage>, req: HyperRequest<Body>) -> Response<Body> {
         handle_request(
             storage,
             auth_disabled(),
@@ -155,7 +149,9 @@ mod adapter_routing_tests {
             .expect("request should build");
         let resp = call(storage, list).await;
         let body = to_bytes(resp.into_body()).await.expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("utf8").contains("photos"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("utf8")
+            .contains("photos"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -179,7 +175,9 @@ mod adapter_routing_tests {
             .expect("request should build");
         let resp = call(storage, get).await;
         let body = to_bytes(resp.into_body()).await.expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("utf8").contains("media"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("utf8")
+            .contains("media"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -193,7 +191,9 @@ mod adapter_routing_tests {
             .expect("request should build");
         let resp = call(storage, req).await;
         let body = to_bytes(resp.into_body()).await.expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("utf8").contains("testnamespace"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("utf8")
+            .contains("testnamespace"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -215,6 +215,8 @@ mod adapter_routing_tests {
             .expect("request should build");
         let resp = call(storage, list).await;
         let body = to_bytes(resp.into_body()).await.expect("body should read");
-        assert!(String::from_utf8(body.to_vec()).expect("utf8").contains("plain-bucket"));
+        assert!(String::from_utf8(body.to_vec())
+            .expect("utf8")
+            .contains("plain-bucket"));
     }
 }

@@ -7,8 +7,10 @@ use http::StatusCode;
 use hyper::{Body, Response};
 use std::sync::Arc;
 
+mod acl;
 mod auth;
 mod bucket;
+mod cors;
 mod object;
 
 #[allow(unused_imports)]
@@ -44,9 +46,13 @@ pub async fn handle_request(
             bucket_delete(storage, auth_config, &bucket, &req, req_id).await
         }
 
-        RouteMatch::BucketHead(bucket) => bucket_head(storage, auth_config, &bucket, &req, req_id).await,
+        RouteMatch::BucketHead(bucket) => {
+            bucket_head(storage, auth_config, &bucket, &req, req_id).await
+        }
 
-        RouteMatch::BucketPost(bucket) => bucket_post(storage, auth_config, &bucket, &req, req_id).await,
+        RouteMatch::BucketPost(bucket) => {
+            bucket_post(storage, auth_config, &bucket, &req, req_id).await
+        }
 
         RouteMatch::ObjectGet(bucket, key) => {
             object_get(storage, auth_config, &bucket, &key, &req, req_id).await
