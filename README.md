@@ -42,6 +42,16 @@ cargo build --release
 cargo run
 ```
 
+## Admin API Contract
+
+The versioned OpenAPI 3.1 contract for the admin storage API lives at
+`docs/openapi/admin-v1.yaml`.
+
+The initial contract targets the `/admin/v1` surface for local storage
+administration workflows such as bucket browsing, object inspection, content
+upload and download, version listing, and tag management. It is intentionally
+separate from the protocol-compatibility front doors.
+
 ## Docker
 
 ### Build the Docker image

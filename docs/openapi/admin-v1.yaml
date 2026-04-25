@@ -1,0 +1,588 @@
+openapi: 3.1.0
+info:
+  title: Peas Emulator Admin API
+  version: 1.0.0
+  summary: Versioned storage administration API for the Peas emulator.
+  description: >-
+    The admin API provides a RESTful JSON and binary control plane for browsing
+    and manipulating emulator-backed storage resources. This surface is
+    distinct from the S3, Azure Blob Storage, Google Cloud Storage, and OCI
+    compatibility front doors.
+
+    Version 1 is intentionally limited to storage administration for local
+    development workflows. It does not expose emulator configuration,
+    provider-health, lifecycle orchestration, or compatibility-matrix
+    resources.
+servers:
+  - url: http://127.0.0.1:9001/admin/v1
+    description: Local UI/admin server
+tags:
+  - name: Buckets
+    description: Bucket-level storage administration operations.
+  - name: Objects
+    description: Object metadata and binary content operations.
+  - name: Tags
+    description: Object tagging operations.
+paths:
+  /buckets:
+    get:
+      tags:
+        - Buckets
+      operationId: listBuckets
+      summary: List buckets
+      description: >-
+        Returns buckets using server-side pagination. Sorting is intentionally
+        client-side only for the admin API.
+      parameters:
+        - $ref: '#/components/parameters/Next'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
+      responses:
+        '200':
+          description: Buckets returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListBucketsResponse'
+              examples:
+                default:
+                  value:
+                    items:
+                      - name: demo
+                        created_at: '2026-04-25T18:30:00Z'
+                        versioning_enabled: false
+                    next: bucket:demo
+    post:
+      tags:
+        - Buckets
+      operationId: createBucket
+      summary: Create bucket
+      description: Creates a new bucket.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBucketRequest'
+      responses:
+        '201':
+          description: Bucket created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+    get:
+      tags:
+        - Buckets
+      operationId: getBucket
+      summary: Get bucket
+      description: Returns details for a single bucket.
+      responses:
+        '200':
+          description: Bucket details returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketDetails'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Buckets
+      operationId: deleteBucket
+      summary: Delete bucket
+      description: Deletes an existing bucket.
+      responses:
+        '204':
+          description: Bucket deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/versioning:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+    get:
+      tags:
+        - Buckets
+      operationId: getBucketVersioning
+      summary: Get bucket versioning status
+      responses:
+        '200':
+          description: Versioning status returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersioningStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - Buckets
+      operationId: setBucketVersioning
+      summary: Set bucket versioning status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VersioningStatus'
+      responses:
+        '200':
+          description: Versioning status updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersioningStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/Next'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Search'
+    get:
+      tags:
+        - Objects
+      operationId: listObjects
+      summary: List objects in a bucket
+      description: >-
+        Returns object metadata entries for a bucket using server-side next
+        pagination and simple text search. Sorting is intentionally handled on
+        the client.
+      responses:
+        '200':
+          description: Objects returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListObjectsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectKey'
+    get:
+      tags:
+        - Objects
+      operationId: getObjectMetadata
+      summary: Get object metadata
+      description: Returns metadata for a stored object without returning content bytes.
+      responses:
+        '200':
+          description: Object metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectMetadata'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Objects
+      operationId: deleteObject
+      summary: Delete object
+      responses:
+        '204':
+          description: Object deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}/content:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectKey'
+    get:
+      tags:
+        - Objects
+      operationId: downloadObjectContent
+      summary: Download object content
+      responses:
+        '200':
+          description: Object content returned.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - Objects
+      operationId: putObjectContent
+      summary: Create or replace object content
+      description: >-
+        Stores an object's content bytes. Callers may provide user metadata
+        through `x-amz-meta-*` headers for compatibility with the existing
+        emulator implementation.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Object created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectMetadata'
+        '200':
+          description: Object replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}/versions:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectKey'
+      - $ref: '#/components/parameters/Next'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Search'
+    get:
+      tags:
+        - Objects
+      operationId: listObjectVersions
+      summary: List object versions
+      description: >-
+        Returns object versions using server-side next-token pagination and simple
+        text search. Sorting is intentionally handled on the client.
+      responses:
+        '200':
+          description: Object versions returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListVersionsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}/tags:
+    parameters:
+      - $ref: '#/components/parameters/BucketName'
+      - $ref: '#/components/parameters/ObjectKey'
+    get:
+      tags:
+        - Tags
+      operationId: getObjectTags
+      summary: Get object tags
+      responses:
+        '200':
+          description: Tags returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - Tags
+      operationId: putObjectTags
+      summary: Replace object tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagsRequest'
+      responses:
+        '200':
+          description: Tags replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    BucketName:
+      name: bucketName
+      in: path
+      required: true
+      description: Bucket name.
+      schema:
+        type: string
+        minLength: 1
+    ObjectKey:
+      name: objectKey
+      in: path
+      required: true
+      description: Full object key, URL encoded when used in the path.
+      schema:
+        type: string
+        minLength: 1
+    Next:
+      name: next
+      in: query
+      required: false
+      description: Opaque next token returned by a previous list request.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items to return in this page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+    Search:
+      name: search
+      in: query
+      required: false
+      description: Case-insensitive text search over resource names or keys.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: The request could not be processed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: The request conflicts with the current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: An internal emulator error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    CreateBucketRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+    BucketInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - created_at
+        - versioning_enabled
+      properties:
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        versioning_enabled:
+          type: boolean
+    BucketDetails:
+      allOf:
+        - $ref: '#/components/schemas/BucketInfo'
+    ListBucketsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BucketInfo'
+        next:
+          type:
+            - string
+            - 'null'
+    VersioningStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+    ObjectInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - size
+        - last_modified
+        - etag
+        - storage_class
+      properties:
+        key:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        last_modified:
+          type: string
+          format: date-time
+        etag:
+          type: string
+        content_type:
+          type:
+            - string
+            - 'null'
+        storage_class:
+          type: string
+    ObjectMetadata:
+      allOf:
+        - $ref: '#/components/schemas/ObjectInfo'
+        - type: object
+          additionalProperties: false
+          required:
+            - metadata
+          properties:
+            metadata:
+              type: object
+              additionalProperties:
+                type: string
+            version_id:
+              type:
+                - string
+                - 'null'
+    ListObjectsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectInfo'
+        next:
+          type:
+            - string
+            - 'null'
+    ObjectVersionInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - version_id
+        - size
+        - last_modified
+        - etag
+        - is_latest
+      properties:
+        key:
+          type: string
+        version_id:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        last_modified:
+          type: string
+          format: date-time
+        etag:
+          type: string
+        is_latest:
+          type: boolean
+    ListVersionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectVersionInfo'
+        next:
+          type:
+            - string
+            - 'null'
+    TagsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tags
+      properties:
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+    TagsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tags
+      properties:
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        code:
+          type:
+            - string
+            - 'null'
+        details:
+          description: Optional implementation-specific error context.
