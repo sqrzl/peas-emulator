@@ -1,6 +1,8 @@
 mod common;
 
-use common::e2e::{auth_disabled, text_body, LiveServer};
+use common::e2e::{
+    auth_disabled, auth_enabled, auth_enabled_with_admin_bypass, text_body, LiveServer,
+};
 use hyper::{Body, Request, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -501,4 +503,41 @@ async fn should_return_expected_errors_given_invalid_admin_requests_when_using_l
     let missing_route_error: ErrorResponse = json_body(missing_route_response).await;
     assert_eq!(missing_route_error.code, "NotFound");
     assert_eq!(missing_route_error.error, "Route not found");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_credentials() {
+    let server = LiveServer::start_admin(auth_enabled("admin-key", "admin-secret")).await;
+
+    let unauthenticated = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .body(Body::empty())
+        .expect("unauthenticated admin request should build");
+    let unauthenticated_response = server.request_without_default_auth(unauthenticated).await;
+    assert_eq!(unauthenticated_response.status(), StatusCode::UNAUTHORIZED);
+    let error: ErrorResponse = json_body(unauthenticated_response).await;
+    assert_eq!(error.code, "Unauthorized");
+
+    let authenticated = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .body(Body::empty())
+        .expect("authenticated admin request should build");
+    let authenticated_response = server.request(authenticated).await;
+    assert_eq!(authenticated_response.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_allow_admin_requests_without_credentials_given_admin_auth_bypass_override() {
+    let server =
+        LiveServer::start_admin(auth_enabled_with_admin_bypass("admin-key", "admin-secret")).await;
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .body(Body::empty())
+        .expect("bypass admin request should build");
+    let response = server.request_without_default_auth(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }

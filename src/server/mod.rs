@@ -110,6 +110,7 @@ mod adapter_routing_tests {
             access_key_id: None,
             secret_access_key: None,
             enforce_auth: false,
+            admin_auth_disabled: false,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,

@@ -3,6 +3,8 @@ use crate::services::{
     bucket as bucket_service, json_error_response, json_response, object as object_service,
 };
 use crate::storage::Storage;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server as HyperServer, StatusCode};
@@ -15,16 +17,22 @@ use tokio::fs as async_fs;
 use urlencoding::decode;
 
 /// Launches the UI-focused server (port 9001) that exposes the JSON API and optionally serves the web UI.
-pub async fn start_ui_server(storage: Arc<dyn Storage>, ui_port: u16) -> crate::error::Result<()> {
+pub async fn start_ui_server(
+    storage: Arc<dyn Storage>,
+    config: Arc<crate::Config>,
+) -> crate::error::Result<()> {
+    let ui_port = config.ui_port;
     let addr = ([0, 0, 0, 0], ui_port).into();
 
     let make_svc = make_service_fn(move |_conn| {
         let storage = storage.clone();
+        let config = config.clone();
 
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
                 let storage = storage.clone();
-                handle_ui_request(storage, req)
+                let config = config.clone();
+                handle_ui_request(storage, config, req)
             }))
         }
     });
@@ -39,11 +47,16 @@ pub async fn start_ui_server(storage: Arc<dyn Storage>, ui_port: u16) -> crate::
 
 async fn handle_ui_request(
     storage: Arc<dyn Storage>,
+    config: Arc<crate::Config>,
     req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_string();
 
     if path == "/admin/v1" || path.starts_with("/admin/v1/") {
+        if !admin_request_is_authorized(&req, &config) {
+            return Ok(admin_unauthorized_response());
+        }
+
         let resp = match crate::api::admin::handle_request(storage, req).await {
             Ok(resp) => resp,
             Err(err) => crate::api::admin::error_response(&err),
@@ -101,6 +114,47 @@ async fn handle_ui_request(
             .body(Body::from(default_content))
             .unwrap_or_else(|_| Response::new(Body::from(default_content))))
     }
+}
+
+fn admin_request_is_authorized(req: &Request<Body>, config: &crate::Config) -> bool {
+    if !config.admin_auth_enforced() {
+        return true;
+    }
+
+    let Some(auth_header) = req.headers().get("authorization") else {
+        return false;
+    };
+    let Ok(auth_header) = auth_header.to_str() else {
+        return false;
+    };
+    let Some(encoded) = auth_header.strip_prefix("Basic ") else {
+        return false;
+    };
+    let Ok(decoded) = STANDARD.decode(encoded) else {
+        return false;
+    };
+    let Ok(decoded) = String::from_utf8(decoded) else {
+        return false;
+    };
+    let Some((provided_key, provided_secret)) = decoded.split_once(':') else {
+        return false;
+    };
+
+    config.validate_credentials(provided_key, provided_secret)
+}
+
+fn admin_unauthorized_response() -> Response<Body> {
+    let body = crate::api::models::ErrorResponse {
+        error: "Unauthorized".to_string(),
+        code: "Unauthorized".to_string(),
+        details: Some("Provide Basic auth with ACCESS_KEY_ID and SECRET_ACCESS_KEY".to_string()),
+    };
+    let mut response = json_response(StatusCode::UNAUTHORIZED, &body);
+    response.headers_mut().insert(
+        "www-authenticate",
+        hyper::header::HeaderValue::from_static("Basic realm=\"Peas Admin\""),
+    );
+    response
 }
 
 async fn read_json<T: DeserializeOwned>(req: Request<Body>) -> Result<T> {

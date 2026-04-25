@@ -184,6 +184,7 @@ mod tests {
             access_key_id: access_key.map(|k| k.to_string()),
             secret_access_key: secret_key.map(|k| k.to_string()),
             enforce_auth,
+            admin_auth_disabled: false,
             blobs_path: "./blobs".to_string(),
             lifecycle_interval: Duration::from_secs(3600),
             api_port: 9000,

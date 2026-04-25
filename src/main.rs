@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let api_server =
         Server::new(storage.clone(), Arc::new(config.clone()), config.api_port).start();
-    let ui_server = start_ui_server(storage, config.ui_port);
+    let ui_server = start_ui_server(storage, Arc::new(config.clone()));
 
     // Run both servers concurrently
     let result = tokio::select! {

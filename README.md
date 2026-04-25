@@ -42,6 +42,12 @@ cargo build --release
 cargo run
 ```
 
+If you set `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY`, the storage front doors enforce auth.
+The admin API at `/admin/v1` will also require HTTP Basic auth using those same values.
+
+If you want to keep the admin API open for local development while still enforcing provider
+auth, set `ADMIN_AUTH_DISABLED=true`.
+
 ## Admin API Contract
 
 The versioned OpenAPI 3.1 contract for the admin storage API lives at

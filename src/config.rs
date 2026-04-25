@@ -14,6 +14,7 @@ const ENV_BLOBS_PATH: &str = "BLOBS_PATH";
 const ENV_LIFECYCLE_HOURS: &str = "LIFECYCLE_HOURS";
 const ENV_API_PORT: &str = "API_PORT";
 const ENV_UI_PORT: &str = "UI_PORT";
+const ENV_ADMIN_AUTH_DISABLED: &str = "ADMIN_AUTH_DISABLED";
 
 // Default values
 const DEFAULT_BLOBS_PATH: &str = "./blobs";
@@ -30,6 +31,8 @@ pub struct Config {
     pub secret_access_key: Option<String>,
     /// Whether authentication is enforced
     pub enforce_auth: bool,
+    /// Whether admin HTTP auth is bypassed even when provider auth is enabled
+    pub admin_auth_disabled: bool,
     /// Path to filesystem storage directory
     pub blobs_path: String,
     /// Interval for running lifecycle rules
@@ -58,6 +61,10 @@ impl Config {
         let ui_port = lookup(ENV_UI_PORT)
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(DEFAULT_UI_PORT);
+        let admin_auth_disabled = lookup(ENV_ADMIN_AUTH_DISABLED)
+            .as_deref()
+            .map(parse_bool_env)
+            .unwrap_or(false);
 
         let enforce_auth = access_key_id.is_some() && secret_access_key.is_some();
 
@@ -65,6 +72,7 @@ impl Config {
             access_key_id,
             secret_access_key,
             enforce_auth,
+            admin_auth_disabled,
             blobs_path,
             lifecycle_interval: Duration::from_secs(lifecycle_interval_hours * 3600),
             api_port,
@@ -80,6 +88,7 @@ impl Config {
     /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
     /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
     /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
+    /// - `ADMIN_AUTH_DISABLED`: Disable `/admin/v1` Basic auth even when provider auth is enabled
     pub fn from_env() -> Self {
         Self::from_env_with(|name| env::var(name).ok())
     }
@@ -108,6 +117,18 @@ impl Config {
             false
         }
     }
+
+    /// Whether the admin API should enforce Basic auth.
+    pub fn admin_auth_enforced(&self) -> bool {
+        self.enforce_auth && !self.admin_auth_disabled
+    }
+}
+
+fn parse_bool_env(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 #[cfg(test)]
@@ -124,6 +145,7 @@ mod tests {
         assert_eq!(config.access_key_id, None);
         assert_eq!(config.secret_access_key, None);
         assert!(!config.enforce_auth);
+        assert!(!config.admin_auth_disabled);
         assert_eq!(config.blobs_path, DEFAULT_BLOBS_PATH);
         assert_eq!(
             config.lifecycle_interval,
@@ -151,6 +173,7 @@ mod tests {
         assert_eq!(config.access_key(), Some("test-key"));
         assert_eq!(config.secret_key(), Some("test-secret"));
         assert!(config.enforce_auth);
+        assert!(!config.admin_auth_disabled);
         assert_eq!(config.blobs_path, "/tmp/peas-blobs");
         assert_eq!(config.lifecycle_interval, Duration::from_secs(7200));
         assert_eq!(config.api_port, 9100);
@@ -176,6 +199,8 @@ mod tests {
         // Assert
         assert!(!access_only.enforce_auth);
         assert!(!secret_only.enforce_auth);
+        assert!(!access_only.admin_auth_disabled);
+        assert!(!secret_only.admin_auth_disabled);
         assert!(access_only.validate_credentials("anything", "anything"));
         assert!(secret_only.validate_credentials("anything", "anything"));
     }
@@ -198,5 +223,19 @@ mod tests {
         );
         assert_eq!(config.api_port, DEFAULT_API_PORT);
         assert_eq!(config.ui_port, DEFAULT_UI_PORT);
+    }
+
+    #[test]
+    fn should_allow_disabling_admin_auth_with_env_override() {
+        let config = Config::from_env_with(|name| match name {
+            ENV_ACCESS_KEY_ID => Some("test-key".to_string()),
+            ENV_SECRET_ACCESS_KEY => Some("test-secret".to_string()),
+            ENV_ADMIN_AUTH_DISABLED => Some("true".to_string()),
+            _ => None,
+        });
+
+        assert!(config.enforce_auth);
+        assert!(config.admin_auth_disabled);
+        assert!(!config.admin_auth_enforced());
     }
 }
