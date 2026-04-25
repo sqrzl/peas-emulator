@@ -4,7 +4,8 @@ use common::e2e::{auth_disabled, auth_enabled, text_body, LiveServer, AZURE_VERS
 use hyper::{Body, Request, StatusCode};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_round_trip_block_blob_given_live_server_when_using_basic_azure_crud_and_range_reads() {
+async fn should_round_trip_block_blob_given_live_server_when_using_basic_azure_crud_and_range_reads(
+) {
     let server = LiveServer::start_api(auth_disabled()).await;
 
     let create_container = Request::builder()
@@ -21,7 +22,10 @@ async fn should_round_trip_block_blob_given_live_server_when_using_basic_azure_c
 
     let put_blob = Request::builder()
         .method("PUT")
-        .uri(format!("{}/devstoreaccount1/e2e-azure/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/devstoreaccount1/e2e-azure/hello.txt",
+            server.base_url
+        ))
         .header("x-ms-version", AZURE_VERSION)
         .header("x-ms-blob-type", "BlockBlob")
         .header("content-type", "text/plain")
@@ -32,7 +36,10 @@ async fn should_round_trip_block_blob_given_live_server_when_using_basic_azure_c
 
     let get_blob = Request::builder()
         .method("GET")
-        .uri(format!("{}/devstoreaccount1/e2e-azure/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/devstoreaccount1/e2e-azure/hello.txt",
+            server.base_url
+        ))
         .header("x-ms-version", AZURE_VERSION)
         .body(Body::empty())
         .expect("blob get request should build");
@@ -42,7 +49,10 @@ async fn should_round_trip_block_blob_given_live_server_when_using_basic_azure_c
 
     let range_blob = Request::builder()
         .method("GET")
-        .uri(format!("{}/devstoreaccount1/e2e-azure/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/devstoreaccount1/e2e-azure/hello.txt",
+            server.base_url
+        ))
         .header("x-ms-version", AZURE_VERSION)
         .header("x-ms-range", "bytes=0-4")
         .body(Body::empty())

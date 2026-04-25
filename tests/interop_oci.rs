@@ -3,7 +3,8 @@ mod common;
 use common::interop::{auth_disabled, body_bytes, body_text, call, request, temp_storage};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows() {
+async fn should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows(
+) {
     let storage = temp_storage();
     let namespace = body_text(
         call(

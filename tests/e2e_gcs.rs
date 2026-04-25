@@ -54,7 +54,10 @@ async fn should_complete_resumable_upload_given_live_server_when_using_gcs_json_
 
     let create_bucket = Request::builder()
         .method("POST")
-        .uri(format!("{}/storage/v1/b?project=test-project", server.base_url))
+        .uri(format!(
+            "{}/storage/v1/b?project=test-project",
+            server.base_url
+        ))
         .header("host", "storage.googleapis.com")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"name":"json-bucket"}"#))
@@ -94,7 +97,10 @@ async fn should_complete_resumable_upload_given_live_server_when_using_gcs_json_
 
     let get_metadata = Request::builder()
         .method("GET")
-        .uri(format!("{}/storage/v1/b/json-bucket/o/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/storage/v1/b/json-bucket/o/hello.txt",
+            server.base_url
+        ))
         .header("host", "storage.googleapis.com")
         .body(Body::empty())
         .expect("json api metadata request should build");

@@ -61,7 +61,13 @@ pub async fn call(
     auth_config: Arc<Config>,
     request: HyperRequest<Body>,
 ) -> Response<Body> {
-    call_with_registry(Arc::new(AdapterRegistry::default()), storage, auth_config, request).await
+    call_with_registry(
+        Arc::new(AdapterRegistry::default()),
+        storage,
+        auth_config,
+        request,
+    )
+    .await
 }
 
 pub async fn call_with_registry(

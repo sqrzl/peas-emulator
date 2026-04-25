@@ -1,6 +1,8 @@
 mod common;
 
-use common::interop::{auth_disabled, body_bytes, body_text, call, request, temp_storage, AZURE_VERSION};
+use common::interop::{
+    auth_disabled, body_bytes, body_text, call, request, temp_storage, AZURE_VERSION,
+};
 use hyper::StatusCode;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -127,7 +129,10 @@ async fn should_return_requested_slice_given_range_header_when_reading_blob_cont
         request(
             "PUT",
             "http://localhost/devstoreaccount1/interop-azure/hello.txt",
-            &[("x-ms-version", AZURE_VERSION), ("x-ms-blob-type", "BlockBlob")],
+            &[
+                ("x-ms-version", AZURE_VERSION),
+                ("x-ms-blob-type", "BlockBlob"),
+            ],
             b"azure smoke",
         )
         .await,
@@ -172,7 +177,10 @@ async fn should_list_containers_and_blobs_given_stored_objects_when_querying_azu
         request(
             "PUT",
             "http://localhost/devstoreaccount1/interop-azure/hello.txt",
-            &[("x-ms-version", AZURE_VERSION), ("x-ms-blob-type", "BlockBlob")],
+            &[
+                ("x-ms-version", AZURE_VERSION),
+                ("x-ms-blob-type", "BlockBlob"),
+            ],
             b"azure smoke",
         )
         .await,
@@ -214,7 +222,8 @@ async fn should_list_containers_and_blobs_given_stored_objects_when_querying_azu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_persist_append_and_page_blob_writes_given_specialized_blob_types_when_uploading_content() {
+async fn should_persist_append_and_page_blob_writes_given_specialized_blob_types_when_uploading_content(
+) {
     let storage = temp_storage();
     call(
         storage.clone(),
@@ -234,7 +243,10 @@ async fn should_persist_append_and_page_blob_writes_given_specialized_blob_types
         request(
             "PUT",
             "http://localhost/devstoreaccount1/state/events.log",
-            &[("x-ms-version", AZURE_VERSION), ("x-ms-blob-type", "AppendBlob")],
+            &[
+                ("x-ms-version", AZURE_VERSION),
+                ("x-ms-blob-type", "AppendBlob"),
+            ],
             b"hello",
         )
         .await,
@@ -291,7 +303,10 @@ async fn should_persist_append_and_page_blob_writes_given_specialized_blob_types
         request(
             "PUT",
             "http://localhost/devstoreaccount1/state/page.bin?comp=page",
-            &[("x-ms-version", AZURE_VERSION), ("x-ms-range", "bytes=0-511")],
+            &[
+                ("x-ms-version", AZURE_VERSION),
+                ("x-ms-range", "bytes=0-511"),
+            ],
             &vec![b'b'; 512],
         )
         .await,
@@ -316,7 +331,8 @@ async fn should_persist_append_and_page_blob_writes_given_specialized_blob_types
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_enforce_leases_and_retention_given_snapshot_and_immutability_operations_when_deleting_blob() {
+async fn should_enforce_leases_and_retention_given_snapshot_and_immutability_operations_when_deleting_blob(
+) {
     let storage = temp_storage();
     call(
         storage.clone(),
@@ -447,7 +463,10 @@ async fn should_enforce_leases_and_retention_given_snapshot_and_immutability_ope
             "http://localhost/devstoreaccount1/state/lease.txt?comp=immutabilitypolicy",
             &[
                 ("x-ms-version", AZURE_VERSION),
-                ("x-ms-immutability-policy-until-date", "2099-01-01T00:00:00Z"),
+                (
+                    "x-ms-immutability-policy-until-date",
+                    "2099-01-01T00:00:00Z",
+                ),
                 ("x-ms-immutability-policy-mode", "Unlocked"),
             ],
             b"",

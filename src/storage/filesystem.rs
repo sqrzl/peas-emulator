@@ -73,7 +73,10 @@ impl FilesystemStorage {
         let name = name.to_string_lossy();
 
         match name.as_ref() {
-            ".bucket.meta.json" | ".versioning-enabled" | ".lifecycle.json" | ".policy.json"
+            ".bucket.meta.json"
+            | ".versioning-enabled"
+            | ".lifecycle.json"
+            | ".policy.json"
             | "bucket.acl.json" => true,
             ".multipart" => entry
                 .path()

@@ -1,10 +1,13 @@
 mod common;
 
-use common::interop::{auth_disabled, body_bytes, body_text, call, extract_tag, request, temp_storage};
+use common::interop::{
+    auth_disabled, body_bytes, body_text, call, extract_tag, request, temp_storage,
+};
 use hyper::StatusCode;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows() {
+async fn should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows(
+) {
     let storage = temp_storage();
     assert_eq!(
         call(
@@ -75,7 +78,8 @@ async fn should_round_trip_bucket_and_object_operations_given_basic_s3_requests_
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_assemble_completed_object_given_uploaded_parts_when_finishing_s3_multipart_upload() {
+async fn should_assemble_completed_object_given_uploaded_parts_when_finishing_s3_multipart_upload()
+{
     let storage = temp_storage();
     call(
         storage.clone(),
@@ -88,7 +92,13 @@ async fn should_assemble_completed_object_given_uploaded_parts_when_finishing_s3
         call(
             storage.clone(),
             auth_disabled(),
-            request("POST", "http://localhost/interop-s3/multipart.txt?uploads", &[], b"").await,
+            request(
+                "POST",
+                "http://localhost/interop-s3/multipart.txt?uploads",
+                &[],
+                b"",
+            )
+            .await,
         )
         .await,
     )
@@ -100,9 +110,7 @@ async fn should_assemble_completed_object_given_uploaded_parts_when_finishing_s3
         auth_disabled(),
         request(
             "PUT",
-            &format!(
-                "http://localhost/interop-s3/multipart.txt?partNumber=1&uploadId={upload_id}"
-            ),
+            &format!("http://localhost/interop-s3/multipart.txt?partNumber=1&uploadId={upload_id}"),
             &[],
             b"multi",
         )
@@ -121,9 +129,7 @@ async fn should_assemble_completed_object_given_uploaded_parts_when_finishing_s3
         auth_disabled(),
         request(
             "PUT",
-            &format!(
-                "http://localhost/interop-s3/multipart.txt?partNumber=2&uploadId={upload_id}"
-            ),
+            &format!("http://localhost/interop-s3/multipart.txt?partNumber=2&uploadId={upload_id}"),
             &[],
             b"part",
         )
@@ -195,13 +201,25 @@ async fn should_list_multiple_versions_given_versioning_enabled_when_object_is_o
     call(
         storage.clone(),
         auth_disabled(),
-        request("PUT", "http://localhost/interop-s3/versioned.txt", &[], b"v1").await,
+        request(
+            "PUT",
+            "http://localhost/interop-s3/versioned.txt",
+            &[],
+            b"v1",
+        )
+        .await,
     )
     .await;
     call(
         storage.clone(),
         auth_disabled(),
-        request("PUT", "http://localhost/interop-s3/versioned.txt", &[], b"v2").await,
+        request(
+            "PUT",
+            "http://localhost/interop-s3/versioned.txt",
+            &[],
+            b"v2",
+        )
+        .await,
     )
     .await;
 

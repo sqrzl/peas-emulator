@@ -7,7 +7,8 @@ use peas_emulator::providers::AdapterRegistry;
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api() {
+async fn should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api(
+) {
     let storage = temp_storage();
     call(
         storage.clone(),
@@ -27,7 +28,10 @@ async fn should_round_trip_bucket_and_object_operations_given_basic_gcs_requests
         request(
             "PUT",
             "http://localhost/interop-gcs/hello.txt",
-            &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+            &[
+                ("host", "storage.googleapis.com"),
+                ("content-type", "text/plain"),
+            ],
             b"gcs smoke",
         )
         .await,
@@ -124,7 +128,10 @@ async fn should_return_requested_slice_given_range_header_when_reading_gcs_objec
         request(
             "PUT",
             "http://localhost/interop-gcs/hello.txt",
-            &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+            &[
+                ("host", "storage.googleapis.com"),
+                ("content-type", "text/plain"),
+            ],
             b"gcs smoke",
         )
         .await,
@@ -169,7 +176,10 @@ async fn should_list_matching_objects_given_existing_keys_when_querying_gcs_buck
         request(
             "PUT",
             "http://localhost/interop-gcs/hello.txt",
-            &[("host", "storage.googleapis.com"), ("content-type", "text/plain")],
+            &[
+                ("host", "storage.googleapis.com"),
+                ("content-type", "text/plain"),
+            ],
             b"gcs smoke",
         )
         .await,
@@ -204,7 +214,10 @@ async fn should_complete_resumable_upload_given_json_api_session_when_finalizing
         request(
             "POST",
             "http://localhost/storage/v1/b?project=test-project",
-            &[("host", "storage.googleapis.com"), ("content-type", "application/json")],
+            &[
+                ("host", "storage.googleapis.com"),
+                ("content-type", "application/json"),
+            ],
             br#"{"name":"json-bucket"}"#,
         )
         .await,

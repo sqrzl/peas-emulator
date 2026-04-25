@@ -51,7 +51,7 @@ paths:
                       - name: demo
                         created_at: '2026-04-25T18:30:00Z'
                         versioning_enabled: false
-                    next: bucket:demo
+                    next: YnVja2V0czox
     post:
       tags:
         - Buckets
@@ -73,6 +73,8 @@ paths:
                 $ref: '#/components/schemas/BucketDetails'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '409':
           $ref: '#/components/responses/Conflict'
         '500':
@@ -95,6 +97,8 @@ paths:
                 $ref: '#/components/schemas/BucketDetails'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -110,6 +114,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/versioning:
@@ -129,6 +135,8 @@ paths:
                 $ref: '#/components/schemas/VersioningStatus'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
     put:
@@ -153,6 +161,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects:
@@ -179,6 +189,8 @@ paths:
                 $ref: '#/components/schemas/ListObjectsResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}:
@@ -200,6 +212,8 @@ paths:
                 $ref: '#/components/schemas/ObjectMetadata'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -268,6 +282,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/versions:
@@ -294,6 +310,8 @@ paths:
                 $ref: '#/components/schemas/ListVersionsResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/tags:
@@ -314,6 +332,8 @@ paths:
                 $ref: '#/components/schemas/TagsResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
     put:
@@ -338,6 +358,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
 components:
@@ -397,6 +419,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: The request conflicts with the current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MethodNotAllowed:
+      description: The resource exists but does not support the requested method.
       content:
         application/json:
           schema:
@@ -574,15 +602,19 @@ components:
             type: string
     ErrorResponse:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required:
         - error
+        - code
       properties:
         error:
           type: string
+          description: Human-readable error message.
         code:
+          type: string
+          description: Stable machine-readable error code.
+        details:
           type:
             - string
             - 'null'
-        details:
           description: Optional implementation-specific error context.

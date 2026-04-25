@@ -4,7 +4,8 @@ use common::e2e::{auth_disabled, text_body, LiveServer};
 use hyper::{Body, Request, StatusCode};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_round_trip_namespace_bucket_and_object_given_live_server_when_using_oci_core_flows() {
+async fn should_round_trip_namespace_bucket_and_object_given_live_server_when_using_oci_core_flows()
+{
     let server = LiveServer::start_api(auth_disabled()).await;
 
     let namespace_request = Request::builder()
@@ -20,14 +21,19 @@ async fn should_round_trip_namespace_bucket_and_object_given_live_server_when_us
         .method("POST")
         .uri(format!("{}/n/tenant/b", server.base_url))
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"name":"e2e-oci","compartmentId":"ignored"}"#))
+        .body(Body::from(
+            r#"{"name":"e2e-oci","compartmentId":"ignored"}"#,
+        ))
         .expect("bucket create request should build");
     let create_bucket_response = server.request(create_bucket).await;
     assert_eq!(create_bucket_response.status(), StatusCode::OK);
 
     let put_object = Request::builder()
         .method("PUT")
-        .uri(format!("{}/n/tenant/b/e2e-oci/o/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/n/tenant/b/e2e-oci/o/hello.txt",
+            server.base_url
+        ))
         .header("content-type", "text/plain")
         .body(Body::from("oci over tcp"))
         .expect("object put request should build");
@@ -36,7 +42,10 @@ async fn should_round_trip_namespace_bucket_and_object_given_live_server_when_us
 
     let get_object = Request::builder()
         .method("GET")
-        .uri(format!("{}/n/tenant/b/e2e-oci/o/hello.txt", server.base_url))
+        .uri(format!(
+            "{}/n/tenant/b/e2e-oci/o/hello.txt",
+            server.base_url
+        ))
         .body(Body::empty())
         .expect("object get request should build");
     let get_object_response = server.request(get_object).await;
@@ -52,7 +61,9 @@ async fn should_commit_multipart_object_given_live_server_when_finalizing_oci_up
         .method("POST")
         .uri(format!("{}/n/tenant/b", server.base_url))
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"name":"multipart-bucket","compartmentId":"ignored"}"#))
+        .body(Body::from(
+            r#"{"name":"multipart-bucket","compartmentId":"ignored"}"#,
+        ))
         .expect("bucket create request should build");
     let create_bucket_response = server.request(create_bucket).await;
     assert_eq!(create_bucket_response.status(), StatusCode::OK);
@@ -67,8 +78,9 @@ async fn should_commit_multipart_object_given_live_server_when_finalizing_oci_up
         .expect("multipart init request should build");
     let init_upload_response = server.request(init_upload).await;
     assert_eq!(init_upload_response.status(), StatusCode::OK);
-    let init_upload_json: serde_json::Value = serde_json::from_str(&text_body(init_upload_response).await)
-        .expect("multipart init body should parse");
+    let init_upload_json: serde_json::Value =
+        serde_json::from_str(&text_body(init_upload_response).await)
+            .expect("multipart init body should parse");
     let upload_id = init_upload_json
         .get("uploadId")
         .and_then(|value| value.as_str())
@@ -124,7 +136,10 @@ async fn should_commit_multipart_object_given_live_server_when_finalizing_oci_up
 
     let get_object = Request::builder()
         .method("GET")
-        .uri(format!("{}/n/tenant/b/multipart-bucket/o/multi.txt", server.base_url))
+        .uri(format!(
+            "{}/n/tenant/b/multipart-bucket/o/multi.txt",
+            server.base_url
+        ))
         .body(Body::empty())
         .expect("multipart object get request should build");
     let get_object_response = server.request(get_object).await;

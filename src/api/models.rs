@@ -83,3 +83,10 @@ pub struct TagsResponse {
 pub struct TagsRequest {
     pub tags: std::collections::HashMap<String, String>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: String,
+    pub details: Option<String>,
+}

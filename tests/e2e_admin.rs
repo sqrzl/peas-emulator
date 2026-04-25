@@ -53,12 +53,20 @@ struct ListObjectsResponse {
 #[derive(Debug, Deserialize)]
 struct ObjectVersionInfo {
     version_id: String,
+    is_latest: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct ListVersionsResponse {
     items: Vec<ObjectVersionInfo>,
     next: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    error: String,
+    code: String,
+    details: Option<String>,
 }
 
 async fn json_body<T: DeserializeOwned>(response: Response<Body>) -> T {
@@ -84,7 +92,10 @@ async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_
 
     let enable_versioning = Request::builder()
         .method("PUT")
-        .uri(format!("{}/admin/v1/buckets/e2e-admin/versioning", server.base_url))
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/versioning",
+            server.base_url
+        ))
         .header("content-type", "application/json")
         .body(Body::from(r#"{"enabled":true}"#))
         .expect("versioning request should build");
@@ -185,7 +196,10 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
 
     let list_buckets = Request::builder()
         .method("GET")
-        .uri(format!("{}/admin/v1/buckets?limit=1&search=a", server.base_url))
+        .uri(format!(
+            "{}/admin/v1/buckets?limit=1&search=a",
+            server.base_url
+        ))
         .body(Body::empty())
         .expect("bucket list request should build");
     let list_buckets_response = server.request(list_buckets).await;
@@ -193,7 +207,11 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
     let buckets: ListBucketsResponse = json_body(list_buckets_response).await;
     assert_eq!(buckets.items.len(), 1);
     assert!(buckets.items[0].name.contains('a'));
-    let next = buckets.next.clone().expect("bucket list should have next token");
+    let next = buckets
+        .next
+        .clone()
+        .expect("bucket list should have next token");
+    assert!(next.parse::<usize>().is_err());
 
     let list_buckets_next = Request::builder()
         .method("GET")
@@ -208,6 +226,38 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
     let next_buckets: ListBucketsResponse = json_body(list_buckets_next_response).await;
     assert_eq!(next_buckets.items.len(), 1);
 
+    let invalid_next = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets?next=not-a-valid-token",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("invalid next request should build");
+    let invalid_next_response = server.request(invalid_next).await;
+    assert_eq!(invalid_next_response.status(), StatusCode::BAD_REQUEST);
+    let invalid_next_error: ErrorResponse = json_body(invalid_next_response).await;
+    assert_eq!(invalid_next_error.code, "InvalidRequest");
+    assert_eq!(invalid_next_error.error, "Invalid request");
+    assert_eq!(
+        invalid_next_error.details.as_deref(),
+        Some("invalid next token")
+    );
+
+    let invalid_limit = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets?limit=0", server.base_url))
+        .body(Body::empty())
+        .expect("invalid limit request should build");
+    let invalid_limit_response = server.request(invalid_limit).await;
+    assert_eq!(invalid_limit_response.status(), StatusCode::BAD_REQUEST);
+    let invalid_limit_error: ErrorResponse = json_body(invalid_limit_response).await;
+    assert_eq!(invalid_limit_error.code, "InvalidRequest");
+    assert_eq!(
+        invalid_limit_error.details.as_deref(),
+        Some("limit must be between 1 and 500")
+    );
+
     let create_demo_bucket = Request::builder()
         .method("POST")
         .uri(format!("{}/admin/v1/buckets", server.base_url))
@@ -219,7 +269,10 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
 
     let enable_versioning = Request::builder()
         .method("PUT")
-        .uri(format!("{}/admin/v1/buckets/demo/versioning", server.base_url))
+        .uri(format!(
+            "{}/admin/v1/buckets/demo/versioning",
+            server.base_url
+        ))
         .header("content-type", "application/json")
         .body(Body::from(r#"{"enabled":true}"#))
         .expect("versioning request should build");
@@ -237,7 +290,10 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
             .body(Body::from(key.to_string()))
             .expect("object put request should build");
         let response = server.request(put_object).await;
-        assert!(matches!(response.status(), StatusCode::CREATED | StatusCode::OK));
+        assert!(matches!(
+            response.status(),
+            StatusCode::CREATED | StatusCode::OK
+        ));
     }
 
     for body in ["v1", "v2"] {
@@ -251,7 +307,10 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
             .body(Body::from(body))
             .expect("version put request should build");
         let response = server.request(put_version).await;
-        assert!(matches!(response.status(), StatusCode::CREATED | StatusCode::OK));
+        assert!(matches!(
+            response.status(),
+            StatusCode::CREATED | StatusCode::OK
+        ));
     }
 
     let list_objects = Request::builder()
@@ -267,7 +326,11 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
     let objects: ListObjectsResponse = json_body(list_objects_response).await;
     assert_eq!(objects.items.len(), 1);
     assert!(objects.items[0].key.ends_with(".txt"));
-    let next = objects.next.clone().expect("object list should have next token");
+    let next = objects
+        .next
+        .clone()
+        .expect("object list should have next token");
+    assert!(next.parse::<usize>().is_err());
 
     let list_objects_next = Request::builder()
         .method("GET")
@@ -296,4 +359,146 @@ async fn should_page_and_search_admin_collections_given_live_server_when_listing
     assert_eq!(versions.items.len(), 1);
     assert!(!versions.items[0].version_id.is_empty());
     assert!(versions.next.is_some());
+
+    let list_all_versions = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/demo/objects/versioned.txt/versions?limit=10",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("full version list request should build");
+    let list_all_versions_response = server.request(list_all_versions).await;
+    assert_eq!(list_all_versions_response.status(), StatusCode::OK);
+    let all_versions: ListVersionsResponse = json_body(list_all_versions_response).await;
+    assert!(all_versions.items.len() >= 2);
+    assert_eq!(
+        all_versions
+            .items
+            .iter()
+            .filter(|version| version.is_latest)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_return_expected_errors_given_invalid_admin_requests_when_using_live_server() {
+    let server = LiveServer::start_admin(auth_disabled()).await;
+
+    let create_bucket = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"name":"errors-demo"}"#))
+        .expect("bucket create request should build");
+    let create_bucket_response = server.request(create_bucket).await;
+    assert_eq!(create_bucket_response.status(), StatusCode::CREATED);
+
+    let duplicate_bucket = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"name":"errors-demo"}"#))
+        .expect("duplicate bucket request should build");
+    let duplicate_bucket_response = server.request(duplicate_bucket).await;
+    assert_eq!(duplicate_bucket_response.status(), StatusCode::CONFLICT);
+    let duplicate_bucket_error: ErrorResponse = json_body(duplicate_bucket_response).await;
+    assert_eq!(duplicate_bucket_error.code, "BucketAlreadyExists");
+    assert_eq!(duplicate_bucket_error.error, "Bucket already exists");
+    assert!(duplicate_bucket_error.details.is_none());
+
+    let malformed_json = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from("{"))
+        .expect("malformed json request should build");
+    let malformed_json_response = server.request(malformed_json).await;
+    assert_eq!(malformed_json_response.status(), StatusCode::BAD_REQUEST);
+    let malformed_json_error: ErrorResponse = json_body(malformed_json_response).await;
+    assert_eq!(malformed_json_error.code, "InvalidRequest");
+    assert_eq!(malformed_json_error.error, "Invalid request");
+    assert!(malformed_json_error.details.is_some());
+
+    let missing_bucket = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/missing-bucket",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("missing bucket request should build");
+    let missing_bucket_response = server.request(missing_bucket).await;
+    assert_eq!(missing_bucket_response.status(), StatusCode::NOT_FOUND);
+    let missing_bucket_error: ErrorResponse = json_body(missing_bucket_response).await;
+    assert_eq!(missing_bucket_error.code, "NoSuchBucket");
+    assert_eq!(missing_bucket_error.error, "Bucket not found");
+
+    let put_object = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "{}/admin/v1/buckets/errors-demo/objects/hello.txt/content",
+            server.base_url
+        ))
+        .header("content-type", "text/plain")
+        .body(Body::from("hello"))
+        .expect("object put request should build");
+    let put_object_response = server.request(put_object).await;
+    assert_eq!(put_object_response.status(), StatusCode::CREATED);
+
+    let delete_non_empty_bucket = Request::builder()
+        .method("DELETE")
+        .uri(format!("{}/admin/v1/buckets/errors-demo", server.base_url))
+        .body(Body::empty())
+        .expect("non-empty bucket delete request should build");
+    let delete_non_empty_bucket_response = server.request(delete_non_empty_bucket).await;
+    assert_eq!(
+        delete_non_empty_bucket_response.status(),
+        StatusCode::CONFLICT
+    );
+    let delete_non_empty_bucket_error: ErrorResponse =
+        json_body(delete_non_empty_bucket_response).await;
+    assert_eq!(delete_non_empty_bucket_error.code, "BucketNotEmpty");
+    assert_eq!(delete_non_empty_bucket_error.error, "Bucket not empty");
+
+    let missing_object = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/errors-demo/objects/missing.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("missing object request should build");
+    let missing_object_response = server.request(missing_object).await;
+    assert_eq!(missing_object_response.status(), StatusCode::NOT_FOUND);
+    let missing_object_error: ErrorResponse = json_body(missing_object_response).await;
+    assert_eq!(missing_object_error.code, "NoSuchKey");
+    assert_eq!(missing_object_error.error, "Key not found");
+
+    let unsupported_method = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets/errors-demo", server.base_url))
+        .body(Body::empty())
+        .expect("unsupported method request should build");
+    let unsupported_method_response = server.request(unsupported_method).await;
+    assert_eq!(
+        unsupported_method_response.status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    let unsupported_method_error: ErrorResponse = json_body(unsupported_method_response).await;
+    assert_eq!(unsupported_method_error.code, "MethodNotAllowed");
+    assert_eq!(unsupported_method_error.error, "Method not allowed");
+    assert!(unsupported_method_error.details.is_some());
+
+    let missing_route = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/does-not-exist", server.base_url))
+        .body(Body::empty())
+        .expect("missing route request should build");
+    let missing_route_response = server.request(missing_route).await;
+    assert_eq!(missing_route_response.status(), StatusCode::NOT_FOUND);
+    let missing_route_error: ErrorResponse = json_body(missing_route_response).await;
+    assert_eq!(missing_route_error.code, "NotFound");
+    assert_eq!(missing_route_error.error, "Route not found");
 }

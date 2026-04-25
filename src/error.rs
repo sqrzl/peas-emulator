@@ -17,6 +17,12 @@ pub enum Error {
     #[error("Invalid request")]
     InvalidRequest(String),
 
+    #[error("Method not allowed")]
+    MethodNotAllowed(String),
+
+    #[error("Route not found")]
+    RouteNotFound(String),
+
     #[error("Access denied")]
     AccessDenied,
 
@@ -61,6 +67,8 @@ impl Error {
             Error::BucketNotEmpty => http::StatusCode::CONFLICT,
             Error::KeyNotFound => http::StatusCode::NOT_FOUND,
             Error::InvalidRequest(_) => http::StatusCode::BAD_REQUEST,
+            Error::MethodNotAllowed(_) => http::StatusCode::METHOD_NOT_ALLOWED,
+            Error::RouteNotFound(_) => http::StatusCode::NOT_FOUND,
             Error::AccessDenied => http::StatusCode::FORBIDDEN,
             Error::InvalidUploadId => http::StatusCode::NOT_FOUND,
             Error::NoSuchUpload => http::StatusCode::NOT_FOUND,
@@ -82,6 +90,8 @@ impl Error {
             Error::BucketNotEmpty => "BucketNotEmpty",
             Error::KeyNotFound => "NoSuchKey",
             Error::InvalidRequest(_) => "InvalidRequest",
+            Error::MethodNotAllowed(_) => "MethodNotAllowed",
+            Error::RouteNotFound(_) => "NotFound",
             Error::AccessDenied => "AccessDenied",
             Error::InvalidUploadId => "NoSuchUpload",
             Error::NoSuchUpload => "NoSuchUpload",
