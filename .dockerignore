@@ -44,10 +44,6 @@ Dockerfile
 # Misc
 README.md
 LICENSE
-PLAN.md
-GAP_ANALYSIS.md
-TODO.md
-IMPLEMENTATION.md
 .env.local
 .env.*.local
 blobs/
