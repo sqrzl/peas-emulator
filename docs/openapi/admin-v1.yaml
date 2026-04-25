@@ -13,9 +13,15 @@ info:
     development workflows. It does not expose emulator configuration,
     provider-health, lifecycle orchestration, or compatibility-matrix
     resources.
+
+    When `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` are configured, `/admin/v1`
+    requires HTTP Basic authentication using those same values unless
+    `ADMIN_AUTH_DISABLED=true` is set for local development.
 servers:
   - url: http://127.0.0.1:9001/admin/v1
     description: Local UI/admin server
+security:
+  - AdminBasicAuth: []
 tags:
   - name: Buckets
     description: Bucket-level storage administration operations.
@@ -52,6 +58,8 @@ paths:
                         created_at: '2026-04-25T18:30:00Z'
                         versioning_enabled: false
                     next: YnVja2V0czox
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       tags:
         - Buckets
@@ -73,6 +81,8 @@ paths:
                 $ref: '#/components/schemas/BucketDetails'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '409':
@@ -97,6 +107,8 @@ paths:
                 $ref: '#/components/schemas/BucketDetails'
         '404':
           $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
@@ -110,6 +122,8 @@ paths:
       responses:
         '204':
           description: Bucket deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -133,6 +147,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VersioningStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -159,6 +175,8 @@ paths:
                 $ref: '#/components/schemas/VersioningStatus'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -187,6 +205,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListObjectsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -210,6 +230,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObjectMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -224,6 +246,8 @@ paths:
       responses:
         '204':
           description: Object deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -245,6 +269,8 @@ paths:
               schema:
                 type: string
                 format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -280,6 +306,8 @@ paths:
                 $ref: '#/components/schemas/ObjectMetadata'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -308,6 +336,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListVersionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -330,6 +360,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TagsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -356,6 +388,8 @@ paths:
                 $ref: '#/components/schemas/TagsResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
@@ -363,6 +397,13 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 components:
+  securitySchemes:
+    AdminBasicAuth:
+      type: http
+      scheme: basic
+      description: >-
+        Required when `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` are configured
+        and `ADMIN_AUTH_DISABLED` is not set to `true`.
   parameters:
     BucketName:
       name: bucketName
@@ -405,6 +446,24 @@ components:
       schema:
         type: string
   responses:
+    Unauthorized:
+      description: Authentication is required or the provided admin credentials are invalid.
+      headers:
+        WWW-Authenticate:
+          description: Basic auth challenge for the admin API.
+          schema:
+            type: string
+            example: Basic realm="Peas Admin"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error: Unauthorized
+                code: Unauthorized
+                details: Provide Basic auth with ACCESS_KEY_ID and SECRET_ACCESS_KEY
     BadRequest:
       description: The request could not be processed.
       content:
