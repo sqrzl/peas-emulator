@@ -16,7 +16,8 @@ pub struct BucketDetails {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListBucketsResponse {
-    pub buckets: Vec<BucketInfo>,
+    pub items: Vec<BucketInfo>,
+    pub next: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,11 +54,8 @@ pub struct ObjectMetadata {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListObjectsResponse {
-    pub objects: Vec<ObjectInfo>,
-    pub prefix: String,
-    pub delimiter: Option<String>,
-    pub is_truncated: bool,
-    pub next_marker: Option<String>,
+    pub items: Vec<ObjectInfo>,
+    pub next: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,7 +70,8 @@ pub struct ObjectVersionInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListVersionsResponse {
-    pub versions: Vec<ObjectVersionInfo>,
+    pub items: Vec<ObjectVersionInfo>,
+    pub next: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

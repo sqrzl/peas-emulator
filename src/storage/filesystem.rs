@@ -68,6 +68,22 @@ impl FilesystemStorage {
         self.bucket_dir(bucket).join("bucket.acl.json")
     }
 
+    fn is_bucket_control_entry(&self, _bucket: &str, entry: &fs::DirEntry) -> bool {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        match name.as_ref() {
+            ".bucket.meta.json" | ".versioning-enabled" | ".lifecycle.json" | ".policy.json"
+            | "bucket.acl.json" => true,
+            ".multipart" => entry
+                .path()
+                .read_dir()
+                .map(|entries| entries.flatten().next().is_none())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     fn bucket_metadata_path(&self, bucket: &str) -> PathBuf {
         self.bucket_dir(bucket).join(".bucket.meta.json")
     }
@@ -307,11 +323,15 @@ impl Storage for FilesystemStorage {
         let entries = fs::read_dir(&bucket_dir)
             .map_err(|e| Error::InternalError(format!("Failed to read bucket: {}", e)))?;
 
-        if entries.count() > 0 {
-            return Err(Error::BucketNotEmpty);
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| Error::InternalError(format!("Failed to read bucket entry: {}", e)))?;
+            if !self.is_bucket_control_entry(name, &entry) {
+                return Err(Error::BucketNotEmpty);
+            }
         }
 
-        fs::remove_dir(&bucket_dir)
+        fs::remove_dir_all(&bucket_dir)
             .map_err(|e| Error::InternalError(format!("Failed to delete bucket: {}", e)))?;
 
         // Update index
