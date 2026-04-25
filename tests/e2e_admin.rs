@@ -1,0 +1,299 @@
+mod common;
+
+use common::e2e::{auth_disabled, text_body, LiveServer};
+use hyper::{Body, Request, Response, StatusCode};
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct BucketDetails {
+    name: String,
+    versioning_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersioningStatus {
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ObjectMetadata {
+    key: String,
+    content_type: Option<String>,
+    metadata: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagsResponse {
+    tags: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BucketInfo {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListBucketsResponse {
+    items: Vec<BucketInfo>,
+    next: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ObjectInfo {
+    key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListObjectsResponse {
+    items: Vec<ObjectInfo>,
+    next: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ObjectVersionInfo {
+    version_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListVersionsResponse {
+    items: Vec<ObjectVersionInfo>,
+    next: Option<String>,
+}
+
+async fn json_body<T: DeserializeOwned>(response: Response<Body>) -> T {
+    let body = text_body(response).await;
+    serde_json::from_str(&body).expect("response body should deserialize")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_admin_api() {
+    let server = LiveServer::start_admin(auth_disabled()).await;
+
+    let create_bucket = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"name":"e2e-admin"}"#))
+        .expect("bucket create request should build");
+    let create_bucket_response = server.request(create_bucket).await;
+    assert_eq!(create_bucket_response.status(), StatusCode::CREATED);
+    let created_bucket: BucketDetails = json_body(create_bucket_response).await;
+    assert_eq!(created_bucket.name, "e2e-admin");
+    assert!(!created_bucket.versioning_enabled);
+
+    let enable_versioning = Request::builder()
+        .method("PUT")
+        .uri(format!("{}/admin/v1/buckets/e2e-admin/versioning", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"enabled":true}"#))
+        .expect("versioning request should build");
+    let enable_versioning_response = server.request(enable_versioning).await;
+    assert_eq!(enable_versioning_response.status(), StatusCode::OK);
+    let versioning: VersioningStatus = json_body(enable_versioning_response).await;
+    assert!(versioning.enabled);
+
+    let put_object = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/hello.txt/content",
+            server.base_url
+        ))
+        .header("content-type", "text/plain")
+        .header("x-amz-meta-owner", "alice")
+        .body(Body::from("hello over admin tcp"))
+        .expect("object put request should build");
+    let put_object_response = server.request(put_object).await;
+    assert_eq!(put_object_response.status(), StatusCode::CREATED);
+    let uploaded: ObjectMetadata = json_body(put_object_response).await;
+    assert_eq!(uploaded.key, "hello.txt");
+
+    let get_metadata = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/hello.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("metadata request should build");
+    let get_metadata_response = server.request(get_metadata).await;
+    assert_eq!(get_metadata_response.status(), StatusCode::OK);
+    let metadata: ObjectMetadata = json_body(get_metadata_response).await;
+    assert_eq!(metadata.content_type.as_deref(), Some("text/plain"));
+    assert_eq!(metadata.metadata.get("owner"), Some(&"alice".to_string()));
+
+    let put_tags = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/hello.txt/tags",
+            server.base_url
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"tags":{"env":"dev"}}"#))
+        .expect("tag put request should build");
+    let put_tags_response = server.request(put_tags).await;
+    assert_eq!(put_tags_response.status(), StatusCode::OK);
+    let tags: TagsResponse = json_body(put_tags_response).await;
+    assert_eq!(tags.tags.get("env"), Some(&"dev".to_string()));
+
+    let get_object = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/hello.txt/content",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("object get request should build");
+    let get_object_response = server.request(get_object).await;
+    assert_eq!(get_object_response.status(), StatusCode::OK);
+    assert_eq!(text_body(get_object_response).await, "hello over admin tcp");
+
+    let delete_object = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/hello.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("object delete request should build");
+    let delete_object_response = server.request(delete_object).await;
+    assert_eq!(delete_object_response.status(), StatusCode::NO_CONTENT);
+
+    let delete_bucket = Request::builder()
+        .method("DELETE")
+        .uri(format!("{}/admin/v1/buckets/e2e-admin", server.base_url))
+        .body(Body::empty())
+        .expect("bucket delete request should build");
+    let delete_bucket_response = server.request(delete_bucket).await;
+    assert_eq!(delete_bucket_response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_page_and_search_admin_collections_given_live_server_when_listing_resources() {
+    let server = LiveServer::start_admin(auth_disabled()).await;
+
+    for bucket in ["alpha", "beta", "gamma"] {
+        let create_bucket = Request::builder()
+            .method("POST")
+            .uri(format!("{}/admin/v1/buckets", server.base_url))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(r#"{{"name":"{}"}}"#, bucket)))
+            .expect("bucket create request should build");
+        let response = server.request(create_bucket).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    let list_buckets = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets?limit=1&search=a", server.base_url))
+        .body(Body::empty())
+        .expect("bucket list request should build");
+    let list_buckets_response = server.request(list_buckets).await;
+    assert_eq!(list_buckets_response.status(), StatusCode::OK);
+    let buckets: ListBucketsResponse = json_body(list_buckets_response).await;
+    assert_eq!(buckets.items.len(), 1);
+    assert!(buckets.items[0].name.contains('a'));
+    let next = buckets.next.clone().expect("bucket list should have next token");
+
+    let list_buckets_next = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets?limit=1&search=a&next={}",
+            server.base_url, next
+        ))
+        .body(Body::empty())
+        .expect("bucket list next request should build");
+    let list_buckets_next_response = server.request(list_buckets_next).await;
+    assert_eq!(list_buckets_next_response.status(), StatusCode::OK);
+    let next_buckets: ListBucketsResponse = json_body(list_buckets_next_response).await;
+    assert_eq!(next_buckets.items.len(), 1);
+
+    let create_demo_bucket = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"name":"demo"}"#))
+        .expect("demo bucket create request should build");
+    let response = server.request(create_demo_bucket).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let enable_versioning = Request::builder()
+        .method("PUT")
+        .uri(format!("{}/admin/v1/buckets/demo/versioning", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"enabled":true}"#))
+        .expect("versioning request should build");
+    let response = server.request(enable_versioning).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    for key in ["alpha.txt", "beta.txt", "gamma.bin"] {
+        let put_object = Request::builder()
+            .method("PUT")
+            .uri(format!(
+                "{}/admin/v1/buckets/demo/objects/{}/content",
+                server.base_url, key
+            ))
+            .header("content-type", "text/plain")
+            .body(Body::from(key.to_string()))
+            .expect("object put request should build");
+        let response = server.request(put_object).await;
+        assert!(matches!(response.status(), StatusCode::CREATED | StatusCode::OK));
+    }
+
+    for body in ["v1", "v2"] {
+        let put_version = Request::builder()
+            .method("PUT")
+            .uri(format!(
+                "{}/admin/v1/buckets/demo/objects/versioned.txt/content",
+                server.base_url
+            ))
+            .header("content-type", "text/plain")
+            .body(Body::from(body))
+            .expect("version put request should build");
+        let response = server.request(put_version).await;
+        assert!(matches!(response.status(), StatusCode::CREATED | StatusCode::OK));
+    }
+
+    let list_objects = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/demo/objects?limit=1&search=.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("object list request should build");
+    let list_objects_response = server.request(list_objects).await;
+    assert_eq!(list_objects_response.status(), StatusCode::OK);
+    let objects: ListObjectsResponse = json_body(list_objects_response).await;
+    assert_eq!(objects.items.len(), 1);
+    assert!(objects.items[0].key.ends_with(".txt"));
+    let next = objects.next.clone().expect("object list should have next token");
+
+    let list_objects_next = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/demo/objects?limit=1&search=.txt&next={}",
+            server.base_url, next
+        ))
+        .body(Body::empty())
+        .expect("object list next request should build");
+    let list_objects_next_response = server.request(list_objects_next).await;
+    assert_eq!(list_objects_next_response.status(), StatusCode::OK);
+    let next_objects: ListObjectsResponse = json_body(list_objects_next_response).await;
+    assert_eq!(next_objects.items.len(), 1);
+
+    let list_versions = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/demo/objects/versioned.txt/versions?limit=1&search=versioned",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("version list request should build");
+    let list_versions_response = server.request(list_versions).await;
+    assert_eq!(list_versions_response.status(), StatusCode::OK);
+    let versions: ListVersionsResponse = json_body(list_versions_response).await;
+    assert_eq!(versions.items.len(), 1);
+    assert!(!versions.items[0].version_id.is_empty());
+    assert!(versions.next.is_some());
+}

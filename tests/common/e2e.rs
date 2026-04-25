@@ -3,6 +3,7 @@
 use hyper::body::to_bytes;
 use hyper::client::HttpConnector;
 use hyper::{Body, Client, Request, Response};
+use peas_emulator::api::server::start_ui_server;
 use peas_emulator::server::Server;
 use peas_emulator::storage::{FilesystemStorage, Storage};
 use peas_emulator::Config;
@@ -65,7 +66,27 @@ impl LiveServer {
         Self::start_api(auth_config).await
     }
 
+    pub async fn start_admin(auth_config: Config) -> Self {
+        let ui_port = reserve_port();
+        let storage_dir = temp_storage_dir("peas-e2e-admin");
+        let storage: Arc<dyn Storage> = Arc::new(FilesystemStorage::new(&storage_dir));
+        let task = tokio::spawn(start_ui_server(storage, ui_port));
+        let server = Self {
+            base_url: format!("http://127.0.0.1:{ui_port}"),
+            client: Client::new(),
+            task,
+            storage_dir,
+        };
+        let _ = auth_config;
+        server.wait_until_ready_path("/admin/v1/buckets").await;
+        server
+    }
+
     async fn wait_until_ready(&self) {
+        self.wait_until_ready_path("/?list-type=2").await;
+    }
+
+    async fn wait_until_ready_path(&self, path: &str) {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             if self.task.is_finished() {
@@ -74,7 +95,7 @@ impl LiveServer {
 
             let request = Request::builder()
                 .method("GET")
-                .uri(format!("{}/?list-type=2", self.base_url))
+                .uri(format!("{}{}", self.base_url, path))
                 .body(Body::empty())
                 .expect("readiness request should build");
 
