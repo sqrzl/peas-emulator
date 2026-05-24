@@ -90,15 +90,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
       tags:
         - Buckets
       operationId: getBucket
@@ -117,6 +111,8 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
       tags:
         - Buckets
       operationId: deleteBucket
@@ -133,15 +129,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/versioning:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
       tags:
         - Buckets
       operationId: getBucketVersioning
@@ -160,6 +150,8 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
     put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
       tags:
         - Buckets
       operationId: setBucketVersioning
@@ -186,36 +178,12 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
-      - name: next
-        in: query
-        required: false
-        description: Opaque next token returned by a previous list request.
-        schema:
-          type: string
-      - name: limit
-        in: query
-        required: false
-        description: Maximum number of items to return in this page.
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 500
-          default: 50
-      - name: search
-        in: query
-        required: false
-        description: Case-insensitive text search over resource names or keys.
-        schema:
-          type: string
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/Next'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
       tags:
         - Objects
       operationId: listObjects
@@ -234,22 +202,10 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
-      - name: objectKey
-        in: path
-        required: true
-        description: Full object key, URL encoded when used in the path.
-        schema:
-          type: string
-          minLength: 1
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Objects
       operationId: getObjectMetadata
@@ -268,6 +224,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Objects
       operationId: deleteObject
@@ -282,22 +241,10 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/content:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
-      - name: objectKey
-        in: path
-        required: true
-        description: Full object key, URL encoded when used in the path.
-        schema:
-          type: string
-          minLength: 1
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Objects
       operationId: downloadObjectContent
@@ -317,6 +264,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
     put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Objects
       operationId: putObjectContent
@@ -351,43 +301,13 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/versions:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
-      - name: objectKey
-        in: path
-        required: true
-        description: Full object key, URL encoded when used in the path.
-        schema:
-          type: string
-          minLength: 1
-      - name: next
-        in: query
-        required: false
-        description: Opaque next token returned by a previous list request.
-        schema:
-          type: string
-      - name: limit
-        in: query
-        required: false
-        description: Maximum number of items to return in this page.
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 500
-          default: 50
-      - name: search
-        in: query
-        required: false
-        description: Case-insensitive text search over resource names or keys.
-        schema:
-          type: string
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
+        - $ref: '#/components/parameters/Next'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
       tags:
         - Objects
       operationId: listObjectVersions
@@ -406,22 +326,10 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/tags:
-    parameters:
-      - name: bucketName
-        in: path
-        required: true
-        description: Bucket name.
-        schema:
-          type: string
-          minLength: 1
-      - name: objectKey
-        in: path
-        required: true
-        description: Full object key, URL encoded when used in the path.
-        schema:
-          type: string
-          minLength: 1
     get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Tags
       operationId: getObjectTags
@@ -440,6 +348,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
     put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
       tags:
         - Tags
       operationId: putObjectTags

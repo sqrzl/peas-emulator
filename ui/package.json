@@ -10,14 +10,16 @@
     "type-check": "tsc --noEmit",
     "lint": "vp lint .",
     "lint:fix": "vp lint . --fix",
-    "fmt": "vp fmt ."
+    "fmt": "vp fmt .",
+    "gen": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/api.g.ts"
   },
   "dependencies": {
     "@askrjs/askr": "^0.0.39",
     "@askrjs/charts": ">=0.0.1 <0.1.0",
     "@askrjs/lucide": "^0.0.2",
     "@askrjs/themes": "^0.0.6",
-    "@askrjs/ui": "^0.0.7"
+    "@askrjs/ui": "^0.0.7",
+    "@fgrzl/fetch": "^1.4.2"
   },
   "devDependencies": {
     "@askrjs/vite": ">=0.0.2 <0.1.0",
