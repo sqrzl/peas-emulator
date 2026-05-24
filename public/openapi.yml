@@ -15,8 +15,11 @@ servers:
   - url: /admin/v1
     description: Admin API root on the current host
 security:
+  - AdminSessionCookie: []
   - AdminBasicAuth: []
 tags:
+  - name: Auth
+    description: Authentication session management.
   - name: Buckets
     description: Bucket-level storage administration operations.
   - name: Objects
@@ -24,6 +27,60 @@ tags:
   - name: Tags
     description: Object tagging operations.
 paths:
+  /auth/login:
+    post:
+      security: []
+      tags:
+        - Auth
+      operationId: loginAdminSession
+      summary: Create admin session
+      description: Exchanges admin credentials for an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Session created successfully.
+          headers:
+            Set-Cookie:
+              description: HttpOnly admin session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/logout:
+    post:
+      security: []
+      tags:
+        - Auth
+      operationId: logoutAdminSession
+      summary: Clear admin session
+      description: Clears the admin session cookie for the current browser.
+      responses:
+        '200':
+          description: Session cleared successfully.
+          headers:
+            Set-Cookie:
+              description: Expired admin session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /buckets:
     get:
       tags:
@@ -378,6 +435,11 @@ paths:
           $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
+    AdminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: peas_admin_session
+      description: HttpOnly JWT session cookie issued by /auth/login.
     AdminBasicAuth:
       type: http
       scheme: basic
@@ -461,6 +523,27 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    AdminLoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+    SuccessResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
     CreateBucketRequest:
       type: object
       additionalProperties: false

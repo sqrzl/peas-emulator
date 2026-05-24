@@ -24,6 +24,21 @@ import { buildQueryParams } from '@fgrzl/fetch';
  */
 export function createAdapter(client: FetchClient): {
   /**
+   * Create admin session
+   *
+   * @param body - Request body
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<SuccessResponse>
+   */
+  loginAdminSession: (body: AdminLoginRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<SuccessResponse>>;
+  /**
+   * Clear admin session
+   *
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<SuccessResponse>
+   */
+  logoutAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<SuccessResponse>>;
+  /**
    * Create bucket
    *
    * @param body - Request body
@@ -128,6 +143,14 @@ export function createAdapter(client: FetchClient): {
   setBucketVersioning: (body: VersioningStatus, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<VersioningStatus>>;
 } {
   return {
+    loginAdminSession: (body: AdminLoginRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<SuccessResponse>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? 'loginAdminSession' };
+	return client.post(`/auth/login`, body, undefined, finalOptions);
+    },
+    logoutAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<SuccessResponse>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? 'logoutAdminSession' };
+	return client.post(`/auth/logout`, undefined, undefined, finalOptions);
+    },
     createBucket: (body: CreateBucketRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<BucketDetails>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? 'createBucket' };
 	return client.post(`/buckets`, body, undefined, finalOptions);
@@ -189,6 +212,9 @@ export function createAdapter(client: FetchClient): {
   };
 }
 
+/** AdminLoginRequest schema */
+export type AdminLoginRequest = { password: string; username: string };
+
 /** BucketDetails schema */
 export type BucketDetails = BucketInfo;
 
@@ -218,6 +244,9 @@ export type ObjectMetadata = { content_type: string | null; etag: string; key: s
 
 /** ObjectVersionInfo schema */
 export type ObjectVersionInfo = { etag: string; is_latest: boolean; key: string; last_modified: string; size: number; version_id: string };
+
+/** SuccessResponse schema */
+export type SuccessResponse = { success: boolean };
 
 /** TagsRequest schema */
 export type TagsRequest = { tags: Record<string, string> };

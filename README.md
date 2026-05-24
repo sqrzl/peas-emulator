@@ -51,7 +51,7 @@ auth, set `ADMIN_AUTH_DISABLED=true`.
 ## Admin API Contract
 
 The versioned OpenAPI 3.1 contract for the admin storage API lives at
-`docs/openapi/admin-v1.yaml`.
+`public/openapi.yml`.
 
 The initial contract targets the `/admin/v1` surface for local storage
 administration workflows such as bucket browsing, object inspection, content
