@@ -8,8 +8,8 @@ services:
       - "9001:9001"
     environment:
       BLOBS_PATH: /app/blobs
-      ACCESS_KEY_ID: peas
-      SECRET_ACCESS_KEY: peas
+      ACCESS_KEY_ID: admin
+      SECRET_ACCESS_KEY: admin
     volumes:
       - peas-blobs:/app/blobs
 

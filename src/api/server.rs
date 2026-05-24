@@ -1,3 +1,4 @@
+use crate::auth::{AdminLoginRequest, AdminSessionManager};
 use crate::error::{Error, Result};
 use crate::services::{
     bucket as bucket_service, json_error_response, json_response, object as object_service,
@@ -23,16 +24,19 @@ pub async fn start_ui_server(
 ) -> crate::error::Result<()> {
     let ui_port = config.ui_port;
     let addr = ([0, 0, 0, 0], ui_port).into();
+    let admin_session = Arc::new(AdminSessionManager::new()?);
 
     let make_svc = make_service_fn(move |_conn| {
         let storage = storage.clone();
         let config = config.clone();
+        let admin_session = admin_session.clone();
 
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
                 let storage = storage.clone();
                 let config = config.clone();
-                handle_ui_request(storage, config, req)
+                let admin_session = admin_session.clone();
+                handle_ui_request(storage, config, admin_session, req)
             }))
         }
     });
@@ -48,12 +52,23 @@ pub async fn start_ui_server(
 async fn handle_ui_request(
     storage: Arc<dyn Storage>,
     config: Arc<crate::Config>,
+    admin_session: Arc<AdminSessionManager>,
     req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_string();
 
+    if path == crate::auth::admin_session::ADMIN_LOGIN_PATH {
+        let resp = handle_admin_login(config, admin_session, req).await;
+        return Ok(resp);
+    }
+
+    if path == crate::auth::admin_session::ADMIN_LOGOUT_PATH {
+        let resp = handle_admin_logout(req);
+        return Ok(resp);
+    }
+
     if path == "/admin/v1" || path.starts_with("/admin/v1/") {
-        if !admin_request_is_authorized(&req, &config) {
+        if !admin_request_is_authorized(&req, &config, &admin_session) {
             return Ok(admin_unauthorized_response());
         }
 
@@ -116,8 +131,89 @@ async fn handle_ui_request(
     }
 }
 
-fn admin_request_is_authorized(req: &Request<Body>, config: &crate::Config) -> bool {
+async fn handle_admin_login(
+    config: Arc<crate::Config>,
+    admin_session: Arc<AdminSessionManager>,
+    req: Request<Body>,
+) -> Response<Body> {
+    if req.method() != Method::POST {
+        return json_error_response(&Error::MethodNotAllowed(format!(
+            "{} {}",
+            req.method(),
+            crate::auth::admin_session::ADMIN_LOGIN_PATH
+        )));
+    }
+
+    let login_request: AdminLoginRequest = match read_json(req).await {
+        Ok(request) => request,
+        Err(err) => return json_error_response(&err),
+    };
+
+    if !config.validate_credentials(&login_request.username, &login_request.password) {
+        return admin_login_unauthorized_response();
+    }
+
+    let cookie = match admin_session.issue_session_cookie(&login_request.username) {
+        Ok(cookie) => cookie,
+        Err(err) => return json_error_response(&err),
+    };
+
+    let mut response = json_response(
+        StatusCode::OK,
+        &crate::api::models::SuccessResponse { success: true },
+    );
+
+    match hyper::header::HeaderValue::from_str(&cookie) {
+        Ok(header_value) => {
+            response.headers_mut().insert("set-cookie", header_value);
+            response.headers_mut().insert(
+                "cache-control",
+                hyper::header::HeaderValue::from_static("no-store"),
+            );
+            response
+        }
+        Err(err) => json_error_response(&Error::InternalError(format!(
+            "failed to encode admin session cookie: {err}"
+        ))),
+    }
+}
+
+fn handle_admin_logout(req: Request<Body>) -> Response<Body> {
+    if req.method() != Method::POST {
+        return json_error_response(&Error::MethodNotAllowed(format!(
+            "{} {}",
+            req.method(),
+            crate::auth::admin_session::ADMIN_LOGOUT_PATH
+        )));
+    }
+
+    let mut response = json_response(
+        StatusCode::OK,
+        &crate::api::models::SuccessResponse { success: true },
+    );
+    response.headers_mut().insert(
+        "set-cookie",
+        hyper::header::HeaderValue::from_static(
+            "peas_admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        ),
+    );
+    response.headers_mut().insert(
+        "cache-control",
+        hyper::header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+fn admin_request_is_authorized(
+    req: &Request<Body>,
+    config: &crate::Config,
+    admin_session: &AdminSessionManager,
+) -> bool {
     if !config.admin_auth_enforced() {
+        return true;
+    }
+
+    if admin_session.has_valid_session(req) {
         return true;
     }
 
@@ -147,7 +243,10 @@ fn admin_unauthorized_response() -> Response<Body> {
     let body = crate::api::models::ErrorResponse {
         error: "Unauthorized".to_string(),
         code: "Unauthorized".to_string(),
-        details: Some("Provide Basic auth with ACCESS_KEY_ID and SECRET_ACCESS_KEY".to_string()),
+        details: Some(
+            "Provide a valid admin session cookie or Basic auth with ACCESS_KEY_ID and SECRET_ACCESS_KEY"
+                .to_string(),
+        ),
     };
     let mut response = json_response(StatusCode::UNAUTHORIZED, &body);
     response.headers_mut().insert(
@@ -155,6 +254,16 @@ fn admin_unauthorized_response() -> Response<Body> {
         hyper::header::HeaderValue::from_static("Basic realm=\"Peas Admin\""),
     );
     response
+}
+
+fn admin_login_unauthorized_response() -> Response<Body> {
+    let body = crate::api::models::ErrorResponse {
+        error: "Unauthorized".to_string(),
+        code: "Unauthorized".to_string(),
+        details: Some("Invalid admin credentials".to_string()),
+    };
+
+    json_response(StatusCode::UNAUTHORIZED, &body)
 }
 
 async fn read_json<T: DeserializeOwned>(req: Request<Body>) -> Result<T> {

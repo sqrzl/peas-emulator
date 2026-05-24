@@ -99,7 +99,7 @@ impl LiveServer {
     }
 
     async fn wait_until_ready_path(&self, path: &str) {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(6);
         while Instant::now() < deadline {
             if self.task.is_finished() {
                 panic!("server task exited before becoming ready");

@@ -541,3 +541,57 @@ async fn should_allow_admin_requests_without_credentials_given_admin_auth_bypass
     let response = server.request_without_default_auth(request).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_issue_admin_session_cookie_given_valid_login_and_authorize_admin_requests() {
+    let server = LiveServer::start_admin(auth_enabled("admin-key", "admin-secret")).await;
+
+    let login_request = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/auth/login", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"username":"admin-key","password":"admin-secret"}"#,
+        ))
+        .expect("login request should build");
+    let login_response = server.request_without_default_auth(login_request).await;
+    assert_eq!(login_response.status(), StatusCode::OK);
+
+    let session_cookie = login_response
+        .headers()
+        .get("set-cookie")
+        .expect("login response should set a cookie")
+        .to_str()
+        .expect("set-cookie header should be valid utf-8")
+        .split(';')
+        .next()
+        .expect("set-cookie header should contain a cookie value")
+        .to_string();
+
+    assert!(session_cookie.contains("peas_admin_session="));
+
+    let authenticated = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .header("cookie", session_cookie.clone())
+        .body(Body::empty())
+        .expect("authenticated admin request should build");
+    let authenticated_response = server.request_without_default_auth(authenticated).await;
+    assert_eq!(authenticated_response.status(), StatusCode::OK);
+
+    let logout_request = Request::builder()
+        .method("POST")
+        .uri(format!("{}/admin/v1/auth/logout", server.base_url))
+        .header("cookie", session_cookie)
+        .body(Body::empty())
+        .expect("logout request should build");
+    let logout_response = server.request_without_default_auth(logout_request).await;
+    assert_eq!(logout_response.status(), StatusCode::OK);
+    let logout_cookie = logout_response
+        .headers()
+        .get("set-cookie")
+        .expect("logout response should clear the cookie")
+        .to_str()
+        .expect("logout cookie header should be valid utf-8");
+    assert!(logout_cookie.contains("Max-Age=0"));
+}
