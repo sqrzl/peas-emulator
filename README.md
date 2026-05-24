@@ -1,6 +1,6 @@
 # Peas Emulator
 
-A multi-provider blob and object storage emulator for local development and compatibility testing. Peas currently exposes native front doors for S3-compatible clients, Azure Blob Storage, Google Cloud Storage, and OCI Object Storage on top of a shared filesystem-backed blob core.
+A multi-provider blob and object storage emulator for local development and compatibility testing. With the simple admin UI, Peas becomes a valuable asset for developing cloud-native solutions without fully provisioning or locking into a cloud vendor. The companion client libraries, such as peas-go, normalize the blob storage API surface so application development stays behind one unified storage interface, making it easier to target a cloud vendor today and switch vendors later with zero friction. Peas currently exposes native front doors for S3-compatible clients, Azure Blob Storage, Google Cloud Storage, and OCI Object Storage on top of a shared filesystem-backed blob core.
 
 ## Features
 
