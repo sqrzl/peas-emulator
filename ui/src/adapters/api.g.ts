@@ -27,470 +27,262 @@ export function createAdapter(client: FetchClient): {
    * Create admin session
    *
    * @param body - Request body
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<SuccessResponse>
    */
-  loginAdminSession: (
-    body: AdminLoginRequest,
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<SuccessResponse>>;
+	loginAdminSession: (body: AdminLoginRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<SuccessResponse>>;
   /**
    * Clear admin session
    *
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<SuccessResponse>
    */
-  logoutAdminSession: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<SuccessResponse>>;
+	logoutAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<SuccessResponse>>;
+  /**
+   * Get admin session status
+   *
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AdminSessionResponse>
+   */
+	getAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<AdminSessionResponse>>;
   /**
    * Create bucket
    *
    * @param body - Request body
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<BucketDetails>
    */
-  createBucket: (
-    body: CreateBucketRequest,
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<BucketDetails>>;
+	createBucket: (body: CreateBucketRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<BucketDetails>>;
   /**
    * List buckets
    *
    * @param query - Query parameters
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListBucketsResponse>
    */
-  listBuckets: (
-    query?: { next?: string; limit?: number; search?: string },
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<ListBucketsResponse>>;
+	listBuckets: (query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ListBucketsResponse>>;
   /**
    * Delete bucket
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
-  deleteBucket: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<boolean>>;
+	deleteBucket: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
   /**
    * Get bucket
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<BucketDetails>
    */
-  getBucket: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<BucketDetails>>;
+	getBucket: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<BucketDetails>>;
   /**
    * List objects in a bucket
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+   * @param query - Query parameters
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListObjectsResponse>
    */
-  listObjects: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<ListObjectsResponse>>;
+	listObjects: (bucketName: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ListObjectsResponse>>;
   /**
    * Delete object
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
-  deleteObject: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<boolean>>;
+	deleteObject: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
   /**
    * Get object metadata
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ObjectMetadata>
    */
-  getObjectMetadata: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<ObjectMetadata>>;
+	getObjectMetadata: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ObjectMetadata>>;
   /**
    * Download object content
    *
-   * @param options - Request options (signal, timeout, operationId)
-   * @returns Promise resolving to FetchResponse<any>
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<Blob>
    */
-  downloadObjectContent: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<any>>;
+	downloadObjectContent: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<Blob>>;
   /**
    * Create or replace object content
    *
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
    * @param body - Request body
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ObjectMetadata>
    */
-  putObjectContent: (
-    body: any,
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<ObjectMetadata>>;
+	putObjectContent: (bucketName: string, objectKey: string, body: BodyInit, headers?: HeadersInit, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ObjectMetadata>>;
   /**
    * Get object tags
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<TagsResponse>
    */
-  getObjectTags: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<TagsResponse>>;
+	getObjectTags: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<TagsResponse>>;
   /**
    * Replace object tags
    *
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
    * @param body - Request body
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<TagsResponse>
    */
-  putObjectTags: (
-    body: TagsRequest,
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<TagsResponse>>;
+	putObjectTags: (bucketName: string, objectKey: string, body: TagsRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<TagsResponse>>;
   /**
    * List object versions
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param query - Query parameters
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListVersionsResponse>
    */
-  listObjectVersions: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<ListVersionsResponse>>;
+	listObjectVersions: (bucketName: string, objectKey: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ListVersionsResponse>>;
   /**
    * Get bucket versioning status
    *
-   * @param options - Request options (signal, timeout, operationId)
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<VersioningStatus>
    */
-  getBucketVersioning: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-    operationId?: string;
-  }) => Promise<FetchResponse<VersioningStatus>>;
+	getBucketVersioning: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<VersioningStatus>>;
   /**
    * Set bucket versioning status
    *
+   * @param bucketName - Bucket name.
    * @param body - Request body
-   * @param options - Request options (signal, timeout, operationId)
+	 * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<VersioningStatus>
    */
-  setBucketVersioning: (
-    body: VersioningStatus,
-    options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-  ) => Promise<FetchResponse<VersioningStatus>>;
+	setBucketVersioning: (bucketName: string, body: VersioningStatus, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<VersioningStatus>>;
 } {
   return {
-    loginAdminSession: (
-      body: AdminLoginRequest,
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<SuccessResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'loginAdminSession',
-      };
-      return client.post(`/auth/login`, body, undefined, finalOptions);
+		loginAdminSession: (body: AdminLoginRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<SuccessResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "loginAdminSession" };
+	return client.post(`/admin/v1/auth/login`, body, undefined, finalOptions);
     },
-    logoutAdminSession: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<SuccessResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'logoutAdminSession',
-      };
-      return client.post(`/auth/logout`, undefined, undefined, finalOptions);
+		logoutAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<SuccessResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "logoutAdminSession" };
+	return client.post(`/admin/v1/auth/logout`, undefined, undefined, finalOptions);
     },
-    createBucket: (
-      body: CreateBucketRequest,
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<BucketDetails>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'createBucket',
-      };
-      return client.post(`/buckets`, body, undefined, finalOptions);
+		getAdminSession: (options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<AdminSessionResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getAdminSession" };
+	return client.get(`/admin/v1/auth/session`, undefined, finalOptions);
     },
-    listBuckets: (
-      query?: { next?: string; limit?: number; search?: string },
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<ListBucketsResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'listBuckets',
-      };
+		createBucket: (body: CreateBucketRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<BucketDetails>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "createBucket" };
+	return client.post(`/admin/v1/buckets`, body, undefined, finalOptions);
+    },
+		listBuckets: (query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ListBucketsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "listBuckets" };
       const queryString = query ? buildQueryParams(query) : '';
-      const url = `/buckets` + (queryString ? '?' + queryString : '');
-      return client.get(url, undefined, finalOptions);
+      const url = `/admin/v1/buckets` + (queryString ? '?' + queryString : '');
+			return client.get(url, undefined, finalOptions);
     },
-    deleteBucket: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<boolean>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'deleteBucket',
-      };
-      return client.del(`/buckets/{bucketName}`, undefined, finalOptions);
+		deleteBucket: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "deleteBucket" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}`, undefined, finalOptions);
     },
-    getBucket: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<BucketDetails>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'getBucket',
-      };
-      return client.get(`/buckets/{bucketName}`, undefined, finalOptions);
+		getBucket: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<BucketDetails>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucket" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}`, undefined, finalOptions);
     },
-    listObjects: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<ListObjectsResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'listObjects',
-      };
-      return client.get(
-        `/buckets/{bucketName}/objects`,
-        undefined,
-        finalOptions
-      );
+		listObjects: (bucketName: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ListObjectsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "listObjects" };
+      const queryString = query ? buildQueryParams(query) : '';
+      const url = `/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects` + (queryString ? '?' + queryString : '');
+			return client.get(url, undefined, finalOptions);
     },
-    deleteObject: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<boolean>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'deleteObject',
-      };
-      return client.del(
-        `/buckets/{bucketName}/objects/{objectKey}`,
-        undefined,
-        finalOptions
-      );
+		deleteObject: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "deleteObject" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}`, undefined, finalOptions);
     },
-    getObjectMetadata: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<ObjectMetadata>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'getObjectMetadata',
-      };
-      return client.get(
-        `/buckets/{bucketName}/objects/{objectKey}`,
-        undefined,
-        finalOptions
-      );
+		getObjectMetadata: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ObjectMetadata>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getObjectMetadata" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}`, undefined, finalOptions);
     },
-    downloadObjectContent: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<any>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'downloadObjectContent',
-      };
-      return client.get(
-        `/buckets/{bucketName}/objects/{objectKey}/content`,
-        undefined,
-        finalOptions
-      );
+		downloadObjectContent: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Blob>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "downloadObjectContent" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/content`, undefined, finalOptions);
     },
-    putObjectContent: (
-      body: any,
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<ObjectMetadata>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'putObjectContent',
-      };
-      return client.put(
-        `/buckets/{bucketName}/objects/{objectKey}/content`,
-        body,
-        undefined,
-        finalOptions
-      );
+		putObjectContent: (bucketName: string, objectKey: string, body: BodyInit, headers?: HeadersInit, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ObjectMetadata>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "putObjectContent" };
+	return client.request<ObjectMetadata>(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/content`, { method: "PUT", headers, body }, finalOptions);
     },
-    getObjectTags: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<TagsResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'getObjectTags',
-      };
-      return client.get(
-        `/buckets/{bucketName}/objects/{objectKey}/tags`,
-        undefined,
-        finalOptions
-      );
+		getObjectTags: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<TagsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getObjectTags" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/tags`, undefined, finalOptions);
     },
-    putObjectTags: (
-      body: TagsRequest,
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<TagsResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'putObjectTags',
-      };
-      return client.put(
-        `/buckets/{bucketName}/objects/{objectKey}/tags`,
-        body,
-        undefined,
-        finalOptions
-      );
+		putObjectTags: (bucketName: string, objectKey: string, body: TagsRequest, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<TagsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "putObjectTags" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/tags`, body, undefined, finalOptions);
     },
-    listObjectVersions: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<ListVersionsResponse>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'listObjectVersions',
-      };
-      return client.get(
-        `/buckets/{bucketName}/objects/{objectKey}/versions`,
-        undefined,
-        finalOptions
-      );
+		listObjectVersions: (bucketName: string, objectKey: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ListVersionsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "listObjectVersions" };
+      const queryString = query ? buildQueryParams(query) : '';
+      const url = `/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/versions` + (queryString ? '?' + queryString : '');
+			return client.get(url, undefined, finalOptions);
     },
-    getBucketVersioning: (options?: {
-      signal?: AbortSignal;
-      timeout?: number;
-      operationId?: string;
-    }): Promise<FetchResponse<VersioningStatus>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'getBucketVersioning',
-      };
-      return client.get(
-        `/buckets/{bucketName}/versioning`,
-        undefined,
-        finalOptions
-      );
+		getBucketVersioning: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<VersioningStatus>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucketVersioning" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/versioning`, undefined, finalOptions);
     },
-    setBucketVersioning: (
-      body: VersioningStatus,
-      options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
-    ): Promise<FetchResponse<VersioningStatus>> => {
-      const finalOptions = {
-        ...options,
-        operationId: options?.operationId ?? 'setBucketVersioning',
-      };
-      return client.put(
-        `/buckets/{bucketName}/versioning`,
-        body,
-        undefined,
-        finalOptions
-      );
-    },
+		setBucketVersioning: (bucketName: string, body: VersioningStatus, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<VersioningStatus>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "setBucketVersioning" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/versioning`, body, undefined, finalOptions);
+    }
   };
 }
 
 /** AdminLoginRequest schema */
 export type AdminLoginRequest = { password: string; username: string };
 
+/** AdminSessionResponse schema */
+export type AdminSessionResponse = { mode: "open" | "session" | "basic"; username: string | null };
+
 /** BucketDetails schema */
 export type BucketDetails = BucketInfo;
 
 /** BucketInfo schema */
-export type BucketInfo = {
-  created_at: string;
-  name: string;
-  versioning_enabled: boolean;
-};
+export type BucketInfo = { created_at: string; name: string; versioning_enabled: boolean };
 
 /** CreateBucketRequest schema */
 export type CreateBucketRequest = { name: string };
 
 /** ErrorResponse schema */
-export type ErrorResponse = {
-  code: string;
-  details: string | null;
-  error: string;
-};
+export type ErrorResponse = { code: string; details?: string | null; error: string };
 
 /** ListBucketsResponse schema */
-export type ListBucketsResponse = {
-  items: Array<BucketInfo>;
-  next: string | null;
-};
+export type ListBucketsResponse = { items: Array<BucketInfo>; next: string | null };
 
 /** ListObjectsResponse schema */
-export type ListObjectsResponse = {
-  items: Array<ObjectInfo>;
-  next: string | null;
-};
+export type ListObjectsResponse = { items: Array<ObjectInfo>; next: string | null };
 
 /** ListVersionsResponse schema */
-export type ListVersionsResponse = {
-  items: Array<ObjectVersionInfo>;
-  next: string | null;
-};
+export type ListVersionsResponse = { items: Array<ObjectVersionInfo>; next: string | null };
 
 /** ObjectInfo schema */
-export type ObjectInfo = {
-  content_type: string | null;
-  etag: string;
-  key: string;
-  last_modified: string;
-  size: number;
-  storage_class: string;
-};
+export type ObjectInfo = { content_type: string | null; etag: string; key: string; last_modified: string; size: number; storage_class: string };
 
 /** ObjectMetadata schema */
-export type ObjectMetadata = {
-  content_type: string | null;
-  etag: string;
-  key: string;
-  last_modified: string;
-  metadata: Record<string, string>;
-  size: number;
-  storage_class: string;
-  version_id: string | null;
-};
+export type ObjectMetadata = { content_type: string | null; etag: string; key: string; last_modified: string; metadata: Record<string, string>; size: number; storage_class: string; version_id: string | null };
 
 /** ObjectVersionInfo schema */
-export type ObjectVersionInfo = {
-  etag: string;
-  is_latest: boolean;
-  key: string;
-  last_modified: string;
-  size: number;
-  version_id: string;
-};
+export type ObjectVersionInfo = { etag: string; is_latest: boolean; key: string; last_modified: string; size: number; version_id: string };
 
 /** SuccessResponse schema */
 export type SuccessResponse = { success: boolean };
@@ -503,3 +295,4 @@ export type TagsResponse = { tags: Record<string, string> };
 
 /** VersioningStatus schema */
 export type VersioningStatus = { enabled: boolean };
+

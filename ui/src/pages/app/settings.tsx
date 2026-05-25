@@ -1,3 +1,4 @@
+import { resource } from '@askrjs/askr/resources';
 import {
   Badge,
   Card,
@@ -8,14 +9,17 @@ import {
 } from '@askrjs/themes/surfaces';
 import { Block, Stack } from '@askrjs/themes/layouts';
 import { adminApiPath } from '../../adapters';
+import { loadAdminSession } from '../../features/auth/admin-session';
 
 export default function SettingsPage() {
+  const session = resource(({ signal }) => loadAdminSession({ signal }), []);
+
   return (
     <Stack gap="5">
       <section class="page-heading">
         <Stack gap="2">
           <Badge>environment</Badge>
-          <h1>Settings</h1>
+          <h1>Environment and integration</h1>
           <p class="lead">
             The admin API client is configured once in the adapter boundary and
             reused by every real data source.
@@ -36,24 +40,30 @@ export default function SettingsPage() {
             <Stack gap="3">
               <Badge>baseUrl {adminApiPath}</Badge>
               <Badge>credentials same-origin</Badge>
-              <Badge>FetchClient exported from src/adapters/index.ts</Badge>
+              <Badge>generated OpenAPI adapter</Badge>
             </Stack>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Real data policy</CardTitle>
+            <CardTitle>Resolved session</CardTitle>
             <CardDescription>
-              The UI now reflects live admin resources instead of fabricated
-              projection data.
+              Session status is reported by the documented admin auth operation.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Stack gap="3">
-              <Badge>live bucket inventory</Badge>
-              <Badge>real object counts</Badge>
-              <Badge>manual refresh available</Badge>
+              {session.pending ? <Badge>checking session</Badge> : null}
+              {session.value ? (
+                <>
+                  <Badge>mode {session.value.mode}</Badge>
+                  <Badge>
+                    username {session.value.username ?? 'not required'}
+                  </Badge>
+                </>
+              ) : null}
+              {session.error ? <Badge>session unavailable</Badge> : null}
             </Stack>
           </CardContent>
         </Card>

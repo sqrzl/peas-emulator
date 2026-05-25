@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: Peas Emulator Admin API
   version: 1.0.0
+  license:
+    name: Apache License 2.0
+    identifier: Apache-2.0
   summary: Versioned storage administration API for the Peas emulator.
   description: >-
     The admin API provides a RESTful JSON control plane for browsing and
@@ -56,7 +59,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/InvalidCredentials'
         '500':
           $ref: '#/components/responses/InternalError'
   /auth/logout:
@@ -81,6 +84,31 @@ paths:
                 $ref: '#/components/schemas/SuccessResponse'
         '500':
           $ref: '#/components/responses/InternalError'
+  /auth/session:
+    get:
+      security:
+        - AdminSessionCookie: []
+        - AdminBasicAuth: []
+        - {}
+      tags:
+        - Auth
+      operationId: getAdminSession
+      summary: Get admin session status
+      description: >-
+        Resolves whether the current browser request is operating through an
+        authenticated session, Basic auth, or an open local-development admin
+        API configuration.
+      responses:
+        '200':
+          description: Session status returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /buckets:
     get:
       tags:
@@ -88,27 +116,9 @@ paths:
       operationId: listBuckets
       summary: List buckets
       parameters:
-        - name: next
-          in: query
-          required: false
-          description: Opaque next token returned by a previous list request.
-          schema:
-            type: string
-        - name: limit
-          in: query
-          required: false
-          description: Maximum number of items to return in this page.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 50
-        - name: search
-          in: query
-          required: false
-          description: Case-insensitive text search over resource names or keys.
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Next'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
       responses:
         '200':
           description: Buckets returned successfully.
@@ -116,6 +126,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListBucketsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -252,6 +264,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListObjectsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -310,7 +324,7 @@ paths:
         '200':
           description: Object content returned.
           content:
-            application/octet-stream:
+            '*/*':
               schema:
                 type: string
                 format: binary
@@ -328,11 +342,15 @@ paths:
         - Objects
       operationId: putObjectContent
       summary: Create or replace object content
-      description: Stores arbitrary bytes and preserves the request content type when provided.
+      description: >-
+        Stores arbitrary bytes and preserves the request content type when
+        provided; otherwise the stored content type defaults to
+        application/octet-stream. Request headers prefixed with
+        `x-amz-meta-` are stored as object metadata.
       requestBody:
         required: true
         content:
-          application/octet-stream:
+          '*/*':
             schema:
               type: string
               format: binary
@@ -376,6 +394,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListVersionsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -486,6 +506,12 @@ components:
       schema:
         type: string
   responses:
+    InvalidCredentials:
+      description: The provided admin credentials are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Authentication is required or the provided admin credentials are invalid.
       headers:
@@ -536,6 +562,23 @@ components:
         password:
           type: string
           minLength: 1
+    AdminSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - username
+      properties:
+        mode:
+          type: string
+          enum:
+            - open
+            - session
+            - basic
+        username:
+          type:
+            - string
+            - 'null'
     SuccessResponse:
       type: object
       additionalProperties: false
@@ -576,6 +619,7 @@ components:
       additionalProperties: false
       required:
         - items
+        - next
       properties:
         items:
           type: array
@@ -601,6 +645,7 @@ components:
         - size
         - last_modified
         - etag
+        - content_type
         - storage_class
       properties:
         key:
@@ -628,8 +673,10 @@ components:
         - size
         - last_modified
         - etag
+        - content_type
         - storage_class
         - metadata
+        - version_id
       properties:
         key:
           type: string
@@ -661,6 +708,7 @@ components:
       additionalProperties: false
       required:
         - items
+        - next
       properties:
         items:
           type: array
@@ -701,6 +749,7 @@ components:
       additionalProperties: false
       required:
         - items
+        - next
       properties:
         items:
           type: array

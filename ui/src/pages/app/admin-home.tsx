@@ -161,7 +161,7 @@ export default function AdminHomePage() {
                   </thead>
                   <tbody>
                     {snapshot.buckets.map((bucket) => (
-                      <tr>
+                      <tr key={bucket.name}>
                         <td>
                           <strong>{bucket.name}</strong>
                           <span>

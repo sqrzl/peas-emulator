@@ -2,7 +2,18 @@ import { state } from '@askrjs/askr';
 import { resource } from '@askrjs/askr/resources';
 import { Link, navigate } from '@askrjs/askr/router';
 import { AlertCircleIcon, RefreshCwIcon } from '@askrjs/lucide';
-import { Input } from '@askrjs/ui';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogOverlay,
+  AlertDialogPortal,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+  Input,
+} from '@askrjs/ui';
 import { Button, Field, FieldHint } from '@askrjs/themes/controls';
 import { EmptyState } from '@askrjs/themes/feedback';
 import { Block, Inline, Section, Stack } from '@askrjs/themes/layouts';
@@ -18,16 +29,21 @@ import MetricCard from '../../components/shared/metric-card';
 import {
   createBucket,
   deleteBucket,
-  deleteObject,
-  downloadObjectContent,
-  putObjectContent,
-  setBucketVersioning,
-} from '../../adapters/blob-api';
-import {
   loadBucket,
   loadBucketObjects,
   loadBuckets,
+  listBucketPage,
+  setBucketVersioning,
 } from '../../features/buckets/buckets.query';
+import {
+  deleteObject,
+  downloadObjectContent,
+  loadObjectMetadata,
+  loadObjectTags,
+  loadObjectVersions,
+  putObjectContent,
+  putObjectTags,
+} from '../../features/objects/objects.query';
 import { formatRelativeTime } from '../../shared/format';
 
 function currentBucketName(): string {
@@ -38,12 +54,37 @@ function currentBucketName(): string {
   return new URLSearchParams(window.location.search).get('bucket') ?? '';
 }
 
-function bucketHref(bucketName: string): string {
-  return `/app/buckets?bucket=${encodeURIComponent(bucketName)}`;
+function currentObjectKey(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return new URLSearchParams(window.location.search).get('object') ?? '';
 }
 
-function matchesBucketSearch(bucketName: string, query: string): boolean {
-  return bucketName.toLowerCase().includes(query.trim().toLowerCase());
+function bucketHref(bucketName: string, objectKey?: string): string {
+  const query = new URLSearchParams({ bucket: bucketName });
+  if (objectKey) {
+    query.set('object', objectKey);
+  }
+
+  return `/app/buckets?${query.toString()}`;
+}
+
+function parseKeyValueLines(value: string): Record<string, string> {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((items, line) => {
+      const separator = line.indexOf('=');
+      if (separator > 0) {
+        items[line.slice(0, separator).trim()] = line
+          .slice(separator + 1)
+          .trim();
+      }
+      return items;
+    }, {});
 }
 
 function formatBytes(size: number): string {
@@ -60,20 +101,35 @@ function formatBytes(size: number): string {
   return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`;
 }
 
-export default function BucketInventoryPage() {
+export default function BucketsPage() {
   const [bucketSearch, setBucketSearch] = state('');
   const [newBucketName, setNewBucketName] = state('');
   const [objectSearch, setObjectSearch] = state('');
   const [objectKey, setObjectKey] = state('');
   const [selectedFile, setSelectedFile] = state<File | null>(null);
+  const [uploadMetadata, setUploadMetadata] = state('');
+  const [tagsEditor, setTagsEditor] = state('');
+  const [bucketNext, setBucketNext] = state<string | undefined>(undefined);
+  const [objectNext, setObjectNext] = state<string | undefined>(undefined);
+  const [versionNext, setVersionNext] = state<string | undefined>(undefined);
   const [bucketError, setBucketError] = state('');
   const [objectError, setObjectError] = state('');
   const [bucketBusy, setBucketBusy] = state(false);
   const [objectBusy, setObjectBusy] = state(false);
 
   const selectedBucketName = currentBucketName();
+  const selectedObjectKey = currentObjectKey();
 
   const inventory = resource(({ signal }) => loadBuckets({ signal }), []);
+  const bucketResults = resource(
+    ({ signal }) =>
+      listBucketPage({
+        next: bucketNext(),
+        search: bucketSearch().trim() || undefined,
+        signal,
+      }),
+    [bucketSearch(), bucketNext()]
+  );
   const bucketDetail = resource(
     ({ signal }) =>
       selectedBucketName
@@ -86,27 +142,57 @@ export default function BucketInventoryPage() {
       selectedBucketName
         ? loadBucketObjects({
             bucketName: selectedBucketName,
+            next: objectNext(),
             search: objectSearch().trim() || undefined,
             signal,
           })
         : Promise.resolve({ items: [], next: null }),
-    [selectedBucketName, objectSearch()]
+    [selectedBucketName, objectSearch(), objectNext()]
+  );
+  const metadata = resource(
+    ({ signal }) =>
+      selectedBucketName && selectedObjectKey
+        ? loadObjectMetadata({
+            bucketName: selectedBucketName,
+            objectKey: selectedObjectKey,
+            signal,
+          })
+        : Promise.resolve(null),
+    [selectedBucketName, selectedObjectKey]
+  );
+  const tags = resource(
+    ({ signal }) =>
+      selectedBucketName && selectedObjectKey
+        ? loadObjectTags({
+            bucketName: selectedBucketName,
+            objectKey: selectedObjectKey,
+            signal,
+          })
+        : Promise.resolve(null),
+    [selectedBucketName, selectedObjectKey]
+  );
+  const versions = resource(
+    ({ signal }) =>
+      selectedBucketName && selectedObjectKey
+        ? loadObjectVersions({
+            bucketName: selectedBucketName,
+            objectKey: selectedObjectKey,
+            next: versionNext(),
+            signal,
+          })
+        : Promise.resolve(null),
+    [selectedBucketName, selectedObjectKey, versionNext()]
   );
 
   const snapshot = inventory.value;
+  const visibleBuckets = bucketResults.value?.items ?? [];
   const selectedBucket = bucketDetail.value;
   const objectList = objects.value;
   const selectedBucketSummary = snapshot?.buckets.find(
     (bucket) => bucket.name === selectedBucketName
   );
-  const filteredBuckets =
-    snapshot?.buckets.filter((bucket) =>
-      matchesBucketSearch(bucket.name, bucketSearch())
-    ) ?? [];
 
-  async function handleCreateBucket(event: Event) {
-    event.preventDefault();
-
+  async function handleCreateBucket() {
     const name = newBucketName().trim();
     if (!name || bucketBusy()) {
       return;
@@ -120,6 +206,7 @@ export default function BucketInventoryPage() {
       setNewBucketName('');
       navigate(bucketHref(created.name));
       inventory.refresh();
+      bucketResults.refresh();
     } catch (caughtError) {
       setBucketError(
         caughtError instanceof Error
@@ -136,16 +223,13 @@ export default function BucketInventoryPage() {
       return;
     }
 
-    if (!window.confirm(`Delete bucket ${bucketName}?`)) {
-      return;
-    }
-
     setBucketBusy(true);
     setBucketError('');
 
     try {
       await deleteBucket({ bucketName });
       inventory.refresh();
+      bucketResults.refresh();
 
       if (selectedBucketName === bucketName) {
         navigate('/app/buckets');
@@ -187,9 +271,7 @@ export default function BucketInventoryPage() {
     }
   }
 
-  async function handleUploadObject(event: Event) {
-    event.preventDefault();
-
+  async function handleUploadObject() {
     if (!selectedBucketName || objectBusy()) {
       return;
     }
@@ -211,9 +293,11 @@ export default function BucketInventoryPage() {
         objectKey: key,
         content: file,
         contentType: file.type || 'application/octet-stream',
+        metadata: parseKeyValueLines(uploadMetadata()),
       });
       setSelectedFile(null);
       setObjectKey('');
+      setUploadMetadata('');
       objects.refresh();
       inventory.refresh();
     } catch (caughtError) {
@@ -266,10 +350,6 @@ export default function BucketInventoryPage() {
       return;
     }
 
-    if (!window.confirm(`Delete object ${objectKeyValue}?`)) {
-      return;
-    }
-
     setObjectBusy(true);
     setObjectError('');
 
@@ -280,11 +360,40 @@ export default function BucketInventoryPage() {
       });
       objects.refresh();
       inventory.refresh();
+      if (selectedObjectKey === objectKeyValue) {
+        navigate(bucketHref(selectedBucketName));
+      }
     } catch (caughtError) {
       setObjectError(
         caughtError instanceof Error
           ? caughtError.message
           : 'The admin API could not delete the object.'
+      );
+    } finally {
+      setObjectBusy(false);
+    }
+  }
+
+  async function handleSaveTags() {
+    if (!selectedBucketName || !selectedObjectKey || objectBusy()) {
+      return;
+    }
+
+    setObjectBusy(true);
+    setObjectError('');
+    try {
+      await putObjectTags({
+        bucketName: selectedBucketName,
+        objectKey: selectedObjectKey,
+        tags: parseKeyValueLines(tagsEditor()),
+      });
+      tags.refresh();
+      setTagsEditor('');
+    } catch (caughtError) {
+      setObjectError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'The admin API could not update object tags.'
       );
     } finally {
       setObjectBusy(false);
@@ -299,19 +408,6 @@ export default function BucketInventoryPage() {
           title="Buckets could not load"
           description="The blob workbench reads the live admin API. Retry the owning resource instead of hiding the error in a toast."
           actions={<Button onPress={() => inventory.refresh()}>Retry</Button>}
-        />
-      </Section>
-    );
-  }
-
-  if (snapshot && snapshot.totalBuckets === 0) {
-    return (
-      <Section>
-        <EmptyState
-          icon={<AlertCircleIcon size={24} aria-hidden="true" />}
-          title="No buckets yet"
-          description="Create a bucket through the admin API and the workbench will populate with live storage data."
-          actions={<Button onPress={() => inventory.refresh()}>Refresh</Button>}
         />
       </Section>
     );
@@ -381,7 +477,12 @@ export default function BucketInventoryPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleCreateBucket}>
+            <form
+              onSubmit={(event: Event) => {
+                event.preventDefault();
+                void handleCreateBucket();
+              }}
+            >
               <Stack gap="3">
                 <Field>
                   <label for="bucket-name">Bucket name</label>
@@ -405,7 +506,11 @@ export default function BucketInventoryPage() {
                     {bucketError()}
                   </p>
                 ) : null}
-                <Button type="submit" disabled={bucketBusy()}>
+                <Button
+                  type="submit"
+                  onPress={() => void handleCreateBucket()}
+                  disabled={bucketBusy()}
+                >
                   {bucketBusy() ? 'Creating...' : 'Create bucket'}
                 </Button>
               </Stack>
@@ -427,11 +532,12 @@ export default function BucketInventoryPage() {
                 <Input
                   id="bucket-search"
                   value={bucketSearch()}
-                  onInput={(event: Event) =>
+                  onInput={(event: Event) => {
+                    setBucketNext(undefined);
                     setBucketSearch(
                       (event.currentTarget as HTMLInputElement).value
-                    )
-                  }
+                    );
+                  }}
                   disabled={bucketBusy()}
                   placeholder="Filter by bucket name"
                 />
@@ -449,8 +555,11 @@ export default function BucketInventoryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBuckets.map((bucket) => {
+                    {visibleBuckets.map((bucket) => {
                       const isSelected = bucket.name === selectedBucketName;
+                      const totals = snapshot?.buckets.find(
+                        (item) => item.name === bucket.name
+                      );
 
                       return (
                         <tr
@@ -463,7 +572,7 @@ export default function BucketInventoryPage() {
                               {isSelected ? 'selected' : 'click open'}
                             </span>
                           </td>
-                          <td>{bucket.objectCount}</td>
+                          <td>{totals?.objectCount ?? '-'}</td>
                           <td>
                             <Badge>
                               {bucket.versioningEnabled
@@ -482,21 +591,76 @@ export default function BucketInventoryPage() {
                               <Button variant="secondary" asChild>
                                 <Link href={bucketHref(bucket.name)}>Open</Link>
                               </Button>
-                              <Button
-                                variant="secondary"
-                                onPress={() => handleDeleteBucket(bucket.name)}
-                                disabled={bucketBusy()}
-                              >
-                                Delete
-                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="secondary"
+                                    disabled={bucketBusy()}
+                                  >
+                                    Delete
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogPortal>
+                                  <AlertDialogOverlay />
+                                  <AlertDialogContent>
+                                    <AlertDialogTitle>
+                                      Delete bucket {bucket.name}?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Deletion succeeds only after all contained
+                                      objects are removed.
+                                    </AlertDialogDescription>
+                                    <Inline gap="2" align="center">
+                                      <AlertDialogAction asChild>
+                                        <Button
+                                          onPress={() =>
+                                            handleDeleteBucket(bucket.name)
+                                          }
+                                          disabled={bucketBusy()}
+                                        >
+                                          Confirm delete
+                                        </Button>
+                                      </AlertDialogAction>
+                                      <AlertDialogCancel asChild>
+                                        <Button variant="secondary">
+                                          Cancel
+                                        </Button>
+                                      </AlertDialogCancel>
+                                    </Inline>
+                                  </AlertDialogContent>
+                                </AlertDialogPortal>
+                              </AlertDialog>
                             </Inline>
                           </td>
                         </tr>
                       );
                     })}
+                    {!bucketResults.pending && visibleBuckets.length === 0 ? (
+                      <tr>
+                        <td colSpan={5}>No buckets match this search.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
+              <Inline gap="2" align="center" justify="end">
+                <Button
+                  variant="secondary"
+                  onPress={() => setBucketNext(undefined)}
+                  disabled={!bucketNext() || bucketBusy()}
+                >
+                  First page
+                </Button>
+                <Button
+                  variant="secondary"
+                  onPress={() =>
+                    setBucketNext(bucketResults.value?.next ?? undefined)
+                  }
+                  disabled={!bucketResults.value?.next || bucketBusy()}
+                >
+                  Next page
+                </Button>
+              </Inline>
             </Stack>
           </CardContent>
         </Card>
@@ -551,15 +715,40 @@ export default function BucketInventoryPage() {
                     <strong>{selectedBucketSummary?.objectCount ?? 0}</strong>
                   </div>
 
-                  <Button
-                    variant="secondary"
-                    onPress={() =>
-                      handleDeleteBucket(selectedBucket.bucket.name)
-                    }
-                    disabled={bucketBusy()}
-                  >
-                    Delete bucket
-                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="secondary" disabled={bucketBusy()}>
+                        Delete bucket
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogPortal>
+                      <AlertDialogOverlay />
+                      <AlertDialogContent>
+                        <AlertDialogTitle>
+                          Delete bucket {selectedBucket.bucket.name}?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Deletion succeeds only after all contained objects are
+                          removed.
+                        </AlertDialogDescription>
+                        <Inline gap="2" align="center">
+                          <AlertDialogAction asChild>
+                            <Button
+                              onPress={() =>
+                                handleDeleteBucket(selectedBucket.bucket.name)
+                              }
+                              disabled={bucketBusy()}
+                            >
+                              Confirm delete
+                            </Button>
+                          </AlertDialogAction>
+                          <AlertDialogCancel asChild>
+                            <Button variant="secondary">Cancel</Button>
+                          </AlertDialogCancel>
+                        </Inline>
+                      </AlertDialogContent>
+                    </AlertDialogPortal>
+                  </AlertDialog>
                 </Stack>
               ) : (
                 <EmptyState
@@ -589,7 +778,12 @@ export default function BucketInventoryPage() {
           <CardContent>
             {selectedBucketName ? (
               <Stack gap="4">
-                <form onSubmit={handleUploadObject}>
+                <form
+                  onSubmit={(event: Event) => {
+                    event.preventDefault();
+                    void handleUploadObject();
+                  }}
+                >
                   <Stack gap="3">
                     <Field>
                       <label for="object-key">Object key</label>
@@ -626,12 +820,35 @@ export default function BucketInventoryPage() {
                         Uploading replaces the content stored at the object key.
                       </FieldHint>
                     </Field>
+                    <Field>
+                      <label for="object-metadata">Custom metadata</label>
+                      <textarea
+                        id="object-metadata"
+                        value={uploadMetadata()}
+                        onInput={(event: Event) =>
+                          setUploadMetadata(
+                            (event.currentTarget as HTMLTextAreaElement).value
+                          )
+                        }
+                        disabled={objectBusy()}
+                        placeholder={'owner=alice\npurpose=docs'}
+                        rows={3}
+                      />
+                      <FieldHint>
+                        One key=value pair per line is sent as x-amz-meta upload
+                        headers.
+                      </FieldHint>
+                    </Field>
                     {objectError() ? (
                       <p role="alert" class="form-error">
                         {objectError()}
                       </p>
                     ) : null}
-                    <Button type="submit" disabled={objectBusy()}>
+                    <Button
+                      type="submit"
+                      onPress={() => void handleUploadObject()}
+                      disabled={objectBusy()}
+                    >
                       {objectBusy() ? 'Uploading...' : 'Upload object'}
                     </Button>
                   </Stack>
@@ -642,11 +859,12 @@ export default function BucketInventoryPage() {
                   <Input
                     id="object-search"
                     value={objectSearch()}
-                    onInput={(event: Event) =>
+                    onInput={(event: Event) => {
+                      setObjectNext(undefined);
                       setObjectSearch(
                         (event.currentTarget as HTMLInputElement).value
-                      )
-                    }
+                      );
+                    }}
                     disabled={objectBusy()}
                     placeholder="Filter by object key"
                   />
@@ -682,6 +900,16 @@ export default function BucketInventoryPage() {
                               justify="end"
                               wrap="wrap"
                             >
+                              <Button variant="secondary" asChild>
+                                <Link
+                                  href={bucketHref(
+                                    selectedBucketName,
+                                    object.key
+                                  )}
+                                >
+                                  Inspect
+                                </Link>
+                              </Button>
                               <Button
                                 variant="secondary"
                                 onPress={() => handleDownloadObject(object.key)}
@@ -689,13 +917,44 @@ export default function BucketInventoryPage() {
                               >
                                 Download
                               </Button>
-                              <Button
-                                variant="secondary"
-                                onPress={() => handleDeleteObject(object.key)}
-                                disabled={objectBusy()}
-                              >
-                                Delete
-                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="secondary"
+                                    disabled={objectBusy()}
+                                  >
+                                    Delete
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogPortal>
+                                  <AlertDialogOverlay />
+                                  <AlertDialogContent>
+                                    <AlertDialogTitle>
+                                      Delete object {object.key}?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This removes the latest object content.
+                                    </AlertDialogDescription>
+                                    <Inline gap="2" align="center">
+                                      <AlertDialogAction asChild>
+                                        <Button
+                                          onPress={() =>
+                                            handleDeleteObject(object.key)
+                                          }
+                                          disabled={objectBusy()}
+                                        >
+                                          Confirm delete
+                                        </Button>
+                                      </AlertDialogAction>
+                                      <AlertDialogCancel asChild>
+                                        <Button variant="secondary">
+                                          Cancel
+                                        </Button>
+                                      </AlertDialogCancel>
+                                    </Inline>
+                                  </AlertDialogContent>
+                                </AlertDialogPortal>
+                              </AlertDialog>
                             </Inline>
                           </td>
                         </tr>
@@ -705,9 +964,22 @@ export default function BucketInventoryPage() {
                 </div>
 
                 {objectList?.next ? (
-                  <Badge>
-                    More objects are available in the next page token.
-                  </Badge>
+                  <Button
+                    variant="secondary"
+                    onPress={() => setObjectNext(objectList.next ?? undefined)}
+                    disabled={objectBusy()}
+                  >
+                    Next object page
+                  </Button>
+                ) : null}
+                {objectNext() ? (
+                  <Button
+                    variant="secondary"
+                    onPress={() => setObjectNext(undefined)}
+                    disabled={objectBusy()}
+                  >
+                    First object page
+                  </Button>
                 ) : null}
               </Stack>
             ) : (
@@ -720,6 +992,164 @@ export default function BucketInventoryPage() {
           </CardContent>
         </Card>
       </Block>
+
+      {selectedBucketName && selectedObjectKey ? (
+        <Block size="lg" gap="4" align="stretch" class="operations-grid">
+          <Card>
+            <CardHeader>
+              <CardTitle>Object metadata</CardTitle>
+              <CardDescription>{selectedObjectKey}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {metadata.value ? (
+                <Stack gap="3">
+                  <Badge>
+                    type{' '}
+                    {metadata.value.content_type ?? 'application/octet-stream'}
+                  </Badge>
+                  <Badge>size {formatBytes(metadata.value.size)}</Badge>
+                  <Badge>etag {metadata.value.etag}</Badge>
+                  <Badge>
+                    version {metadata.value.version_id ?? 'unversioned'}
+                  </Badge>
+                  <h3>Custom metadata</h3>
+                  {Object.entries(metadata.value.metadata).length ? (
+                    Object.entries(metadata.value.metadata).map(
+                      ([name, value]) => (
+                        <div class="hero-row" key={name}>
+                          <span>{name}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      )
+                    )
+                  ) : (
+                    <p class="muted">No custom metadata recorded.</p>
+                  )}
+                </Stack>
+              ) : metadata.pending ? (
+                <p class="muted">Loading object metadata...</p>
+              ) : (
+                <p role="alert" class="form-error">
+                  Object metadata could not be loaded.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Object tags</CardTitle>
+              <CardDescription>
+                Replace the current tag set using key=value lines.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Stack gap="4">
+                {tags.value && Object.entries(tags.value.tags).length ? (
+                  Object.entries(tags.value.tags).map(([name, value]) => (
+                    <div class="hero-row" key={name}>
+                      <span>{name}</span>
+                      <strong>{value}</strong>
+                    </div>
+                  ))
+                ) : (
+                  <p class="muted">No tags recorded.</p>
+                )}
+                <form
+                  onSubmit={(event: Event) => {
+                    event.preventDefault();
+                    void handleSaveTags();
+                  }}
+                >
+                  <Stack gap="3">
+                    <Field>
+                      <label for="object-tags">Replacement tags</label>
+                      <textarea
+                        id="object-tags"
+                        value={tagsEditor()}
+                        onInput={(event: Event) =>
+                          setTagsEditor(
+                            (event.currentTarget as HTMLTextAreaElement).value
+                          )
+                        }
+                        rows={4}
+                        placeholder={'env=dev\nowner=alice'}
+                        disabled={objectBusy()}
+                      />
+                    </Field>
+                    <Button
+                      type="submit"
+                      onPress={() => void handleSaveTags()}
+                      disabled={objectBusy()}
+                    >
+                      Save tags
+                    </Button>
+                  </Stack>
+                </form>
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Version history</CardTitle>
+              <CardDescription>
+                Paged versions returned for the selected object.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Stack gap="3">
+                <div class="run-table-wrap">
+                  <table class="run-table">
+                    <thead>
+                      <tr>
+                        <th>Version</th>
+                        <th>Latest</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {versions.value?.items.map((version) => (
+                        <tr key={version.version_id}>
+                          <td>{version.version_id}</td>
+                          <td>{version.is_latest ? 'yes' : 'no'}</td>
+                          <td>{formatBytes(version.size)}</td>
+                          <td>{formatRelativeTime(version.last_modified)}</td>
+                        </tr>
+                      ))}
+                      {!versions.pending &&
+                      (versions.value?.items.length ?? 0) === 0 ? (
+                        <tr>
+                          <td colSpan={4}>No version history available.</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+                <Inline gap="2" align="center">
+                  <Button
+                    variant="secondary"
+                    onPress={() => setVersionNext(undefined)}
+                    disabled={!versionNext()}
+                  >
+                    First page
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onPress={() =>
+                      setVersionNext(versions.value?.next ?? undefined)
+                    }
+                    disabled={!versions.value?.next}
+                  >
+                    Next page
+                  </Button>
+                </Inline>
+              </Stack>
+            </CardContent>
+          </Card>
+        </Block>
+      ) : null}
     </Stack>
   );
 }

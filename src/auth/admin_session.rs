@@ -3,13 +3,13 @@ use chrono::Utc;
 use hyper::{Body, Request};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand::rngs::OsRng;
-use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const ADMIN_LOGIN_PATH: &str = "/admin/v1/auth/login";
 pub const ADMIN_LOGOUT_PATH: &str = "/admin/v1/auth/logout";
+pub const ADMIN_SESSION_PATH: &str = "/admin/v1/auth/session";
 pub const ADMIN_SESSION_COOKIE_NAME: &str = "peas_admin_session";
 
 const ADMIN_ISSUER: &str = "peas-emulator";
@@ -23,8 +23,7 @@ pub struct AdminLoginRequest {
 
 #[derive(Debug, Clone)]
 pub struct AdminSessionManager {
-    private_key_pem: String,
-    public_key_pem: String,
+    signing_secret: [u8; 32],
     session_ttl: Duration,
 }
 
@@ -38,25 +37,11 @@ struct AdminSessionClaims {
 
 impl AdminSessionManager {
     pub fn new() -> Result<Self> {
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).map_err(|err| {
-            Error::InternalError(format!("failed to generate admin signing key: {err}"))
-        })?;
-        let public_key = RsaPublicKey::from(&private_key);
-
-        let private_key_pem = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|err| {
-                Error::InternalError(format!("failed to encode admin signing key: {err}"))
-            })?
-            .to_string();
-        let public_key_pem = public_key.to_public_key_pem(LineEnding::LF).map_err(|err| {
-            Error::InternalError(format!("failed to encode admin verification key: {err}"))
-        })?;
+        let mut signing_secret = [0_u8; 32];
+        OsRng.fill_bytes(&mut signing_secret);
 
         Ok(Self {
-            private_key_pem,
-            public_key_pem,
+            signing_secret,
             session_ttl: ADMIN_SESSION_TTL,
         })
     }
@@ -79,11 +64,14 @@ impl AdminSessionManager {
     }
 
     pub fn has_valid_session(&self, req: &Request<Body>) -> bool {
+        self.subject_from_request(req).is_some()
+    }
+
+    pub fn subject_from_request(&self, req: &Request<Body>) -> Option<String> {
         req.headers()
             .get("cookie")
             .and_then(|header| header.to_str().ok())
             .and_then(|cookie_header| self.subject_from_cookie_header(cookie_header))
-            .is_some()
     }
 
     pub fn subject_from_cookie_header(&self, cookie_header: &str) -> Option<String> {
@@ -100,18 +88,16 @@ impl AdminSessionManager {
             exp: now + self.session_ttl.as_secs() as i64,
         };
 
-        let encoding_key = EncodingKey::from_rsa_pem(self.private_key_pem.as_bytes()).map_err(
-            |err| Error::InternalError(format!("failed to load admin signing key: {err}")),
-        )?;
+        let encoding_key = EncodingKey::from_secret(&self.signing_secret);
 
-        encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).map_err(|err| {
+        encode(&Header::new(Algorithm::HS256), &claims, &encoding_key).map_err(|err| {
             Error::InternalError(format!("failed to sign admin session token: {err}"))
         })
     }
 
     fn subject_from_token(&self, token: &str) -> Option<String> {
-        let validation = Validation::new(Algorithm::RS256);
-        let decoding_key = DecodingKey::from_rsa_pem(self.public_key_pem.as_bytes()).ok()?;
+        let validation = Validation::new(Algorithm::HS256);
+        let decoding_key = DecodingKey::from_secret(&self.signing_secret);
         let claims = decode::<AdminSessionClaims>(token, &decoding_key, &validation)
             .ok()?
             .claims;

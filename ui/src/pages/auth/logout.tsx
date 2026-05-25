@@ -4,7 +4,7 @@ import { LogOutIcon } from '@askrjs/lucide';
 import { Button } from '@askrjs/themes/controls';
 import { Container, Section, Stack } from '@askrjs/themes/layouts';
 import { EmptyState } from '@askrjs/themes/feedback';
-import { logoutAdminSession } from '../../shared/admin-auth';
+import { logoutAdminSession } from '../../features/auth/admin-session';
 
 export default function LogoutPage() {
   const logout = resource(({ signal }) => logoutAdminSession({ signal }), []);

@@ -6,8 +6,7 @@ import {
   SettingsIcon,
   SunIcon,
 } from '@askrjs/lucide';
-import { Link, navigate } from '@askrjs/askr/router';
-import { Button } from '@askrjs/themes/controls';
+import { Link } from '@askrjs/askr/router';
 import { Container, Inline, Stack } from '@askrjs/themes/layouts';
 import { Header, Shell, ShellMain, ShellNav } from '@askrjs/themes/shells';
 import { NavBrand, NavGroup, NavLink, Sidebar } from '@askrjs/themes/navs';
@@ -38,7 +37,7 @@ export default function AppLayout({ children }: { children?: unknown }) {
           </NavBrand>
           <NavGroup label="Workspace">
             {appNavItems.map((item) => (
-              <NavLink href={item.href} match={item.match}>
+              <NavLink key={item.href} href={item.href} match={item.match}>
                 <Inline as="span" gap="2" align="center">
                   {icons[item.icon]}
                   <span>{item.label}</span>
@@ -73,9 +72,6 @@ export default function AppLayout({ children }: { children?: unknown }) {
                   lightIcon={<SunIcon size={18} aria-hidden="true" />}
                   darkIcon={<MoonIcon size={18} aria-hidden="true" />}
                 />
-                <Button variant="secondary" onPress={() => navigate('/auth')}>
-                  Login
-                </Button>
               </Inline>
             </Inline>
           </Container>

@@ -35,7 +35,6 @@ mime_guess = "2"
 urlencoding = "2"
 base64 = "0.22"
 jsonwebtoken = "9"
-rsa = { version = "0.9", features = ["pem"] }
 
 [dev-dependencies]
 

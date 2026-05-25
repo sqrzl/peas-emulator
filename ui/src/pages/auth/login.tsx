@@ -11,7 +11,18 @@ import {
   CardHeader,
   CardTitle,
 } from '@askrjs/themes/surfaces';
-import { loginAdminSession } from '../../shared/admin-auth';
+import { loginAdminSession } from '../../features/auth/admin-session';
+
+function returnPath(): string {
+  if (typeof window === 'undefined') {
+    return '/app';
+  }
+
+  const candidate = new URLSearchParams(window.location.search).get('next');
+  return candidate?.startsWith('/') && !candidate.startsWith('//')
+    ? candidate
+    : '/app';
+}
 
 export default function LoginPage() {
   const [username, setUsername] = state('admin');
@@ -19,9 +30,7 @@ export default function LoginPage() {
   const [error, setError] = state('');
   const [pending, setPending] = state(false);
 
-  async function handleSubmit(event: Event) {
-    event.preventDefault();
-
+  async function handleSubmit() {
     if (pending()) {
       return;
     }
@@ -36,7 +45,7 @@ export default function LoginPage() {
 
     try {
       await loginAdminSession(credentials);
-      navigate('/app');
+      navigate(returnPath());
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -63,7 +72,12 @@ export default function LoginPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit}>
+            <form
+              onSubmit={(event: Event) => {
+                event.preventDefault();
+                void handleSubmit();
+              }}
+            >
               <Stack gap="4">
                 <Field>
                   <label for="username">Username</label>
@@ -103,7 +117,11 @@ export default function LoginPage() {
                     {error()}
                   </p>
                 ) : null}
-                <Button type="submit" disabled={pending()}>
+                <Button
+                  type="submit"
+                  onPress={() => void handleSubmit()}
+                  disabled={pending()}
+                >
                   {pending()
                     ? 'Checking credentials...'
                     : 'Continue to console'}

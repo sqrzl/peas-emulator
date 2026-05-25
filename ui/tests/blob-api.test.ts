@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vite-plus/test';
 
 import {
   createBucket,
+  loadBuckets,
+  setBucketVersioning,
+} from '../src/features/buckets/buckets.query';
+import {
   deleteObject,
   downloadObjectContent,
-  loadBucketOverview,
+  loadObjectMetadata,
+  loadObjectTags,
+  loadObjectVersions,
   putObjectContent,
-  setBucketVersioning,
-} from '../src/adapters/blob-api';
+  putObjectTags,
+} from '../src/features/objects/objects.query';
 
 const originalFetch = globalThis.fetch;
 
@@ -65,8 +71,9 @@ async function readBodyText(
 function installBlobApiFetchMock(): void {
   const storedObjects = new Map<
     string,
-    { body: BodyInit; contentType: string }
+    { body: string; contentType: string }
   >();
+  let storedTags: Record<string, string> = {};
 
   const mockFetch: typeof fetch = async (
     input: RequestInfo | URL,
@@ -91,7 +98,7 @@ function installBlobApiFetchMock(): void {
           : input.headers)
     );
 
-    if (url.pathname === '/buckets' && method === 'GET') {
+    if (url.pathname === '/admin/v1/buckets' && method === 'GET') {
       return jsonResponse({
         items: [
           {
@@ -109,7 +116,7 @@ function installBlobApiFetchMock(): void {
       });
     }
 
-    if (url.pathname === '/buckets' && method === 'POST') {
+    if (url.pathname === '/admin/v1/buckets' && method === 'POST') {
       const body = JSON.parse(await readBodyText(init?.body)) as {
         name: string;
       };
@@ -123,14 +130,20 @@ function installBlobApiFetchMock(): void {
       );
     }
 
-    if (url.pathname === '/buckets/alpha/versioning' && method === 'PUT') {
+    if (
+      url.pathname === '/admin/v1/buckets/alpha/versioning' &&
+      method === 'PUT'
+    ) {
       const body = JSON.parse(await readBodyText(init?.body)) as {
         enabled: boolean;
       };
       return jsonResponse({ enabled: body.enabled });
     }
 
-    if (url.pathname === '/buckets/alpha/objects' && method === 'GET') {
+    if (
+      url.pathname === '/admin/v1/buckets/alpha/objects' &&
+      method === 'GET'
+    ) {
       return jsonResponse({
         items: [
           {
@@ -146,7 +159,7 @@ function installBlobApiFetchMock(): void {
       });
     }
 
-    if (url.pathname === '/buckets/beta/objects' && method === 'GET') {
+    if (url.pathname === '/admin/v1/buckets/beta/objects' && method === 'GET') {
       return jsonResponse({
         items: [
           {
@@ -171,16 +184,17 @@ function installBlobApiFetchMock(): void {
     }
 
     if (
-      url.pathname === '/buckets/alpha/objects/docs%2Freadme.txt/content' &&
+      url.pathname ===
+        '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt/content' &&
       method === 'PUT'
     ) {
       const body = init?.body ?? '';
+      const textBody = await readBodyText(body);
       storedObjects.set('docs/readme.txt', {
-        body,
+        body: textBody,
         contentType: headers.get('content-type') ?? 'application/octet-stream',
       });
 
-      const textBody = await readBodyText(body);
       return jsonResponse(
         {
           key: 'docs/readme.txt',
@@ -188,7 +202,9 @@ function installBlobApiFetchMock(): void {
           etag: 'etag-uploaded',
           last_modified: '2026-05-25T11:00:00.000Z',
           content_type: headers.get('content-type'),
-          metadata: {},
+          metadata: {
+            owner: headers.get('x-amz-meta-owner') ?? '',
+          },
           storage_class: 'standard',
           version_id: null,
         },
@@ -197,22 +213,79 @@ function installBlobApiFetchMock(): void {
     }
 
     if (
-      url.pathname === '/buckets/alpha/objects/docs%2Freadme.txt/content' &&
+      url.pathname ===
+        '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt/content' &&
       method === 'GET'
     ) {
       const stored = storedObjects.get('docs/readme.txt');
       return binaryResponse(
-        stored?.body ?? new Blob([''], { type: 'application/octet-stream' }),
+        stored?.body ?? '',
         stored?.contentType ?? 'application/octet-stream'
       );
     }
 
     if (
-      url.pathname === '/buckets/alpha/objects/docs%2Freadme.txt' &&
+      url.pathname === '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt' &&
       method === 'DELETE'
     ) {
       storedObjects.delete('docs/readme.txt');
       return new Response(null, { status: 204 });
+    }
+
+    if (
+      url.pathname === '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt' &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        key: 'docs/readme.txt',
+        size: 5,
+        etag: 'etag-uploaded',
+        last_modified: '2026-05-25T11:00:00.000Z',
+        content_type: 'text/plain',
+        metadata: { owner: 'alice' },
+        storage_class: 'standard',
+        version_id: 'v1',
+      });
+    }
+
+    if (
+      url.pathname ===
+        '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt/tags' &&
+      method === 'PUT'
+    ) {
+      const body = JSON.parse(await readBodyText(init?.body)) as {
+        tags: Record<string, string>;
+      };
+      storedTags = body.tags;
+      return jsonResponse({ tags: storedTags });
+    }
+
+    if (
+      url.pathname ===
+        '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt/tags' &&
+      method === 'GET'
+    ) {
+      return jsonResponse({ tags: storedTags });
+    }
+
+    if (
+      url.pathname ===
+        '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt/versions' &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        items: [
+          {
+            key: 'docs/readme.txt',
+            version_id: 'v1',
+            is_latest: true,
+            size: 5,
+            etag: 'etag-uploaded',
+            last_modified: '2026-05-25T11:00:00.000Z',
+          },
+        ],
+        next: null,
+      });
     }
 
     throw new Error(
@@ -228,8 +301,8 @@ function restoreFetch(): void {
     originalFetch;
 }
 
-describe('blob adapter', () => {
-  it('loads bucket overview from the shared fetch client', async () => {
+describe('generated admin feature workflows', () => {
+  it('loads bucket overview through generated operations', async () => {
     installBlobApiFetchMock();
 
     try {
@@ -238,10 +311,12 @@ describe('blob adapter', () => {
         bucketName: 'alpha',
         enabled: true,
       });
-      const snapshot = await loadBucketOverview({});
+      const snapshot = await loadBuckets({
+        signal: new AbortController().signal,
+      });
 
       expect(created.name).toBe('gamma');
-      expect(created.created_at).toBe('2026-05-25T10:30:00.000Z');
+      expect(created.createdAt).toBe('2026-05-25T10:30:00.000Z');
       expect(versioning.enabled).toBe(true);
       expect(snapshot.totalBuckets).toBe(2);
       expect(snapshot.versioningEnabledBuckets).toBe(1);
@@ -262,6 +337,7 @@ describe('blob adapter', () => {
         objectKey: 'docs/readme.txt',
         content: new Blob(['hello'], { type: 'text/plain' }),
         contentType: 'text/plain',
+        metadata: { owner: 'alice' },
       });
 
       const download = await downloadObjectContent({
@@ -273,10 +349,45 @@ describe('blob adapter', () => {
 
       expect(upload.key).toBe('docs/readme.txt');
       expect(upload.content_type).toBe('text/plain');
+      expect(upload.metadata.owner).toBe('alice');
       expect(upload.size).toBe(5);
       expect(download.fileName).toBe('readme.txt');
       expect(download.contentType).toBe('text/plain');
       expect(await download.blob.text()).toBe('hello');
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it('loads metadata and edits tags and versions through generated operations', async () => {
+    installBlobApiFetchMock();
+    const signal = new AbortController().signal;
+
+    try {
+      const metadata = await loadObjectMetadata({
+        bucketName: 'alpha',
+        objectKey: 'docs/readme.txt',
+        signal,
+      });
+      await putObjectTags({
+        bucketName: 'alpha',
+        objectKey: 'docs/readme.txt',
+        tags: { env: 'test' },
+      });
+      const tags = await loadObjectTags({
+        bucketName: 'alpha',
+        objectKey: 'docs/readme.txt',
+        signal,
+      });
+      const versions = await loadObjectVersions({
+        bucketName: 'alpha',
+        objectKey: 'docs/readme.txt',
+        signal,
+      });
+
+      expect(metadata.metadata.owner).toBe('alice');
+      expect(tags.tags.env).toBe('test');
+      expect(versions.items[0].version_id).toBe('v1');
     } finally {
       restoreFetch();
     }

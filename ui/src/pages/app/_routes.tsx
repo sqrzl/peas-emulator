@@ -1,10 +1,10 @@
 import { route } from '@askrjs/askr/router';
-import BucketInventoryPage from './agent-runs';
+import BucketsPage from './buckets';
 import AdminHomePage from './admin-home';
 import SettingsPage from './settings';
 
 export function registerAppRoutes(): void {
   route('/app', AdminHomePage);
-  route('/app/buckets', BucketInventoryPage);
+  route('/app/buckets', BucketsPage);
   route('/app/settings', SettingsPage);
 }

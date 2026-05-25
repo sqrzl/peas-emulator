@@ -1,5 +1,5 @@
 # Build UI
-FROM node:latest as ui-builder
+FROM node:latest AS frontend
 
 WORKDIR /ui
 
@@ -7,7 +7,7 @@ WORKDIR /ui
 COPY ui/package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy UI source
 COPY ui/ ./
@@ -16,7 +16,7 @@ COPY ui/ ./
 RUN npm run build
 
 # Build Rust backend
-FROM rust:latest as rust-builder
+FROM rust:latest AS backend
 
 WORKDIR /app
 
@@ -38,18 +38,10 @@ FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
 
 # Copy the Rust binary from builder
-COPY --from=rust-builder /app/target/release/peas-emulator /app/peas-emulator
+COPY --from=backend /app/target/release/peas-emulator /app/peas-emulator
 
 # Copy the built UI from ui-builder
-COPY --from=ui-builder /ui/dist /app/static
-
-# Copy blobs directory from rust-builder (created with shell available)
-COPY --from=rust-builder /tmp/blobs /app/blobs
-
-# Environment variables
-ENV BLOBS_PATH=/app/blobs
-ENV ACCESS_KEY_ID=peas
-ENV SECRET_ACCESS_KEY=peas
+COPY --from=frontend /ui/dist /app/static
 
 # Expose both S3 API and UI ports
 EXPOSE 9000 9001

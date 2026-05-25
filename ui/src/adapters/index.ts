@@ -1,14 +1,17 @@
 import { FetchClient } from '@fgrzl/fetch';
+import { createAdapter } from './api.g';
 
 export const adminApiPath = '/admin/v1';
 export const adminApiBaseUrl = new URL(
-  adminApiPath,
+  '/',
   globalThis.location?.origin ?? 'http://localhost'
 ).toString();
 
-export const api = new FetchClient({
+export const apiClient = new FetchClient({
   baseUrl: adminApiBaseUrl,
   credentials: 'same-origin',
 });
 
-export default api;
+export const adminApi = createAdapter(apiClient);
+
+export default adminApi;

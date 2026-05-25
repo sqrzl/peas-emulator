@@ -43,7 +43,9 @@ cargo run
 ```
 
 If you set `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY`, the storage front doors enforce auth.
-The admin API at `/admin/v1` will also require HTTP Basic auth using those same values.
+The admin API at `/admin/v1` will also require auth using those same values. The
+browser UI exchanges them for an HttpOnly admin session cookie; API clients may
+continue to use HTTP Basic auth.
 
 If you want to keep the admin API open for local development while still enforcing provider
 auth, set `ADMIN_AUTH_DISABLED=true`.
@@ -53,10 +55,30 @@ auth, set `ADMIN_AUTH_DISABLED=true`.
 The versioned OpenAPI 3.1 contract for the admin storage API lives at
 `public/openapi.yml`.
 
-The initial contract targets the `/admin/v1` surface for local storage
-administration workflows such as bucket browsing, object inspection, content
-upload and download, version listing, and tag management. It is intentionally
-separate from the protocol-compatibility front doors.
+The contract targets the `/admin/v1` surface for session inspection, bucket
+lifecycle and versioning, object browsing, binary upload/download, metadata,
+tags, and version listing. It is intentionally separate from the
+protocol-compatibility front doors.
+
+## Admin UI
+
+The Askr-based UI lives in `ui/`. It uses `@fgrzl/fetch` with the client
+generated from `public/openapi.yml`; `ui/src/adapters/api.g.ts` is the only
+endpoint transport surface.
+
+```bash
+cd ui
+npm install
+npm run gen
+npm run type-check
+npm test
+npm run lint
+npm run build
+```
+
+Node 24 or newer is required. The console supports login/logout and open-auth
+mode, dashboard totals and charts, bucket CRUD and versioning, nested object
+keys, raw content transfer with upload metadata, tags, and object versions.
 
 ## Docker
 

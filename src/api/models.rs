@@ -26,6 +26,12 @@ pub struct SuccessResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AdminSessionResponse {
+    pub mode: String,
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VersioningStatus {
     pub enabled: bool,
 }

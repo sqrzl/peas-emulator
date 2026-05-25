@@ -67,6 +67,11 @@ async fn handle_ui_request(
         return Ok(resp);
     }
 
+    if path == crate::auth::admin_session::ADMIN_SESSION_PATH {
+        let resp = handle_admin_session(config, admin_session, req);
+        return Ok(resp);
+    }
+
     if path == "/admin/v1" || path.starts_with("/admin/v1/") {
         if !admin_request_is_authorized(&req, &config, &admin_session) {
             return Ok(admin_unauthorized_response());
@@ -204,6 +209,38 @@ fn handle_admin_logout(req: Request<Body>) -> Response<Body> {
     response
 }
 
+fn handle_admin_session(
+    config: Arc<crate::Config>,
+    admin_session: Arc<AdminSessionManager>,
+    req: Request<Body>,
+) -> Response<Body> {
+    if req.method() != Method::GET {
+        return json_error_response(&Error::MethodNotAllowed(format!(
+            "{} {}",
+            req.method(),
+            crate::auth::admin_session::ADMIN_SESSION_PATH
+        )));
+    }
+
+    let (mode, username) = if !config.admin_auth_enforced() {
+        ("open", None)
+    } else if let Some(username) = admin_session.subject_from_request(&req) {
+        ("session", Some(username))
+    } else if let Some(username) = admin_basic_auth_subject(&req, &config) {
+        ("basic", Some(username))
+    } else {
+        return admin_unauthorized_response();
+    };
+
+    json_response(
+        StatusCode::OK,
+        &crate::api::models::AdminSessionResponse {
+            mode: mode.to_string(),
+            username,
+        },
+    )
+}
+
 fn admin_request_is_authorized(
     req: &Request<Body>,
     config: &crate::Config,
@@ -217,26 +254,32 @@ fn admin_request_is_authorized(
         return true;
     }
 
+    admin_basic_auth_subject(req, config).is_some()
+}
+
+fn admin_basic_auth_subject(req: &Request<Body>, config: &crate::Config) -> Option<String> {
     let Some(auth_header) = req.headers().get("authorization") else {
-        return false;
+        return None;
     };
     let Ok(auth_header) = auth_header.to_str() else {
-        return false;
+        return None;
     };
     let Some(encoded) = auth_header.strip_prefix("Basic ") else {
-        return false;
+        return None;
     };
     let Ok(decoded) = STANDARD.decode(encoded) else {
-        return false;
+        return None;
     };
     let Ok(decoded) = String::from_utf8(decoded) else {
-        return false;
+        return None;
     };
     let Some((provided_key, provided_secret)) = decoded.split_once(':') else {
-        return false;
+        return None;
     };
 
-    config.validate_credentials(provided_key, provided_secret)
+    config
+        .validate_credentials(provided_key, provided_secret)
+        .then(|| provided_key.to_string())
 }
 
 fn admin_unauthorized_response() -> Response<Body> {

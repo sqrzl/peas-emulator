@@ -1,11 +1,14 @@
-# ui - SPA Template
+# Peas Admin UI
 
-A route-first Askr SPA built with `@askrjs/askr`, `@askrjs/ui`, `@askrjs/themes`, and `@askrjs/charts`.
+An Askr admin console for the Peas emulator storage administration API.
 
 ## Quick Start
 
 ```bash
 npm install
+npm run gen      # Generate src/adapters/api.g.ts from ../public/openapi.yml
+npm run type-check
+npm run lint
 npm run dev      # Start dev server at http://localhost:5173
 npm run build    # Build for production
 npm run preview  # Preview production build
@@ -20,11 +23,12 @@ src/
 |-- pages/
 |   |-- _routes.tsx                  # Top-level route branches
 |   |-- _layout.tsx                  # Theme provider and app root
-|   |-- public/                      # Guest branch routes and layout
+|   |-- auth/                        # Guest login and independent logout route
 |   `-- app/                         # Authenticated branch routes and layout
 |-- components/shared/               # App-local wrappers around theme primitives
-|-- features/operations/             # Product workflow queries and mutations
-|-- adapters/                        # API clients and transport adapters
+|-- features/                        # Auth, bucket, object, and dashboard workflows
+|-- adapters/api.g.ts                # Generated endpoint transport surface
+|-- adapters/index.ts                # Configured FetchClient and generated adapter
 |-- shared/                          # Cross-cutting helpers and navigation data
 `-- styles/                          # App-specific CSS on top of theme tokens
 ```
@@ -42,20 +46,24 @@ import RootLayout from './_layout';
 import NotFoundPage from './not-found';
 import AppLayout from './app/_layout';
 import { registerAppRoutes } from './app/_routes';
-import PublicLayout from './public/_layout';
-import { registerPublicRoutes } from './public/_routes';
+import AuthLayout from './auth/_layout';
+import { registerGuestRoutes } from './auth/_routes';
+import { resolveAdminSession } from '../features/auth/admin-session';
 
-registerRoutes(() => {
-  group({ layout: RootLayout }, () => {
-    group({ layout: PublicLayout }, () => {
-      registerPublicRoutes();
+registerRoutes(
+  () => {
+    group({ layout: RootLayout }, () => {
+      group({ layout: AuthLayout, auth: 'guest' }, () => {
+        registerGuestRoutes();
+      });
+      group({ layout: AppLayout, auth: true }, () => {
+        registerAppRoutes();
+      });
+      fallback(NotFoundPage);
     });
-    group({ layout: AppLayout }, () => {
-      registerAppRoutes();
-    });
-    fallback(NotFoundPage);
-  });
-});
+  },
+  { auth: { resolve: resolveAdminSession, loginPath: '/auth' } }
+);
 ```
 
 The template uses focused theme entrypoints such as `@askrjs/themes/layouts`,
@@ -70,19 +78,20 @@ delegated through feature/adapters:
 const operations = resource(({ signal }) => loadOperations({ signal }), []);
 ```
 
-Cancellation belongs in adapters, loading/error/value states stay visible in the
-route, and event-sourced consistency states should be modeled explicitly.
+Cancellation is preserved through generated calls, while loading/error/value
+states stay visible in route components.
 
 ## What This Template Includes
 
-- Public and authenticated route branches with separate layout shells
+- Guest login, protected application routes, and generated session resolution
 - Theme provider, header/nav/sidebar, cards, badges, buttons, empty states, and layout primitives
-- A dashboard with async loading, charts, projection lag, and explicit refresh
-- Feature and adapter boundaries for data ownership
-- Tests that protect the route-first structure and cancellation behavior
+- A dashboard with complete paginated bucket/object totals and charts
+- Bucket CRUD, versioning controls, object content and metadata upload,
+  downloads, tags, and paginated versions
+- A read-only integration view reporting API path and resolved session mode
 
-## Next Steps
+## API Boundary
 
-1. Replace the mock operations adapter with your generated API client.
-2. Add route metadata for real auth and loader policies.
-3. Keep new screens route-first and compose solved UI through `@askrjs/themes`.
+`../public/openapi.yml` is the source of truth. Run `npm run gen` after a
+contract change. Pages and features use the configured generated adapter and do
+not construct endpoint URLs or call global `fetch`.

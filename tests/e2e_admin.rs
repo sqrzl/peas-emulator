@@ -71,6 +71,12 @@ struct ErrorResponse {
     details: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AdminSessionResponse {
+    mode: String,
+    username: Option<String>,
+}
+
 async fn json_body<T: DeserializeOwned>(response: Response<Body>) -> T {
     let body = text_body(response).await;
     serde_json::from_str(&body).expect("response body should deserialize")
@@ -161,6 +167,33 @@ async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_
     assert_eq!(get_object_response.status(), StatusCode::OK);
     assert_eq!(text_body(get_object_response).await, "hello over admin tcp");
 
+    let put_nested_object = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/docs%2Freadme.txt/content",
+            server.base_url
+        ))
+        .header("content-type", "text/plain")
+        .body(Body::from("nested object"))
+        .expect("nested object put request should build");
+    let put_nested_object_response = server.request(put_nested_object).await;
+    assert_eq!(put_nested_object_response.status(), StatusCode::CREATED);
+    let nested_upload: ObjectMetadata = json_body(put_nested_object_response).await;
+    assert_eq!(nested_upload.key, "docs/readme.txt");
+
+    let get_nested_metadata = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/docs%2Freadme.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("nested metadata request should build");
+    let get_nested_metadata_response = server.request(get_nested_metadata).await;
+    assert_eq!(get_nested_metadata_response.status(), StatusCode::OK);
+    let nested_metadata: ObjectMetadata = json_body(get_nested_metadata_response).await;
+    assert_eq!(nested_metadata.key, "docs/readme.txt");
+
     let delete_object = Request::builder()
         .method("DELETE")
         .uri(format!(
@@ -171,6 +204,20 @@ async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_
         .expect("object delete request should build");
     let delete_object_response = server.request(delete_object).await;
     assert_eq!(delete_object_response.status(), StatusCode::NO_CONTENT);
+
+    let delete_nested_object = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "{}/admin/v1/buckets/e2e-admin/objects/docs%2Freadme.txt",
+            server.base_url
+        ))
+        .body(Body::empty())
+        .expect("nested object delete request should build");
+    let delete_nested_object_response = server.request(delete_nested_object).await;
+    assert_eq!(
+        delete_nested_object_response.status(),
+        StatusCode::NO_CONTENT
+    );
 
     let delete_bucket = Request::builder()
         .method("DELETE")
@@ -519,6 +566,15 @@ async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_
     let error: ErrorResponse = json_body(unauthenticated_response).await;
     assert_eq!(error.code, "Unauthorized");
 
+    let invalid_session = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/auth/session", server.base_url))
+        .header("authorization", "Basic bm90OnZhbGlk")
+        .body(Body::empty())
+        .expect("invalid session request should build");
+    let invalid_session_response = server.request_without_default_auth(invalid_session).await;
+    assert_eq!(invalid_session_response.status(), StatusCode::UNAUTHORIZED);
+
     let authenticated = Request::builder()
         .method("GET")
         .uri(format!("{}/admin/v1/buckets", server.base_url))
@@ -526,6 +582,17 @@ async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_
         .expect("authenticated admin request should build");
     let authenticated_response = server.request(authenticated).await;
     assert_eq!(authenticated_response.status(), StatusCode::OK);
+
+    let basic_session = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/auth/session", server.base_url))
+        .body(Body::empty())
+        .expect("basic session request should build");
+    let basic_session_response = server.request(basic_session).await;
+    assert_eq!(basic_session_response.status(), StatusCode::OK);
+    let session: AdminSessionResponse = json_body(basic_session_response).await;
+    assert_eq!(session.mode, "basic");
+    assert_eq!(session.username.as_deref(), Some("admin-key"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -540,6 +607,17 @@ async fn should_allow_admin_requests_without_credentials_given_admin_auth_bypass
         .expect("bypass admin request should build");
     let response = server.request_without_default_auth(request).await;
     assert_eq!(response.status(), StatusCode::OK);
+
+    let session_request = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/auth/session", server.base_url))
+        .body(Body::empty())
+        .expect("open session request should build");
+    let session_response = server.request_without_default_auth(session_request).await;
+    assert_eq!(session_response.status(), StatusCode::OK);
+    let session: AdminSessionResponse = json_body(session_response).await;
+    assert_eq!(session.mode, "open");
+    assert!(session.username.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -579,6 +657,18 @@ async fn should_issue_admin_session_cookie_given_valid_login_and_authorize_admin
     let authenticated_response = server.request_without_default_auth(authenticated).await;
     assert_eq!(authenticated_response.status(), StatusCode::OK);
 
+    let session_request = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/auth/session", server.base_url))
+        .header("cookie", session_cookie.clone())
+        .body(Body::empty())
+        .expect("cookie session request should build");
+    let session_response = server.request_without_default_auth(session_request).await;
+    assert_eq!(session_response.status(), StatusCode::OK);
+    let session: AdminSessionResponse = json_body(session_response).await;
+    assert_eq!(session.mode, "session");
+    assert_eq!(session.username.as_deref(), Some("admin-key"));
+
     let logout_request = Request::builder()
         .method("POST")
         .uri(format!("{}/admin/v1/auth/logout", server.base_url))
@@ -594,4 +684,14 @@ async fn should_issue_admin_session_cookie_given_valid_login_and_authorize_admin
         .to_str()
         .expect("logout cookie header should be valid utf-8");
     assert!(logout_cookie.contains("Max-Age=0"));
+
+    let signed_out_session = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/auth/session", server.base_url))
+        .body(Body::empty())
+        .expect("signed out session request should build");
+    let signed_out_response = server
+        .request_without_default_auth(signed_out_session)
+        .await;
+    assert_eq!(signed_out_response.status(), StatusCode::UNAUTHORIZED);
 }
