@@ -3,7 +3,6 @@ import { BarChart, Sparkline } from '@askrjs/charts/components';
 import { AlertCircleIcon, RefreshCwIcon } from '@askrjs/lucide';
 import { Button } from '@askrjs/themes/controls';
 import {
-  Alert,
   Badge,
   Card,
   CardContent,
@@ -15,7 +14,6 @@ import {
 import { Block, Inline, Section, Stack } from '@askrjs/themes/layouts';
 import { EmptyState } from '@askrjs/themes/feedback';
 import MetricCard from '../../components/shared/metric-card';
-import StatusBadge from '../../components/shared/status-badge';
 import { loadOperations } from '../../features/operations/operations.query';
 import { formatRelativeTime } from '../../shared/format';
 
@@ -28,9 +26,24 @@ export default function AdminHomePage() {
       <Section>
         <EmptyState
           icon={<AlertCircleIcon size={24} aria-hidden="true" />}
-          title="Operations could not load"
-          description="The dashboard keeps failures recoverable. Retry the owning resource instead of hiding the error in a toast."
+          title="Storage overview could not load"
+          description="The dashboard keeps failures recoverable. Retry the live admin API call instead of hiding the error in a toast."
           actions={<Button onPress={() => operations.refresh()}>Retry</Button>}
+        />
+      </Section>
+    );
+  }
+
+  if (snapshot && snapshot.totalBuckets === 0) {
+    return (
+      <Section>
+        <EmptyState
+          icon={<AlertCircleIcon size={24} aria-hidden="true" />}
+          title="No buckets yet"
+          description="Create a bucket through the admin API and this overview will populate with live storage data."
+          actions={
+            <Button onPress={() => operations.refresh()}>Refresh</Button>
+          }
         />
       </Section>
     );
@@ -40,11 +53,11 @@ export default function AdminHomePage() {
     <Stack gap="5">
       <section class="page-heading">
         <Stack gap="2">
-          <Badge>projection v{snapshot?.version ?? '...'}</Badge>
-          <h1>Admin home</h1>
+          <Badge>live admin data</Badge>
+          <h1>Storage overview</h1>
           <p class="lead">
-            A consistency-aware dashboard for agent runs, queue health, and
-            event-sourced read models.
+            Bucket inventory, object counts, and versioning status pulled from
+            the real admin API.
           </p>
         </Stack>
         <Inline gap="2" align="center">
@@ -66,53 +79,73 @@ export default function AdminHomePage() {
       {snapshot ? (
         <>
           <Block size="sm" gap="4" class="metric-grid">
-            {snapshot.metrics.map((metric) => (
-              <MetricCard
-                label={metric.label}
-                value={metric.value}
-                trend={metric.trend}
-              />
-            ))}
+            <MetricCard
+              label="Buckets"
+              value={snapshot.totalBuckets.toString()}
+              trend={
+                snapshot.buckets[0]
+                  ? `newest ${formatRelativeTime(snapshot.buckets[0].createdAt)}`
+                  : 'no buckets'
+              }
+            />
+            <MetricCard
+              label="Versioning enabled"
+              value={snapshot.versioningEnabledBuckets.toString()}
+              trend={
+                snapshot.totalBuckets > 0
+                  ? `${Math.round(
+                      (snapshot.versioningEnabledBuckets /
+                        snapshot.totalBuckets) *
+                        100
+                    )}% enabled`
+                  : '0% enabled'
+              }
+            />
+            <MetricCard
+              label="Objects"
+              value={snapshot.totalObjects.toString()}
+              trend={
+                snapshot.totalBuckets > 0
+                  ? `${Math.round(snapshot.totalObjects / snapshot.totalBuckets)} avg per bucket`
+                  : '0 avg'
+              }
+            />
           </Block>
 
           <Block size="lg" gap="4" align="stretch" class="chart-grid">
             <Card>
               <CardHeader>
-                <CardTitle>Run throughput</CardTitle>
+                <CardTitle>Objects per bucket</CardTitle>
                 <CardDescription>
-                  Accepted commands by work type.
+                  Real storage inventory grouped by bucket.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <BarChart label="Run throughput" data={snapshot.throughput} />
+                <BarChart
+                  label="Objects per bucket"
+                  data={snapshot.objectCounts}
+                />
               </CardContent>
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Projection lag</CardTitle>
+                <CardTitle>Bucket age</CardTitle>
                 <CardDescription>
-                  Lower is better; stale states stay visible.
+                  Newest buckets stay visible so freshness is obvious.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Sparkline label="Projection lag" data={snapshot.lag} />
+                <Sparkline label="Bucket age" data={snapshot.bucketAges} />
               </CardContent>
             </Card>
           </Block>
 
-          {snapshot.consistency !== 'fresh' ? (
-            <Alert variant="warning">
-              Read models are {snapshot.consistency}. Last processed event is{' '}
-              {snapshot.lastEventId}.
-            </Alert>
-          ) : null}
-
           <Card>
             <CardHeader>
-              <CardTitle>Recent agent runs</CardTitle>
+              <CardTitle>Recent buckets</CardTitle>
               <CardDescription>
-                Run state is modeled as product state, not a single loading
-                boolean.
+                Bucket metadata comes from the live admin API, not a local demo
+                fixture.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -120,24 +153,30 @@ export default function AdminHomePage() {
                 <table class="run-table">
                   <thead>
                     <tr>
-                      <th>Run</th>
-                      <th>Status</th>
-                      <th>Owner</th>
-                      <th>Updated</th>
+                      <th>Bucket</th>
+                      <th>Objects</th>
+                      <th>Versioning</th>
+                      <th>Created</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.runs.map((run) => (
+                    {snapshot.buckets.map((bucket) => (
                       <tr>
                         <td>
-                          <strong>{run.title}</strong>
-                          <span>{run.id}</span>
+                          <strong>{bucket.name}</strong>
+                          <span>
+                            {bucket.versioningEnabled
+                              ? 'versioning on'
+                              : 'versioning off'}
+                          </span>
                         </td>
+                        <td>{bucket.objectCount}</td>
                         <td>
-                          <StatusBadge status={run.status} />
+                          <Badge>
+                            {bucket.versioningEnabled ? 'enabled' : 'disabled'}
+                          </Badge>
                         </td>
-                        <td>{run.owner}</td>
-                        <td>{formatRelativeTime(run.updatedAt)}</td>
+                        <td>{formatRelativeTime(bucket.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>

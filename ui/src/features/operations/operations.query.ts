@@ -1,9 +1,9 @@
-import { getOperationsSnapshot } from '../../adapters/operations-client';
+import { getStorageOverview } from '../../adapters/storage-overview-client';
 
 export function loadOperations({
   signal = new AbortController().signal,
 }: {
   signal?: AbortSignal;
 }) {
-  return getOperationsSnapshot({ signal });
+  return getStorageOverview({ signal });
 }

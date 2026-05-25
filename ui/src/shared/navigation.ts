@@ -1,9 +1,9 @@
 export const appNavItems = [
   { href: '/app', label: 'Dashboard', icon: 'home', match: 'exact' as const },
   {
-    href: '/app/agents',
-    label: 'Agent runs',
-    icon: 'agents',
+    href: '/app/buckets',
+    label: 'Buckets',
+    icon: 'buckets',
     match: 'exact' as const,
   },
   {

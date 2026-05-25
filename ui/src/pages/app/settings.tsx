@@ -1,12 +1,3 @@
-import { state } from '@askrjs/askr';
-import { Input } from '@askrjs/ui';
-import {
-  Button,
-  Field,
-  FieldHint,
-  InputGroup,
-  InputGroupText,
-} from '@askrjs/themes/controls';
 import {
   Badge,
   Card,
@@ -16,15 +7,9 @@ import {
   CardTitle,
 } from '@askrjs/themes/surfaces';
 import { Block, Stack } from '@askrjs/themes/layouts';
+import { adminApiPath } from '../../adapters';
 
 export default function SettingsPage() {
-  const [endpoint, setEndpoint] = state(
-    'https://api.example.test'
-  ) as unknown as [
-    ReturnType<typeof state<string>>,
-    ReturnType<typeof state<string>>['set'],
-  ];
-
   return (
     <Stack gap="5">
       <section class="page-heading">
@@ -32,8 +17,8 @@ export default function SettingsPage() {
           <Badge>environment</Badge>
           <h1>Settings</h1>
           <p class="lead">
-            Configuration stays in shared boundaries and adapters receive it
-            through one clear path.
+            The admin API client is configured once in the adapter boundary and
+            reused by every real data source.
           </p>
         </Stack>
       </section>
@@ -41,47 +26,34 @@ export default function SettingsPage() {
       <Block size="lg" gap="4" align="start" class="settings-grid">
         <Card>
           <CardHeader>
-            <CardTitle>API adapter</CardTitle>
+            <CardTitle>Admin API client</CardTitle>
             <CardDescription>
-              Keep generated clients and transport concerns out of route
+              Keep transport concerns in the adapter layer and out of route
               components.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Field>
-              <label for="api-endpoint">Base URL</label>
-              <InputGroup>
-                <InputGroupText>URL</InputGroupText>
-                <Input
-                  id="api-endpoint"
-                  value={endpoint()}
-                  onInput={(event: Event) =>
-                    setEndpoint((event.currentTarget as HTMLInputElement).value)
-                  }
-                />
-              </InputGroup>
-              <FieldHint>
-                Demo-only value. Real apps should validate public config at
-                startup.
-              </FieldHint>
-            </Field>
+            <Stack gap="3">
+              <Badge>baseUrl {adminApiPath}</Badge>
+              <Badge>credentials same-origin</Badge>
+              <Badge>FetchClient exported from src/adapters/index.ts</Badge>
+            </Stack>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Consistency policy</CardTitle>
+            <CardTitle>Real data policy</CardTitle>
             <CardDescription>
-              Event-sourced apps should expose lag, retries, and stale states
-              directly.
+              The UI now reflects live admin resources instead of fabricated
+              projection data.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Stack gap="3">
-              <Badge>pending-write copy enabled</Badge>
-              <Badge>projection lag visible</Badge>
+              <Badge>live bucket inventory</Badge>
+              <Badge>real object counts</Badge>
               <Badge>manual refresh available</Badge>
-              <Button variant="secondary">Save settings</Button>
             </Stack>
           </CardContent>
         </Card>

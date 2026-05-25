@@ -1,5 +1,5 @@
 import {
-  BotIcon,
+  DatabaseIcon,
   HomeIcon,
   LogOutIcon,
   MoonIcon,
@@ -17,7 +17,7 @@ import { appNavItems } from '../../shared/navigation';
 
 const icons = {
   home: <HomeIcon size={16} aria-hidden="true" />,
-  agents: <BotIcon size={16} aria-hidden="true" />,
+  buckets: <DatabaseIcon size={16} aria-hidden="true" />,
   settings: <SettingsIcon size={16} aria-hidden="true" />,
 };
 
@@ -61,11 +61,11 @@ export default function AppLayout({ children }: { children?: unknown }) {
           <Container size="fluid">
             <Inline justify="between" align="center" gap="3" wrap="wrap">
               <Stack gap="none">
-                <span class="eyebrow">Operations console</span>
-                <strong>Agent workflow control plane</strong>
+                <span class="eyebrow">Storage console</span>
+                <strong>Bucket and object control plane</strong>
               </Stack>
               <Inline gap="2" align="center" wrap="wrap">
-                <Badge>event stream healthy</Badge>
+                <Badge>live admin API</Badge>
                 <ThemeToggle
                   variant="ghost"
                   size="icon"
