@@ -1,5 +1,5 @@
 # Build UI
-FROM node:latest AS frontend
+FROM node:slim AS frontend
 
 WORKDIR /ui
 
