@@ -3,9 +3,8 @@ use crate::models::{policy::Acl, Bucket, MultipartUpload, Object};
 use crate::storage::{LockFreeIndex, Storage};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 mod io;
@@ -13,6 +12,7 @@ mod io;
 pub struct FilesystemStorage {
     base_path: PathBuf,
     index: Arc<LockFreeIndex>,
+    uploads_cache: Mutex<HashMap<String, HashMap<String, MultipartUpload>>>,
 }
 
 impl Storage for FilesystemStorage {
@@ -171,19 +171,9 @@ impl Storage for FilesystemStorage {
         }
 
         let metadata_path = self.object_metadata_path(bucket, &object_id);
-
-        // Read metadata
-        let mut meta_file = fs::File::open(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to open metadata file: {}", e)))?;
-
-        let mut metadata_json = String::new();
-        meta_file
-            .read_to_string(&mut metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
-
+        let mut object = self.read_object_metadata(&metadata_path)?;
+        object.data = fs::read(&object_data_path)
+            .map_err(|e| Error::InternalError(format!("Failed to read object: {}", e)))?;
         Ok(object)
     }
 
@@ -203,12 +193,7 @@ impl Storage for FilesystemStorage {
 
         let metadata_path = self.object_metadata_path(bucket, &object_id);
 
-        // Read metadata
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
+        let object = self.read_object_metadata(&metadata_path)?;
 
         // Validate range
         if start >= object.size {
@@ -313,9 +298,9 @@ impl Storage for FilesystemStorage {
             return Ok(Acl::default());
         }
 
-        let json = fs::read_to_string(&path)
+        let json = fs::read(&path)
             .map_err(|e| Error::InternalError(format!("Failed to read bucket ACL: {}", e)))?;
-        serde_json::from_str(&json)
+        serde_json::from_slice(&json)
             .map_err(|e| Error::InternalError(format!("Failed to parse bucket ACL: {}", e)))
     }
 
@@ -325,7 +310,7 @@ impl Storage for FilesystemStorage {
         }
 
         let path = self.bucket_acl_path(bucket);
-        let json = serde_json::to_string(&acl)
+        let json = serde_json::to_vec(&acl)
             .map_err(|e| Error::InternalError(format!("Failed to serialize bucket ACL: {}", e)))?;
         fs::write(&path, json)
             .map_err(|e| Error::InternalError(format!("Failed to write bucket ACL: {}", e)))
@@ -373,9 +358,9 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let json = fs::read_to_string(&lifecycle_path)
+        let json = fs::read(&lifecycle_path)
             .map_err(|e| Error::InternalError(format!("Failed to read lifecycle config: {}", e)))?;
-        serde_json::from_str(&json)
+        serde_json::from_slice(&json)
             .map_err(|e| Error::InternalError(format!("Failed to parse lifecycle config: {}", e)))
     }
 
@@ -390,7 +375,7 @@ impl Storage for FilesystemStorage {
         }
 
         let lifecycle_path = bucket_path.join(".lifecycle.json");
-        let json = serde_json::to_string_pretty(&config).map_err(|e| {
+        let json = serde_json::to_vec(&config).map_err(|e| {
             Error::InternalError(format!("Failed to serialize lifecycle config: {}", e))
         })?;
         fs::write(&lifecycle_path, json)
@@ -426,10 +411,10 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let policy_json = fs::read_to_string(&policy_path)
+        let policy_json = fs::read(&policy_path)
             .map_err(|e| Error::InternalError(format!("Failed to read policy: {}", e)))?;
 
-        serde_json::from_str(&policy_json)
+        serde_json::from_slice(&policy_json)
             .map_err(|e| Error::InternalError(format!("Failed to parse policy: {}", e)))
     }
 
@@ -444,7 +429,7 @@ impl Storage for FilesystemStorage {
         }
 
         let policy_path = bucket_path.join(".policy.json");
-        let policy_json = serde_json::to_string_pretty(&policy)
+        let policy_json = serde_json::to_vec(&policy)
             .map_err(|e| Error::InternalError(format!("Failed to serialize policy: {}", e)))?;
 
         fs::write(&policy_path, policy_json)
@@ -473,13 +458,7 @@ impl Storage for FilesystemStorage {
             return Err(Error::KeyNotFound);
         }
 
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read metadata: {}", e)))?;
-
-        let object: Object = serde_json::from_str(&metadata_json)
-            .map_err(|e| Error::InternalError(format!("Failed to parse metadata: {}", e)))?;
-
-        Ok(object.tags)
+        Ok(self.read_object_metadata(&metadata_path)?.tags)
     }
 
     fn put_object_tags(
@@ -535,20 +514,17 @@ impl Storage for FilesystemStorage {
             return Err(Error::BucketNotFound);
         }
 
-        let mut all_objects = Vec::new();
-
-        // Use index to get all keys in bucket
         let keys = self.index.list(bucket, prefix);
+        let mut all_objects = Vec::with_capacity(keys.len());
 
         // Load objects for each key
         for obj_key in keys {
-            if let Ok(obj) = self.get_object(bucket, &obj_key) {
+            let object_id = Self::compute_object_id(bucket, &obj_key);
+            let metadata_path = self.object_metadata_path(bucket, &object_id);
+            if let Ok(obj) = self.read_object_metadata(&metadata_path) {
                 all_objects.push(obj);
             }
         }
-
-        // Sort by key (S3 lexicographic order)
-        all_objects.sort_by(|a, b| a.key.cmp(&b.key));
 
         // Apply marker filter - skip objects until we find the marker
         if let Some(m) = marker {
@@ -603,9 +579,19 @@ impl Storage for FilesystemStorage {
         }
 
         let upload = MultipartUpload::new(key, content_type, metadata, provider_metadata);
-        let mut uploads = self.load_uploads(bucket)?;
+        let upload_dir = self.multipart_dir(bucket, &upload.upload_id);
+        fs::create_dir_all(&upload_dir)
+            .map_err(|e| Error::InternalError(format!("Failed to create multipart dir: {}", e)))?;
+        self.ensure_uploads_cache_loaded(bucket)?;
+        self.write_upload_record(bucket, &upload)?;
+        let mut cache = self
+            .uploads_cache
+            .lock()
+            .map_err(|_| Error::InternalError("Failed to lock uploads cache".to_string()))?;
+        let uploads = cache
+            .get_mut(bucket)
+            .ok_or_else(|| Error::InternalError("Missing uploads cache entry".to_string()))?;
         uploads.insert(upload.upload_id.clone(), upload.clone());
-        self.save_uploads(bucket, &uploads)?;
 
         Ok(upload)
     }
@@ -626,35 +612,41 @@ impl Storage for FilesystemStorage {
             return Err(Error::InvalidPartNumber);
         }
 
-        // Check upload exists
-        let mut uploads = self.load_uploads(bucket)?;
-        let upload = uploads.get_mut(upload_id).ok_or(Error::NoSuchUpload)?;
+        self.ensure_upload_exists(bucket, upload_id)?;
 
         // Compute ETag
         let etag = md5_hash(&data);
         let size = data.len() as u64;
-
-        // Create multipart directory
-        let multipart_dir = self.multipart_dir(bucket, upload_id);
-        fs::create_dir_all(&multipart_dir)
-            .map_err(|e| Error::InternalError(format!("Failed to create multipart dir: {}", e)))?;
+        let upload_path = self.upload_record_path(bucket, upload_id);
 
         // Write part data
         let part_path = self.part_path(bucket, upload_id, part_number);
         fs::write(&part_path, &data)
             .map_err(|e| Error::InternalError(format!("Failed to write part: {}", e)))?;
 
-        // Remove existing part with same number and add new one
-        upload.parts.retain(|p| p.part_number != part_number);
-        upload.parts.push(crate::models::Part {
+        let mut cache = self
+            .uploads_cache
+            .lock()
+            .map_err(|_| Error::InternalError("Failed to lock uploads cache".to_string()))?;
+        let uploads = cache
+            .get_mut(bucket)
+            .ok_or_else(|| Error::InternalError("Missing uploads cache entry".to_string()))?;
+        let upload = uploads.get_mut(upload_id).ok_or(Error::NoSuchUpload)?;
+        let part = crate::models::Part {
             part_number,
             etag: etag.clone(),
             size,
             last_modified: chrono::Utc::now(),
-        });
-
-        // Save uploads index
-        self.save_uploads(bucket, &uploads)?;
+        };
+        match upload
+            .parts
+            .binary_search_by_key(&part_number, |existing| existing.part_number)
+        {
+            Ok(index) => upload.parts[index] = part,
+            Err(index) => upload.parts.insert(index, part),
+        }
+        upload.part_data.insert(part_number, data);
+        Self::write_upload_record_at_path(&upload_path, upload)?;
 
         Ok(etag)
     }
@@ -676,9 +668,7 @@ impl Storage for FilesystemStorage {
         let uploads = self.load_uploads(bucket)?;
         let upload = uploads.get(upload_id).ok_or(Error::NoSuchUpload)?;
 
-        let mut parts = upload.parts.clone();
-        parts.sort_by_key(|p| p.part_number);
-        Ok(parts)
+        Ok(upload.parts.clone())
     }
 
     fn get_multipart_upload(&self, bucket: &str, upload_id: &str) -> Result<MultipartUpload> {
@@ -695,66 +685,74 @@ impl Storage for FilesystemStorage {
             return Err(Error::BucketNotFound);
         }
 
-        let mut uploads = self.load_uploads(bucket)?;
-        let upload = uploads.remove(upload_id).ok_or(Error::NoSuchUpload)?;
+        self.ensure_uploads_cache_loaded(bucket)?;
+        let upload = {
+            let mut cache = self
+                .uploads_cache
+                .lock()
+                .map_err(|_| Error::InternalError("Failed to lock uploads cache".to_string()))?;
+            let uploads = cache
+                .get_mut(bucket)
+                .ok_or_else(|| Error::InternalError("Missing uploads cache entry".to_string()))?;
+            uploads.remove(upload_id).ok_or(Error::NoSuchUpload)?
+        };
+        let crate::models::MultipartUpload {
+            key,
+            content_type,
+            metadata,
+            provider_metadata,
+            parts,
+            part_data,
+            ..
+        } = upload;
 
-        if upload.parts.is_empty() {
+        if parts.is_empty() {
             return Err(Error::InvalidPartOrder);
         }
 
         // Validate parts are sequential starting from 1
-        let mut part_numbers: Vec<_> = upload.parts.iter().map(|p| p.part_number).collect();
-        part_numbers.sort();
-        for (i, &num) in part_numbers.iter().enumerate() {
-            if num != (i as u32 + 1) {
+        for (i, part) in parts.iter().enumerate() {
+            if part.part_number != (i as u32 + 1) {
                 return Err(Error::InvalidPartOrder);
             }
         }
 
         // Read all parts and concatenate
-        let mut object_data = Vec::new();
-        for part in &upload.parts {
-            let part_path = self.part_path(bucket, upload_id, part.part_number);
-            let part_data = fs::read(&part_path)
-                .map_err(|e| Error::InternalError(format!("Failed to read part: {}", e)))?;
-            object_data.extend_from_slice(&part_data);
+        let total_size = parts
+            .iter()
+            .fold(0usize, |acc, part| acc.saturating_add(part.size as usize));
+        let mut object_data = Vec::with_capacity(total_size);
+        for part in &parts {
+            if let Some(part_data) = part_data.get(&part.part_number) {
+                object_data.extend_from_slice(part_data);
+            } else {
+                let part_path = self.part_path(bucket, upload_id, part.part_number);
+                let part_data = fs::read(&part_path)
+                    .map_err(|e| Error::InternalError(format!("Failed to read part: {}", e)))?;
+                object_data.extend_from_slice(&part_data);
+            }
         }
 
         // Compute final ETag: MD5(concat(part_etags)) + "-" + part_count
-        let part_etags = upload
-            .parts
-            .iter()
-            .map(|p| p.etag.clone())
-            .collect::<Vec<_>>();
-        let concatenated = part_etags.join("");
-        let final_etag = format!(
-            "{}-{}",
-            md5_hash(concatenated.as_bytes()),
-            upload.parts.len()
-        );
+        let mut etag_hash = md5::Context::new();
+        for part in &parts {
+            etag_hash.consume(part.etag.as_bytes());
+        }
+        let final_etag = format!("{:x}-{}", etag_hash.compute(), parts.len());
 
         // Save completed object
-        let mut obj = Object::new_with_metadata(
-            upload.key.clone(),
+        let mut obj = Object::new_with_metadata_and_etag(
+            key.clone(),
             object_data,
-            upload
-                .content_type
-                .clone()
-                .unwrap_or_else(|| "application/octet-stream".to_string()),
-            upload.metadata.clone(),
+            content_type.unwrap_or_else(|| "application/octet-stream".to_string()),
+            metadata,
+            final_etag.clone(),
         );
-        obj.etag = final_etag.clone();
-        if let Some(storage_class) = upload.provider_metadata.get("storage_class") {
+        if let Some(storage_class) = provider_metadata.get("storage_class") {
             obj.storage_class = storage_class.clone();
         }
-        self.put_object(bucket, upload.key, obj)?;
-
-        // Clean up multipart directory
-        let multipart_dir = self.multipart_dir(bucket, upload_id);
-        let _ = fs::remove_dir_all(multipart_dir);
-
-        // Save updated uploads index
-        self.save_uploads(bucket, &uploads)?;
+        self.put_object(bucket, key, obj)?;
+        self.remove_upload_record(bucket, upload_id)?;
 
         Ok(final_etag)
     }
@@ -764,17 +762,18 @@ impl Storage for FilesystemStorage {
             return Err(Error::BucketNotFound);
         }
 
-        let mut uploads = self.load_uploads(bucket)?;
-        uploads.remove(upload_id).ok_or(Error::NoSuchUpload)?;
-
-        // Clean up multipart directory
-        let multipart_dir = self.multipart_dir(bucket, upload_id);
-        if multipart_dir.exists() {
-            let _ = fs::remove_dir_all(multipart_dir);
+        self.ensure_uploads_cache_loaded(bucket)?;
+        {
+            let mut cache = self
+                .uploads_cache
+                .lock()
+                .map_err(|_| Error::InternalError("Failed to lock uploads cache".to_string()))?;
+            let uploads = cache
+                .get_mut(bucket)
+                .ok_or_else(|| Error::InternalError("Missing uploads cache entry".to_string()))?;
+            uploads.remove(upload_id).ok_or(Error::NoSuchUpload)?;
         }
-
-        // Save updated uploads index
-        self.save_uploads(bucket, &uploads)?;
+        self.remove_upload_record(bucket, upload_id)?;
 
         Ok(())
     }
@@ -827,19 +826,11 @@ impl Storage for FilesystemStorage {
             return Err(Error::NoSuchVersion);
         }
 
-        let data = fs::read(&version_data_path)
+        let metadata_path = self.version_metadata_path(bucket, &object_id, version_id);
+        let mut object = self.read_object_metadata(&metadata_path)?;
+        object.data = fs::read(&version_data_path)
             .map_err(|e| Error::InternalError(format!("Failed to read version: {}", e)))?;
 
-        let metadata_path = self.version_metadata_path(bucket, &object_id, version_id);
-        let metadata_json = fs::read_to_string(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to read version metadata: {}", e)))?;
-
-        let mut object: crate::models::Object =
-            serde_json::from_str(&metadata_json).map_err(|e| {
-                Error::InternalError(format!("Failed to parse version metadata: {}", e))
-            })?;
-
-        object.data = data;
         object.version_id = Some(version_id.to_string());
 
         Ok(object)
@@ -871,17 +862,9 @@ impl Storage for FilesystemStorage {
                     }
 
                     let metadata_path = path.join("object.meta.json");
-                    if let Ok(metadata_json) = fs::read_to_string(&metadata_path) {
-                        if let Ok(mut obj) =
-                            serde_json::from_str::<crate::models::Object>(&metadata_json)
-                        {
-                            if obj.key.starts_with(prefix) && obj.version_id.is_some() {
-                                let data_path = path.join("object.blob");
-                                if let Ok(data) = fs::read(&data_path) {
-                                    obj.data = data;
-                                    versions.push(obj);
-                                }
-                            }
+                    if let Ok(obj) = self.read_object_metadata(&metadata_path) {
+                        if obj.key.starts_with(prefix) && obj.version_id.is_some() {
+                            versions.push(obj);
                         }
                     }
 
@@ -893,30 +876,14 @@ impl Storage for FilesystemStorage {
                             for version_entry in version_entries.flatten() {
                                 let version_path = version_entry.path();
                                 if version_path.is_dir() {
-                                    if let Some(version_id) =
+                                    if let Some(_version_id) =
                                         version_path.file_name().and_then(|n| n.to_str())
                                     {
                                         // Read version metadata to get the key and check prefix
                                         let metadata_path = version_path.join("object.meta.json");
-                                        if let Ok(metadata_json) =
-                                            fs::read_to_string(&metadata_path)
-                                        {
-                                            if let Ok(mut obj) =
-                                                serde_json::from_str::<crate::models::Object>(
-                                                    &metadata_json,
-                                                )
-                                            {
-                                                if obj.key.starts_with(prefix) {
-                                                    // Read version data
-                                                    let data_path =
-                                                        version_path.join("object.blob");
-                                                    if let Ok(data) = fs::read(&data_path) {
-                                                        obj.data = data;
-                                                        obj.version_id =
-                                                            Some(version_id.to_string());
-                                                        versions.push(obj);
-                                                    }
-                                                }
+                                        if let Ok(obj) = self.read_object_metadata(&metadata_path) {
+                                            if obj.key.starts_with(prefix) {
+                                                versions.push(obj);
                                             }
                                         }
                                     }
@@ -928,7 +895,7 @@ impl Storage for FilesystemStorage {
             }
         }
 
-        versions.sort_by(|a, b| {
+        versions.sort_unstable_by(|a, b| {
             if a.key == b.key {
                 a.version_id.cmp(&b.version_id)
             } else {

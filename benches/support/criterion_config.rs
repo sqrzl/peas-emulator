@@ -61,9 +61,9 @@ pub fn criterion_config_for_tier3() -> Criterion {
 
 pub fn criterion_config_for_tier4() -> Criterion {
     Criterion::default()
-        .warm_up_time(env_duration_ms("BENCH_TIER4_WARMUP_MS", 1000))
+        .warm_up_time(env_duration_ms("BENCH_TIER4_WARMUP_MS", 500))
         .measurement_time(env_duration_ms("BENCH_TIER4_MEASUREMENT_MS", 2500))
-        .sample_size(env_usize("BENCH_TIER4_SAMPLE_SIZE", 12))
-        .noise_threshold(env_f64("BENCH_TIER4_NOISE_THRESHOLD", 0.06))
+        .sample_size(env_usize("BENCH_TIER4_SAMPLE_SIZE", 20))
+        .noise_threshold(env_f64("BENCH_TIER4_NOISE_THRESHOLD", 0.05))
         .without_plots()
 }

@@ -1,11 +1,10 @@
 use super::ProviderAdapter;
 use crate::auth::{AuthConfig, HttpRequestLike};
-use crate::blob::{
-    BlobBackend, BlobRange, CreateUploadSessionRequest, PutBlobRequest, UpdateBlobMetadataRequest,
-};
+use crate::blob::{BlobBackend, BlobRange, CreateUploadSessionRequest, UpdateBlobMetadataRequest};
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
 use crate::utils::request_origin;
+use crate::utils::xml::push_escaped_xml;
 use base64::{
     engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
     Engine as _,
@@ -18,6 +17,7 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -186,19 +186,26 @@ impl AzureBlobAdapter {
         account: &str,
         namespaces: &[crate::blob::Namespace],
     ) -> String {
-        let service_endpoint = escape_xml(&format!("{}/{}", request_origin(req), account));
-        let mut xml = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ServiceEndpoint=\"{}\"><Containers>",
-            service_endpoint
+        let origin = request_origin(req);
+        let mut xml = String::with_capacity(160 + namespaces.len() * 192);
+        xml.push_str(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ServiceEndpoint=\"",
         );
+        push_escaped_xml(&mut xml, &origin);
+        xml.push('/');
+        push_escaped_xml(&mut xml, account);
+        xml.push_str("\"><Containers>");
 
         for namespace in namespaces {
-            xml.push_str(&format!(
-                "<Container><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>\"{}\"</Etag></Properties></Container>",
-                escape_xml(&namespace.name),
-                namespace.created_at.to_rfc2822(),
-                crate::utils::headers::compute_etag(namespace.name.as_bytes()),
+            xml.push_str("<Container><Name>");
+            push_escaped_xml(&mut xml, &namespace.name);
+            xml.push_str("</Name><Properties><Last-Modified>");
+            xml.push_str(&namespace.created_at.to_rfc2822());
+            xml.push_str("</Last-Modified><Etag>\"");
+            xml.push_str(&crate::utils::headers::compute_etag(
+                namespace.name.as_bytes(),
             ));
+            xml.push_str("\"</Etag></Properties></Container>");
         }
 
         xml.push_str("</Containers><NextMarker /></EnumerationResults>");
@@ -206,10 +213,12 @@ impl AzureBlobAdapter {
     }
 
     fn list_blobs_xml(container: &str, blobs: &[crate::blob::BlobRecord]) -> String {
-        let mut xml = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ContainerName=\"{}\"><Blobs>",
-            escape_xml(container)
+        let mut xml = String::with_capacity(192 + blobs.len() * 288);
+        xml.push_str(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ContainerName=\"",
         );
+        push_escaped_xml(&mut xml, container);
+        xml.push_str("\"><Blobs>");
 
         for blob in blobs
             .iter()
@@ -220,15 +229,19 @@ impl AzureBlobAdapter {
                 .get(AZURE_BLOB_TYPE_KEY)
                 .map(|value| value.as_str())
                 .unwrap_or("BlockBlob");
-            xml.push_str(&format!(
-                "<Blob><Name>{}</Name><Properties><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><Etag>\"{}\"</Etag><BlobType>{}</BlobType><Last-Modified>{}</Last-Modified></Properties></Blob>",
-                escape_xml(&blob.key),
-                blob.size,
-                escape_xml(&blob.content_type),
-                escape_xml(&blob.etag),
-                blob_type,
-                blob.last_modified.to_rfc2822(),
-            ));
+            xml.push_str("<Blob><Name>");
+            push_escaped_xml(&mut xml, &blob.key);
+            xml.push_str("</Name><Properties><Content-Length>");
+            write!(&mut xml, "{}", blob.size).unwrap();
+            xml.push_str("</Content-Length><Content-Type>");
+            push_escaped_xml(&mut xml, &blob.content_type);
+            xml.push_str("</Content-Type><Etag>\"");
+            push_escaped_xml(&mut xml, &blob.etag);
+            xml.push_str("\"</Etag><BlobType>");
+            push_escaped_xml(&mut xml, blob_type);
+            xml.push_str("</BlobType><Last-Modified>");
+            xml.push_str(&blob.last_modified.to_rfc2822());
+            xml.push_str("</Last-Modified></Properties></Blob>");
         }
 
         xml.push_str("</Blobs><NextMarker /></EnumerationResults>");
@@ -236,15 +249,15 @@ impl AzureBlobAdapter {
     }
 
     fn block_list_xml(block_ids: &[String]) -> String {
-        let blocks = block_ids
-            .iter()
-            .map(|id| format!("<Committed>{}</Committed>", escape_xml(id)))
-            .collect::<Vec<_>>()
-            .join("");
-        format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>{}</BlockList>",
-            blocks
-        )
+        let mut xml = String::with_capacity(64 + block_ids.len() * 32);
+        xml.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>");
+        for id in block_ids {
+            xml.push_str("<Committed>");
+            push_escaped_xml(&mut xml, id);
+            xml.push_str("</Committed>");
+        }
+        xml.push_str("</BlockList>");
+        xml
     }
 
     fn blob_type(blob: &crate::models::Object) -> &str {
@@ -1266,12 +1279,9 @@ impl AzureBlobAdapter {
                     );
                     Self::set_blob_type(&mut object, "AppendBlob");
                     storage
-                        .put_object(&container, blob_key.clone(), object)
+                        .put_object(&container, blob_key.clone(), object.clone())
                         .map_err(|err| err.to_string())?;
-                    storage
-                        .as_ref()
-                        .get_object(&container, &blob_key)
-                        .map_err(|err| err.to_string())?
+                    object
                 } else if blob_type == "PageBlob" {
                     let declared_len = req
                         .header("x-ms-blob-content-length")
@@ -1293,38 +1303,21 @@ impl AzureBlobAdapter {
                     );
                     Self::set_blob_type(&mut object, "PageBlob");
                     storage
-                        .put_object(&container, blob_key.clone(), object)
+                        .put_object(&container, blob_key.clone(), object.clone())
                         .map_err(|err| err.to_string())?;
-                    storage
-                        .as_ref()
-                        .get_object(&container, &blob_key)
-                        .map_err(|err| err.to_string())?
+                    object
                 } else {
-                    let mut stored = storage
-                        .as_ref()
-                        .put_blob(PutBlobRequest {
-                            namespace: container.clone(),
-                            key: blob_key.clone(),
-                            data: req.body.to_vec(),
-                            content_type: Self::content_type(&req),
-                            metadata: Self::metadata_from_headers(&req),
-                            tags: HashMap::new(),
-                        })
-                        .map_err(|err| err.to_string())?;
-                    stored
-                        .provider_metadata
-                        .insert(AZURE_BLOB_TYPE_KEY.to_string(), "BlockBlob".to_string());
-                    let mut object = storage
-                        .get_object(&container, &blob_key)
-                        .map_err(|err| err.to_string())?;
+                    let mut object = crate::models::Object::new_with_metadata(
+                        blob_key.clone(),
+                        req.body.to_vec(),
+                        Self::content_type(&req),
+                        Self::metadata_from_headers(&req),
+                    );
                     Self::set_blob_type(&mut object, "BlockBlob");
                     storage
-                        .put_object(&container, blob_key.clone(), object)
+                        .put_object(&container, blob_key.clone(), object.clone())
                         .map_err(|err| err.to_string())?;
-                    storage
-                        .as_ref()
-                        .get_object(&container, &blob_key)
-                        .map_err(|err| err.to_string())?
+                    object
                 };
                 Ok(Self::response(StatusCode::CREATED)
                     .header("etag", &format!("\"{}\"", stored.etag))

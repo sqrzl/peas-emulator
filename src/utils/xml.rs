@@ -1,6 +1,7 @@
 /// XML response builders for S3-compliant responses
 use crate::models::{Acl, Bucket, CannedAcl, MultipartUpload, Object, Owner, Part};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 mod parse;
 
@@ -56,7 +57,7 @@ pub fn tagging_xml(tags: &HashMap<String, String>) -> String {
     );
 
     let mut entries: Vec<_> = tags.iter().collect();
-    entries.sort_by_key(|(left_key, _)| *left_key);
+    entries.sort_unstable_by_key(|(left_key, _)| *left_key);
 
     for (k, v) in entries {
         xml.push_str(&format!(
@@ -311,12 +312,12 @@ pub fn list_versions_xml(
     next_key_marker: Option<&str>,
     next_version_id_marker: Option<&str>,
 ) -> String {
-    let mut seen_keys = std::collections::HashSet::new();
-    let mut versions_xml = String::new();
+    let mut seen_keys = std::collections::HashSet::with_capacity(versions.len());
+    let mut versions_xml = String::with_capacity(versions.len() * 256);
     for obj in versions {
         let version_id = obj.version_id.as_deref().unwrap_or("null");
         let last_modified = obj.last_modified.format("%Y-%m-%dT%H:%M:%S%.3fZ");
-        let is_latest = seen_keys.insert(obj.key.clone());
+        let is_latest = seen_keys.insert(obj.key.as_str());
         versions_xml.push_str(&format!(
             r#"
   <Version>
@@ -363,16 +364,20 @@ pub fn list_versions_xml(
 
     if truncated {
         if let Some(nkm) = next_key_marker {
-            result.push_str(&format!(
+            write!(
+                &mut result,
                 "\n  <NextKeyMarker>{}</NextKeyMarker>",
                 escape_xml(nkm)
-            ));
+            )
+            .unwrap();
         }
         if let Some(nvm) = next_version_id_marker {
-            result.push_str(&format!(
+            write!(
+                &mut result,
                 "\n  <NextVersionIdMarker>{}</NextVersionIdMarker>",
                 escape_xml(nvm)
-            ));
+            )
+            .unwrap();
         }
     }
 
@@ -722,13 +727,39 @@ pub fn lifecycle_xml(config: &crate::models::lifecycle::LifecycleConfiguration) 
     xml
 }
 
+pub(crate) fn push_escaped_xml(out: &mut String, s: &str) {
+    let mut start = 0;
+    let bytes = s.as_bytes();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        let replacement = match byte {
+            b'&' => Some("&amp;"),
+            b'<' => Some("&lt;"),
+            b'>' => Some("&gt;"),
+            b'"' => Some("&quot;"),
+            b'\'' => Some("&apos;"),
+            _ => None,
+        };
+
+        if let Some(replacement) = replacement {
+            if start < index {
+                out.push_str(&s[start..index]);
+            }
+            out.push_str(replacement);
+            start = index + 1;
+        }
+    }
+
+    if start < s.len() {
+        out.push_str(&s[start..]);
+    }
+}
+
 /// Helper to escape XML special characters
 fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut escaped = String::with_capacity(s.len());
+    push_escaped_xml(&mut escaped, s);
+    escaped
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Object {
     pub key: String,
+    #[serde(default, skip_serializing)]
     pub data: Vec<u8>,
     pub size: u64,
     pub etag: String,
@@ -33,8 +34,18 @@ impl Object {
         content_type: String,
         metadata: HashMap<String, String>,
     ) -> Self {
-        let size = data.len() as u64;
         let etag = compute_etag(&data);
+        Self::new_with_metadata_and_etag(key, data, content_type, metadata, etag)
+    }
+
+    pub fn new_with_metadata_and_etag(
+        key: String,
+        data: Vec<u8>,
+        content_type: String,
+        metadata: HashMap<String, String>,
+        etag: String,
+    ) -> Self {
+        let size = data.len() as u64;
 
         Self {
             key,

@@ -67,6 +67,14 @@ harness = false
 name = "tier4_integration_oci"
 harness = false
 
+[[bench]]
+name = "tier4_integration_oci_multipart"
+harness = false
+
+[[bench]]
+name = "tier4_integration_oci_multipart_stream"
+harness = false
+
 [[bin]]
 name = "peas-emulator"
 path = "src/main.rs"

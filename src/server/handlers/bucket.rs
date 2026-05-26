@@ -928,7 +928,7 @@ pub async fn bucket_get_or_list_objects(
             object_service::list_object_versions(storage.as_ref(), bucket, prefix)
         }) {
             Ok(mut versions) => {
-                versions.sort_by(|left, right| {
+                versions.sort_unstable_by(|left, right| {
                     right
                         .last_modified
                         .cmp(&left.last_modified)

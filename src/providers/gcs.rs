@@ -4,12 +4,14 @@ use crate::blob::{BlobBackend, BlobRange, PutBlobRequest, UpdateBlobMetadataRequ
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
 use crate::utils::request_origin;
+use crate::utils::xml::push_escaped_xml;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hmac::{Hmac, Mac};
 use http::{Method, StatusCode};
 use hyper::{Body, Response};
 use sha1::Sha1;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -1258,14 +1260,16 @@ impl GcsAdapter {
                     .as_ref()
                     .list_namespaces()
                     .map_err(|err| err.to_string())?;
-                let body = format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets>{}</Buckets></ListAllMyBucketsResult>",
-                    buckets
-                        .iter()
-                        .map(|bucket| format!("<Bucket><Name>{}</Name></Bucket>", bucket.name))
-                        .collect::<Vec<_>>()
-                        .join("")
+                let mut body = String::with_capacity(128 + buckets.len() * 64);
+                body.push_str(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets>",
                 );
+                for bucket in buckets {
+                    body.push_str("<Bucket><Name>");
+                    push_escaped_xml(&mut body, &bucket.name);
+                    body.push_str("</Name></Bucket>");
+                }
+                body.push_str("</Buckets></ListAllMyBucketsResult>");
                 return Ok(Self::xml_response(StatusCode::OK, body));
             }
 
@@ -1306,24 +1310,26 @@ impl GcsAdapter {
                         None,
                     )
                     .map_err(|err| err.to_string())?;
-                let body = format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult><Name>{}</Name>{}</ListBucketResult>",
-                    bucket,
-                    blobs
-                        .iter()
-                        .map(|blob| format!(
-                            "<Contents><Key>{}</Key><Size>{}</Size><ETag>{}</ETag><Generation>{}</Generation></Contents>",
-                            blob.key,
-                            blob.size,
-                            blob.etag,
-                            blob
-                                .version_id
-                                .clone()
-                                .unwrap_or_else(|| blob.last_modified.timestamp_millis().max(1).to_string())
-                        ))
-                        .collect::<Vec<_>>()
-                        .join("")
-                );
+                let mut body = String::with_capacity(128 + blobs.len() * 128);
+                body.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult><Name>");
+                push_escaped_xml(&mut body, &bucket);
+                body.push_str("</Name>");
+                for blob in blobs {
+                    let generation = blob.version_id.as_deref().map_or_else(
+                        || blob.last_modified.timestamp_millis().max(1).to_string(),
+                        str::to_string,
+                    );
+                    body.push_str("<Contents><Key>");
+                    push_escaped_xml(&mut body, &blob.key);
+                    body.push_str("</Key><Size>");
+                    write!(&mut body, "{}", blob.size).unwrap();
+                    body.push_str("</Size><ETag>");
+                    push_escaped_xml(&mut body, &blob.etag);
+                    body.push_str("</ETag><Generation>");
+                    push_escaped_xml(&mut body, &generation);
+                    body.push_str("</Generation></Contents>");
+                }
+                body.push_str("</ListBucketResult>");
                 Ok(Self::xml_response(StatusCode::OK, body))
             }
             (&Method::PUT, Some(object)) => {

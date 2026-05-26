@@ -166,9 +166,18 @@ impl<T: Storage + ?Sized> BlobBackend for T {
             request.metadata,
         );
         object.tags = request.tags;
+
+        let versioning_enabled = self.get_bucket(&request.namespace)?.versioning_enabled;
+        let record = BlobRecord::from_object(&request.namespace, &object);
+
         self.put_object(&request.namespace, request.key.clone(), object)?;
-        let stored = self.get_object(&request.namespace, &request.key)?;
-        Ok(BlobRecord::from_object(&request.namespace, &stored))
+
+        if versioning_enabled {
+            let stored = self.get_object(&request.namespace, &request.key)?;
+            Ok(BlobRecord::from_object(&request.namespace, &stored))
+        } else {
+            Ok(record)
+        }
     }
 
     fn get_blob(&self, namespace: &str, key: &str) -> Result<Object> {

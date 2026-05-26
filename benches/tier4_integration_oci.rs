@@ -109,105 +109,10 @@ fn bench_get_object(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_multipart_upload(c: &mut Criterion) {
-    let runtime = build_runtime();
-    let server = runtime.block_on(LiveServer::start_api(auth_disabled()));
-    let bucket = "tier4-oci-multipart";
-    runtime.block_on(create_bucket(&server, bucket));
-    let object = "multi.txt";
-    let init_url = format!("{}/n/{}/b/{}/u", server.base_url, TENANT, bucket);
-    let multipart_url = format!("{}/n/{}/b/{}/u/{}", server.base_url, TENANT, bucket, object);
-    let part_one = Bytes::from(vec![b'a'; 4096]);
-    let part_two = Bytes::from(vec![b'b'; 4096]);
-
-    let mut group = c.benchmark_group("tier4_integration_oci_multipart_upload");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Bytes((part_one.len() + part_two.len()) as u64));
-    group.bench_function(
-        BenchmarkId::new("multipart_upload", part_one.len() + part_two.len()),
-        |b| {
-            b.iter(|| {
-                let init_request = Request::builder()
-                    .method("POST")
-                    .uri(&init_url)
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({
-                            "object": object,
-                            "contentType": "text/plain",
-                            "metadata": { "owner": "bench" },
-                            "storageTier": "InfrequentAccess"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("multipart init request should build");
-                let init_body = runtime.block_on(server.response_bytes(init_request));
-                let init_json: serde_json::Value =
-                    serde_json::from_slice(&init_body).expect("multipart init body should parse");
-                let upload_id = init_json
-                    .get("uploadId")
-                    .and_then(|value| value.as_str())
-                    .expect("multipart upload id should exist")
-                    .to_string();
-
-                let part_one_request = Request::builder()
-                    .method("PUT")
-                    .uri(format!(
-                        "{multipart_url}?uploadId={upload_id}&uploadPartNum=1"
-                    ))
-                    .body(Body::from(part_one.clone()))
-                    .expect("multipart part one request should build");
-                let part_one_response = runtime.block_on(server.request(part_one_request));
-                assert_eq!(part_one_response.status(), StatusCode::OK);
-                let etag_one = part_one_response
-                    .headers()
-                    .get("etag")
-                    .and_then(|value| value.to_str().ok())
-                    .expect("multipart part one etag should exist")
-                    .to_string();
-
-                let part_two_request = Request::builder()
-                    .method("PUT")
-                    .uri(format!(
-                        "{multipart_url}?uploadId={upload_id}&uploadPartNum=2"
-                    ))
-                    .body(Body::from(part_two.clone()))
-                    .expect("multipart part two request should build");
-                let part_two_response = runtime.block_on(server.request(part_two_request));
-                assert_eq!(part_two_response.status(), StatusCode::OK);
-                let etag_two = part_two_response
-                    .headers()
-                    .get("etag")
-                    .and_then(|value| value.to_str().ok())
-                    .expect("multipart part two etag should exist")
-                    .to_string();
-
-                let commit_request = Request::builder()
-                    .method("POST")
-                    .uri(format!("{multipart_url}?uploadId={upload_id}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({
-                            "partsToCommit": [
-                                { "partNum": 1, "etag": etag_one },
-                                { "partNum": 2, "etag": etag_two }
-                            ]
-                        })
-                        .to_string(),
-                    ))
-                    .expect("multipart commit request should build");
-                let commit_response = runtime.block_on(server.request(commit_request));
-                assert_eq!(commit_response.status(), StatusCode::OK);
-                black_box(commit_response.headers().get("etag").cloned());
-            })
-        },
-    );
-    group.finish();
-}
-
 criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier4();
-    targets = bench_put_object, bench_get_object, bench_multipart_upload
+    targets = bench_put_object, bench_get_object
 }
+
 criterion_main!(benches);
