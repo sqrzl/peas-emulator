@@ -3,6 +3,7 @@ use crate::auth::{AuthConfig, HttpRequestLike};
 use crate::blob::{BlobBackend, BlobRange, PutBlobRequest, UpdateBlobMetadataRequest};
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
+use crate::utils::request_origin;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hmac::{Hmac, Mac};
 use http::{Method, StatusCode};
@@ -1479,11 +1480,10 @@ impl GcsAdapter {
                         metadata: Self::metadata_from_headers(&req),
                     },
                 );
+            let upload_location =
+                format!("{}/upload/resumable/{}", request_origin(&req), session_id);
             return Ok(Self::response(StatusCode::OK)
-                .header(
-                    "location",
-                    &format!("http://storage.localhost/upload/resumable/{}", session_id),
-                )
+                .header("location", &upload_location)
                 .empty());
         }
 

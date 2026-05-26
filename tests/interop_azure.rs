@@ -193,7 +193,11 @@ async fn should_list_containers_and_blobs_given_stored_objects_when_querying_azu
             request(
                 "GET",
                 "http://localhost/devstoreaccount1?comp=list",
-                &[("x-ms-version", AZURE_VERSION)],
+                &[
+                    ("host", "storage.localhost:9443"),
+                    ("x-forwarded-proto", "https"),
+                    ("x-ms-version", AZURE_VERSION),
+                ],
                 b"",
             )
             .await,
@@ -202,6 +206,9 @@ async fn should_list_containers_and_blobs_given_stored_objects_when_querying_azu
     )
     .await;
     assert!(containers.contains("interop-azure"));
+    assert!(
+        containers.contains("ServiceEndpoint=\"https://storage.localhost:9443/devstoreaccount1\"")
+    );
 
     let blobs = body_text(
         call(

@@ -231,7 +231,8 @@ async fn should_complete_resumable_upload_given_json_api_session_when_finalizing
             "POST",
             "http://localhost/upload/storage/v1/b/json-bucket/o?uploadType=resumable&name=hello.txt",
             &[
-                ("host", "storage.googleapis.com"),
+                ("host", "storage.googleapis.com:8443"),
+                ("x-forwarded-proto", "https"),
                 ("x-upload-content-type", "text/plain"),
                 ("x-goog-meta-owner", "jules"),
             ],
@@ -246,6 +247,7 @@ async fn should_complete_resumable_upload_given_json_api_session_when_finalizing
         .and_then(|value| value.to_str().ok())
         .expect("location should exist")
         .to_string();
+    assert!(location.starts_with("https://storage.googleapis.com:8443/upload/resumable/"));
     call_with_registry(
         adapters.clone(),
         storage.clone(),
@@ -253,7 +255,10 @@ async fn should_complete_resumable_upload_given_json_api_session_when_finalizing
         request(
             "PUT",
             &location,
-            &[("host", "storage.googleapis.com")],
+            &[
+                ("host", "storage.googleapis.com:8443"),
+                ("x-forwarded-proto", "https"),
+            ],
             b"json api",
         )
         .await,

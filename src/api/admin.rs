@@ -43,6 +43,30 @@ pub async fn handle_request(
                 Method::PUT => set_bucket_versioning(storage, &bucket, req).await,
                 _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
             },
+            Some("acl") => match method {
+                Method::GET => get_bucket_acl(storage, &bucket),
+                Method::PUT => set_bucket_acl(storage, &bucket, req).await,
+                _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+            },
+            Some("policy") => match method {
+                Method::GET => get_bucket_policy(storage, &bucket),
+                Method::PUT => set_bucket_policy(storage, &bucket, req).await,
+                Method::DELETE => delete_bucket_policy(storage, &bucket),
+                _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+            },
+            Some("lifecycle") => match method {
+                Method::GET => get_bucket_lifecycle(storage, &bucket),
+                Method::PUT => set_bucket_lifecycle(storage, &bucket, req).await,
+                Method::DELETE => delete_bucket_lifecycle(storage, &bucket),
+                _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+            },
+            Some("multipart-uploads") => match method {
+                Method::GET => list_multipart_uploads(storage, &bucket, &query),
+                _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+            },
+            Some(remainder) if remainder.starts_with("multipart-uploads/") => {
+                handle_multipart_upload_request(storage, &bucket, remainder, req).await
+            }
             Some("objects") => match method {
                 Method::GET => list_objects(storage, &bucket, &query),
                 _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
@@ -167,6 +191,7 @@ enum PageTokenKind {
     Buckets,
     Objects,
     Versions,
+    MultipartUploads,
 }
 
 impl PageTokenKind {
@@ -175,6 +200,7 @@ impl PageTokenKind {
             Self::Buckets => "buckets",
             Self::Objects => "objects",
             Self::Versions => "versions",
+            Self::MultipartUploads => "multipart-uploads",
         }
     }
 }
@@ -352,6 +378,74 @@ async fn set_bucket_versioning(
     ))
 }
 
+fn get_bucket_acl(storage: Arc<dyn Storage>, bucket: &str) -> Result<Response<Body>> {
+    let acl =
+        tokio::task::block_in_place(|| bucket_service::get_bucket_acl(storage.as_ref(), bucket))?;
+    Ok(json_response(StatusCode::OK, &acl))
+}
+
+async fn set_bucket_acl(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    req: Request<Body>,
+) -> Result<Response<Body>> {
+    let acl: crate::models::policy::Acl = read_json(req).await?;
+    tokio::task::block_in_place(|| {
+        bucket_service::put_bucket_acl(storage.as_ref(), bucket, acl.clone())
+    })?;
+    Ok(json_response(StatusCode::OK, &acl))
+}
+
+fn get_bucket_policy(storage: Arc<dyn Storage>, bucket: &str) -> Result<Response<Body>> {
+    let policy = tokio::task::block_in_place(|| {
+        bucket_service::get_bucket_policy(storage.as_ref(), bucket)
+    })?;
+    Ok(json_response(StatusCode::OK, &policy))
+}
+
+async fn set_bucket_policy(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    req: Request<Body>,
+) -> Result<Response<Body>> {
+    let policy: crate::models::policy::BucketPolicyDocument = read_json(req).await?;
+    tokio::task::block_in_place(|| {
+        bucket_service::put_bucket_policy(storage.as_ref(), bucket, policy.clone())
+    })?;
+    Ok(json_response(StatusCode::OK, &policy))
+}
+
+fn delete_bucket_policy(storage: Arc<dyn Storage>, bucket: &str) -> Result<Response<Body>> {
+    tokio::task::block_in_place(|| bucket_service::delete_bucket_policy(storage.as_ref(), bucket))?;
+    Ok(empty_response(StatusCode::NO_CONTENT))
+}
+
+fn get_bucket_lifecycle(storage: Arc<dyn Storage>, bucket: &str) -> Result<Response<Body>> {
+    let lifecycle = tokio::task::block_in_place(|| {
+        bucket_service::get_bucket_lifecycle(storage.as_ref(), bucket)
+    })?;
+    Ok(json_response(StatusCode::OK, &lifecycle))
+}
+
+async fn set_bucket_lifecycle(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    req: Request<Body>,
+) -> Result<Response<Body>> {
+    let lifecycle: crate::models::lifecycle::LifecycleConfiguration = read_json(req).await?;
+    tokio::task::block_in_place(|| {
+        bucket_service::put_bucket_lifecycle(storage.as_ref(), bucket, lifecycle.clone())
+    })?;
+    Ok(json_response(StatusCode::OK, &lifecycle))
+}
+
+fn delete_bucket_lifecycle(storage: Arc<dyn Storage>, bucket: &str) -> Result<Response<Body>> {
+    tokio::task::block_in_place(|| {
+        bucket_service::delete_bucket_lifecycle(storage.as_ref(), bucket)
+    })?;
+    Ok(empty_response(StatusCode::NO_CONTENT))
+}
+
 fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<Response<Body>> {
     let page = parse_page_params(query, PageTokenKind::Objects)?;
     let mut objects = tokio::task::block_in_place(|| {
@@ -373,6 +467,79 @@ fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<
             next: encode_next(next, PageTokenKind::Objects),
         },
     ))
+}
+
+fn list_multipart_uploads(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    query: &str,
+) -> Result<Response<Body>> {
+    let page = parse_page_params(query, PageTokenKind::MultipartUploads)?;
+    let mut uploads = tokio::task::block_in_place(|| {
+        bucket_service::list_multipart_uploads(storage.as_ref(), bucket)
+    })?;
+    uploads.sort_by_key(|upload| std::cmp::Reverse(upload.initiated));
+    let uploads = uploads
+        .into_iter()
+        .filter(|upload| {
+            contains_search(&upload.key, page.search.as_deref())
+                || contains_search(&upload.upload_id, page.search.as_deref())
+        })
+        .collect::<Vec<_>>();
+    let (items, next) = paginate(uploads, &page);
+
+    Ok(json_response(
+        StatusCode::OK,
+        &crate::api::models::ListMultipartUploadsResponse {
+            items,
+            next: encode_next(next, PageTokenKind::MultipartUploads),
+        },
+    ))
+}
+
+async fn handle_multipart_upload_request(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    remainder: &str,
+    req: Request<Body>,
+) -> Result<Response<Body>> {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let upload_id = remainder
+        .strip_prefix("multipart-uploads/")
+        .ok_or_else(|| Error::RouteNotFound(path.clone()))?;
+    let upload_id = decode_component(upload_id);
+    if upload_id.is_empty() {
+        return Err(Error::InvalidRequest("Missing upload id".into()));
+    }
+
+    match method {
+        Method::GET => get_multipart_upload(storage, bucket, &upload_id),
+        Method::DELETE => abort_multipart_upload(storage, bucket, &upload_id),
+        _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+    }
+}
+
+fn get_multipart_upload(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    upload_id: &str,
+) -> Result<Response<Body>> {
+    let upload = tokio::task::block_in_place(|| {
+        object_service::get_multipart_upload(storage.as_ref(), bucket, upload_id)
+    })?;
+    Ok(json_response(StatusCode::OK, &upload))
+}
+
+fn abort_multipart_upload(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    upload_id: &str,
+) -> Result<Response<Body>> {
+    tokio::task::block_in_place(|| {
+        object_service::abort_multipart_upload(storage.as_ref(), bucket, upload_id)
+    })?;
+    Ok(empty_response(StatusCode::NO_CONTENT))
 }
 
 async fn handle_object_request(
@@ -406,11 +573,31 @@ async fn handle_object_request(
         };
     }
 
+    if let Some((key, version_id)) = object_rest.rsplit_once("/versions/") {
+        let key = decode_component(key);
+        let version_id = decode_component(version_id);
+        if !key.is_empty() && !version_id.is_empty() {
+            return match method {
+                Method::DELETE => delete_object_version(storage, bucket, &key, &version_id),
+                _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+            };
+        }
+    }
+
     if let Some(key) = object_rest.strip_suffix("/tags") {
         let key = decode_component(key);
         return match method {
             Method::GET => get_object_tags(storage, bucket, &key),
             Method::PUT => put_object_tags(storage, bucket, &key, req).await,
+            _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
+        };
+    }
+
+    if let Some(key) = object_rest.strip_suffix("/acl") {
+        let key = decode_component(key);
+        return match method {
+            Method::GET => get_object_acl(storage, bucket, &key),
+            Method::PUT => set_object_acl(storage, bucket, &key, req).await,
             _ => Err(Error::MethodNotAllowed(format!("{} {}", method, path))),
         };
     }
@@ -518,7 +705,7 @@ fn list_object_versions(
     let mut versions = tokio::task::block_in_place(|| {
         object_service::list_object_versions(storage.as_ref(), bucket, Some(key))
     })?;
-    versions.sort_by(|left, right| right.last_modified.cmp(&left.last_modified));
+    versions.sort_by_key(|version| std::cmp::Reverse(version.last_modified));
     let versions = versions
         .into_iter()
         .filter(|object| {
@@ -562,6 +749,38 @@ fn get_object_tags(storage: Arc<dyn Storage>, bucket: &str, key: &str) -> Result
     ))
 }
 
+fn get_object_acl(storage: Arc<dyn Storage>, bucket: &str, key: &str) -> Result<Response<Body>> {
+    let acl = tokio::task::block_in_place(|| {
+        object_service::get_object_acl(storage.as_ref(), bucket, key)
+    })?;
+    Ok(json_response(StatusCode::OK, &acl))
+}
+
+async fn set_object_acl(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    req: Request<Body>,
+) -> Result<Response<Body>> {
+    let acl: crate::models::policy::Acl = read_json(req).await?;
+    tokio::task::block_in_place(|| {
+        object_service::put_object_acl(storage.as_ref(), bucket, key, acl.clone())
+    })?;
+    Ok(json_response(StatusCode::OK, &acl))
+}
+
+fn delete_object_version(
+    storage: Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    version_id: &str,
+) -> Result<Response<Body>> {
+    tokio::task::block_in_place(|| {
+        object_service::delete_object_version(storage.as_ref(), bucket, key, version_id)
+    })?;
+    Ok(empty_response(StatusCode::NO_CONTENT))
+}
+
 async fn put_object_tags(
     storage: Arc<dyn Storage>,
     bucket: &str,
@@ -587,13 +806,14 @@ async fn put_object_tags(
 mod tests {
     use super::*;
     use crate::api::models::{
-        BucketDetails, ErrorResponse, ListBucketsResponse, ListObjectsResponse,
-        ListVersionsResponse, ObjectMetadata, TagsResponse, VersioningStatus,
+        BucketDetails, ErrorResponse, ListBucketsResponse, ListMultipartUploadsResponse,
+        ListObjectsResponse, ListVersionsResponse, ObjectMetadata, TagsResponse, VersioningStatus,
     };
     use crate::storage::FilesystemStorage;
     use hyper::body::to_bytes;
     use hyper::Request;
     use serde::de::DeserializeOwned;
+    use serde_json::Value;
     use std::fs;
 
     fn temp_storage() -> Arc<dyn Storage> {
@@ -614,6 +834,10 @@ mod tests {
             .await
             .expect("response body should read");
         serde_json::from_slice(&bytes).expect("response body should deserialize")
+    }
+
+    async fn json_value(resp: Response<Body>) -> Value {
+        json_body(resp).await
     }
 
     fn assert_json_content_type(resp: &Response<Body>) {
@@ -750,6 +974,249 @@ mod tests {
         assert_json_content_type(&resp);
         let tags: TagsResponse = json_body(resp).await;
         assert_eq!(tags.tags.get("env"), Some(&"dev".to_string()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn admin_bucket_control_plane_round_trips_acl_policy_lifecycle_and_multipart_uploads() {
+        let storage = temp_storage();
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/v1/buckets")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"name\":\"demo\"}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/acl")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"canned":"public-read","grants":[]}"#))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let acl = json_value(resp).await;
+        assert_eq!(acl["canned"], "public-read");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/acl")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let acl = json_value(resp).await;
+        assert_eq!(acl["canned"], "public-read");
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/policy")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"Version":"2012-10-17","Statement":[{"Sid":"allow-read","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::demo/*"}]}"#,
+            ))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let policy = json_value(resp).await;
+        assert_eq!(policy["Version"], "2012-10-17");
+        assert_eq!(policy["Statement"][0]["Effect"], "Allow");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/policy")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let policy = json_value(resp).await;
+        assert_eq!(policy["Statement"][0]["Action"], "s3:GetObject");
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/admin/v1/buckets/demo/policy")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/lifecycle")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"rules":[{"id":"expire","status":"Enabled","filter":{"prefix":"logs/","tags":[]},"expiration":null,"noncurrent_version_expiration":null,"transitions":[]}]}"#,
+            ))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let lifecycle = json_value(resp).await;
+        assert_eq!(lifecycle["rules"][0]["id"], "expire");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/lifecycle")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let lifecycle = json_value(resp).await;
+        assert_eq!(lifecycle["rules"][0]["status"], "Enabled");
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/admin/v1/buckets/demo/lifecycle")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let upload = storage
+            .as_ref()
+            .create_multipart_upload("demo", "video.bin".to_string())
+            .expect("multipart upload should create");
+        storage
+            .as_ref()
+            .upload_part("demo", &upload.upload_id, 1, b"part-1".to_vec())
+            .expect("multipart part should upload");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/multipart-uploads?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let uploads: ListMultipartUploadsResponse = json_body(resp).await;
+        assert_eq!(uploads.items.len(), 1);
+        assert_eq!(uploads.items[0].upload_id, upload.upload_id);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!(
+                "/admin/v1/buckets/demo/multipart-uploads/{}",
+                upload.upload_id
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let detailed: crate::models::MultipartUpload = json_body(resp).await;
+        assert_eq!(detailed.parts.len(), 1);
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri(format!(
+                "/admin/v1/buckets/demo/multipart-uploads/{}",
+                upload.upload_id
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn admin_object_acl_and_version_deletion_round_trip() {
+        let storage = temp_storage();
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/v1/buckets")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"name\":\"demo\"}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/versioning")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"enabled\":true}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        for body in ["v1", "v2"] {
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri("/admin/v1/buckets/demo/objects/versioned.txt/content")
+                .header("content-type", "text/plain")
+                .body(Body::from(body))
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+            assert!(matches!(
+                resp.status(),
+                StatusCode::CREATED | StatusCode::OK
+            ));
+        }
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/objects/versioned.txt/acl")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"canned":"private","grants":[]}"#))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let acl = json_value(resp).await;
+        assert_eq!(acl["canned"], "private");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects/versioned.txt/acl")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let acl = json_value(resp).await;
+        assert_eq!(acl["canned"], "private");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects/versioned.txt/versions?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let versions: ListVersionsResponse = json_body(resp).await;
+        assert!(versions.items.len() >= 2);
+
+        let stale_version = versions
+            .items
+            .iter()
+            .find(|version| !version.is_latest)
+            .expect("expected a non-latest version")
+            .version_id
+            .clone();
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri(format!(
+                "/admin/v1/buckets/demo/objects/versioned.txt/versions/{}",
+                stale_version
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects/versioned.txt/versions?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let versions_after: ListVersionsResponse = json_body(resp).await;
+        assert!(versions_after.items.len() < versions.items.len());
     }
 
     #[tokio::test(flavor = "multi_thread")]

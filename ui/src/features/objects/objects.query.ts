@@ -1,5 +1,6 @@
 import { adminApi } from '../../adapters';
 import type {
+  Acl,
   ListVersionsResponse,
   ObjectInfo,
   ObjectMetadata,
@@ -103,6 +104,36 @@ export async function putObjectTags({
   );
 }
 
+export async function loadObjectAcl({
+  bucketName,
+  objectKey,
+  signal,
+}: {
+  bucketName: string;
+  objectKey: string;
+  signal: AbortSignal;
+}): Promise<Acl> {
+  return unwrapProtectedResponse(
+    await adminApi.getObjectAcl(bucketName, objectKey, { signal })
+  );
+}
+
+export async function saveObjectAcl({
+  bucketName,
+  objectKey,
+  acl,
+  signal,
+}: {
+  bucketName: string;
+  objectKey: string;
+  acl: Acl;
+  signal?: AbortSignal;
+}): Promise<Acl> {
+  return unwrapProtectedResponse(
+    await adminApi.setObjectAcl(bucketName, objectKey, acl, { signal })
+  );
+}
+
 export async function loadObjectVersions({
   bucketName,
   objectKey,
@@ -190,5 +221,23 @@ export async function deleteObject({
 }): Promise<void> {
   unwrapProtectedResponse(
     await adminApi.deleteObject(bucketName, objectKey, { signal })
+  );
+}
+
+export async function deleteObjectVersion({
+  bucketName,
+  objectKey,
+  versionId,
+  signal,
+}: {
+  bucketName: string;
+  objectKey: string;
+  versionId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  unwrapProtectedResponse(
+    await adminApi.deleteObjectVersion(bucketName, objectKey, versionId, {
+      signal,
+    })
   );
 }

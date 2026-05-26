@@ -5,6 +5,7 @@ use crate::blob::{
 };
 use crate::server::{RequestExt as Request, ResponseBuilder};
 use crate::storage::Storage;
+use crate::utils::request_origin;
 use base64::{
     engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
     Engine as _,
@@ -180,10 +181,15 @@ impl AzureBlobAdapter {
             .to_string()
     }
 
-    fn list_containers_xml(account: &str, namespaces: &[crate::blob::Namespace]) -> String {
+    fn list_containers_xml(
+        req: &Request,
+        account: &str,
+        namespaces: &[crate::blob::Namespace],
+    ) -> String {
+        let service_endpoint = escape_xml(&format!("{}/{}", request_origin(req), account));
         let mut xml = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ServiceEndpoint=\"http://127.0.0.1:9000/{}\"><Containers>",
-            escape_xml(account)
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ServiceEndpoint=\"{}\"><Containers>",
+            service_endpoint
         );
 
         for namespace in namespaces {
@@ -762,7 +768,7 @@ impl AzureBlobAdapter {
                     .map_err(|err| err.to_string())?;
                 return Ok(Self::xml_response(
                     StatusCode::OK,
-                    Self::list_containers_xml(&resource.account, &namespaces),
+                    Self::list_containers_xml(&req, &resource.account, &namespaces),
                 ));
             }
 

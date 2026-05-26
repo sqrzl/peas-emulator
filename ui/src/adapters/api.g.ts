@@ -78,6 +78,75 @@ export function createAdapter(client: FetchClient): {
    */
 	getBucket: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<BucketDetails>>;
   /**
+   * Get bucket ACL
+   *
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<Acl>
+   */
+	getBucketAcl: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<Acl>>;
+  /**
+   * Replace bucket ACL
+   *
+   * @param bucketName - Bucket name.
+   * @param body - Request body
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<Acl>
+   */
+	setBucketAcl: (bucketName: string, body: Acl, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<Acl>>;
+  /**
+   * Delete bucket lifecycle configuration
+   *
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+	deleteBucketLifecycle: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
+  /**
+   * Get bucket lifecycle configuration
+   *
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<LifecycleConfiguration>
+   */
+	getBucketLifecycle: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<LifecycleConfiguration>>;
+  /**
+   * Replace bucket lifecycle configuration
+   *
+   * @param bucketName - Bucket name.
+   * @param body - Request body
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<LifecycleConfiguration>
+   */
+	setBucketLifecycle: (bucketName: string, body: LifecycleConfiguration, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<LifecycleConfiguration>>;
+  /**
+   * List multipart uploads
+   *
+   * @param bucketName - Bucket name.
+   * @param query - Query parameters
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ListMultipartUploadsResponse>
+   */
+	listMultipartUploads: (bucketName: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ListMultipartUploadsResponse>>;
+  /**
+   * Abort multipart upload
+   *
+   * @param bucketName - Bucket name.
+   * @param uploadId - Multipart upload ID.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+	abortMultipartUpload: (bucketName: string, uploadId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
+  /**
+   * Get multipart upload
+   *
+   * @param bucketName - Bucket name.
+   * @param uploadId - Multipart upload ID.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<MultipartUpload>
+   */
+	getMultipartUpload: (bucketName: string, uploadId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<MultipartUpload>>;
+  /**
    * List objects in a bucket
    *
    * @param bucketName - Bucket name.
@@ -104,6 +173,25 @@ export function createAdapter(client: FetchClient): {
    * @returns Promise resolving to FetchResponse<ObjectMetadata>
    */
 	getObjectMetadata: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ObjectMetadata>>;
+  /**
+   * Get object ACL
+   *
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<Acl>
+   */
+	getObjectAcl: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<Acl>>;
+  /**
+   * Replace object ACL
+   *
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param body - Request body
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<Acl>
+   */
+	setObjectAcl: (bucketName: string, objectKey: string, body: Acl, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<Acl>>;
   /**
    * Download object content
    *
@@ -153,6 +241,41 @@ export function createAdapter(client: FetchClient): {
    */
 	listObjectVersions: (bucketName: string, objectKey: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<ListVersionsResponse>>;
   /**
+   * Delete object version
+   *
+   * @param bucketName - Bucket name.
+   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param versionId - Object version identifier.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+	deleteObjectVersion: (bucketName: string, objectKey: string, versionId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
+  /**
+   * Delete bucket policy
+   *
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+	deleteBucketPolicy: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<boolean>>;
+  /**
+   * Get bucket policy
+   *
+   * @param bucketName - Bucket name.
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<BucketPolicyDocument>
+   */
+	getBucketPolicy: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<BucketPolicyDocument>>;
+  /**
+   * Replace bucket policy
+   *
+   * @param bucketName - Bucket name.
+   * @param body - Request body
+	 * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<BucketPolicyDocument>
+   */
+	setBucketPolicy: (bucketName: string, body: BucketPolicyDocument, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }) => Promise<FetchResponse<BucketPolicyDocument>>;
+  /**
    * Get bucket versioning status
    *
    * @param bucketName - Bucket name.
@@ -201,6 +324,40 @@ export function createAdapter(client: FetchClient): {
 		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucket" };
 	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}`, undefined, finalOptions);
     },
+		getBucketAcl: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Acl>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucketAcl" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/acl`, undefined, finalOptions);
+    },
+		setBucketAcl: (bucketName: string, body: Acl, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Acl>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "setBucketAcl" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/acl`, body, undefined, finalOptions);
+    },
+		deleteBucketLifecycle: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "deleteBucketLifecycle" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/lifecycle`, undefined, finalOptions);
+    },
+		getBucketLifecycle: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<LifecycleConfiguration>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucketLifecycle" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/lifecycle`, undefined, finalOptions);
+    },
+		setBucketLifecycle: (bucketName: string, body: LifecycleConfiguration, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<LifecycleConfiguration>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "setBucketLifecycle" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/lifecycle`, body, undefined, finalOptions);
+    },
+		listMultipartUploads: (bucketName: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ListMultipartUploadsResponse>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "listMultipartUploads" };
+      const queryString = query ? buildQueryParams(query) : '';
+      const url = `/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/multipart-uploads` + (queryString ? '?' + queryString : '');
+			return client.get(url, undefined, finalOptions);
+    },
+		abortMultipartUpload: (bucketName: string, uploadId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "abortMultipartUpload" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/multipart-uploads/${encodeURIComponent(String(uploadId))}`, undefined, finalOptions);
+    },
+		getMultipartUpload: (bucketName: string, uploadId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<MultipartUpload>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getMultipartUpload" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/multipart-uploads/${encodeURIComponent(String(uploadId))}`, undefined, finalOptions);
+    },
 		listObjects: (bucketName: string, query?: { next?: string; limit?: number; search?: string }, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ListObjectsResponse>> => {
 		const finalOptions = { ...options, operationId: options?.operationId ?? "listObjects" };
       const queryString = query ? buildQueryParams(query) : '';
@@ -214,6 +371,14 @@ export function createAdapter(client: FetchClient): {
 		getObjectMetadata: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<ObjectMetadata>> => {
 		const finalOptions = { ...options, operationId: options?.operationId ?? "getObjectMetadata" };
 	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}`, undefined, finalOptions);
+    },
+		getObjectAcl: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Acl>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getObjectAcl" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/acl`, undefined, finalOptions);
+    },
+		setObjectAcl: (bucketName: string, objectKey: string, body: Acl, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Acl>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "setObjectAcl" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/acl`, body, undefined, finalOptions);
     },
 		downloadObjectContent: (bucketName: string, objectKey: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<Blob>> => {
 		const finalOptions = { ...options, operationId: options?.operationId ?? "downloadObjectContent" };
@@ -237,6 +402,22 @@ export function createAdapter(client: FetchClient): {
       const url = `/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/versions` + (queryString ? '?' + queryString : '');
 			return client.get(url, undefined, finalOptions);
     },
+		deleteObjectVersion: (bucketName: string, objectKey: string, versionId: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "deleteObjectVersion" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/objects/${encodeURIComponent(String(objectKey))}/versions/${encodeURIComponent(String(versionId))}`, undefined, finalOptions);
+    },
+		deleteBucketPolicy: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<boolean>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "deleteBucketPolicy" };
+	return client.del(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/policy`, undefined, finalOptions);
+    },
+		getBucketPolicy: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<BucketPolicyDocument>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucketPolicy" };
+	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/policy`, undefined, finalOptions);
+    },
+		setBucketPolicy: (bucketName: string, body: BucketPolicyDocument, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<BucketPolicyDocument>> => {
+		const finalOptions = { ...options, operationId: options?.operationId ?? "setBucketPolicy" };
+	return client.put(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/policy`, body, undefined, finalOptions);
+    },
 		getBucketVersioning: (bucketName: string, options?: { signal?: AbortSignal; timeout?: number; operationId?: string }): Promise<FetchResponse<VersioningStatus>> => {
 		const finalOptions = { ...options, operationId: options?.operationId ?? "getBucketVersioning" };
 	return client.get(`/admin/v1/buckets/${encodeURIComponent(String(bucketName))}/versioning`, undefined, finalOptions);
@@ -247,6 +428,9 @@ export function createAdapter(client: FetchClient): {
     }
   };
 }
+
+/** Acl schema */
+export type Acl = { canned: "private" | "public-read" | "public-read-write" | "authenticated-read" | "bucket-owner-read" | "bucket-owner-full-control"; grants?: Array<Grant> };
 
 /** AdminLoginRequest schema */
 export type AdminLoginRequest = { password: string; username: string };
@@ -260,20 +444,59 @@ export type BucketDetails = BucketInfo;
 /** BucketInfo schema */
 export type BucketInfo = { created_at: string; name: string; versioning_enabled: boolean };
 
+/** BucketPolicyDocument schema */
+export type BucketPolicyDocument = { Statement: Array<PolicyStatementDocument>; Version: string };
+
+/** CanonicalUserGrantee schema */
+export type CanonicalUserGrantee = { DisplayName?: string | null; ID: string; Type: "CanonicalUser" };
+
 /** CreateBucketRequest schema */
 export type CreateBucketRequest = { name: string };
 
 /** ErrorResponse schema */
 export type ErrorResponse = { code: string; details?: string | null; error: string };
 
+/** Expiration schema */
+export type Expiration = { date: string | null; days: number | null; expired_object_delete_marker: boolean | null };
+
+/** Grant schema */
+export type Grant = { grantee: CanonicalUserGrantee | GroupGrantee; permission: "READ" | "WRITE" | "READ_ACP" | "WRITE_ACP" | "FULL_CONTROL" };
+
+/** GroupGrantee schema */
+export type GroupGrantee = { Type: "Group"; URI: string };
+
+/** LifecycleConfiguration schema */
+export type LifecycleConfiguration = { rules: Array<LifecycleRule> };
+
+/** LifecycleFilter schema */
+export type LifecycleFilter = { prefix?: string | null; tags: Array<LifecycleTag> };
+
+/** LifecycleRule schema */
+export type LifecycleRule = { expiration?: null | Expiration; filter?: null | LifecycleFilter; id: string; noncurrent_version_expiration?: null | NoncurrentVersionExpiration; status: "Enabled" | "Disabled"; transitions: Array<Transition> };
+
+/** LifecycleTag schema */
+export type LifecycleTag = { key: string; value: string };
+
 /** ListBucketsResponse schema */
 export type ListBucketsResponse = { items: Array<BucketInfo>; next: string | null };
+
+/** ListMultipartUploadsResponse schema */
+export type ListMultipartUploadsResponse = { items: Array<MultipartUpload>; next: string | null };
 
 /** ListObjectsResponse schema */
 export type ListObjectsResponse = { items: Array<ObjectInfo>; next: string | null };
 
 /** ListVersionsResponse schema */
 export type ListVersionsResponse = { items: Array<ObjectVersionInfo>; next: string | null };
+
+/** MultipartPart schema */
+export type MultipartPart = { etag: string; last_modified: string; part_number: number; size: number };
+
+/** MultipartUpload schema */
+export type MultipartUpload = { content_type?: string | null; initiated: string; key: string; metadata?: Record<string, string>; parts: Array<MultipartPart>; provider_metadata?: Record<string, string>; upload_id: string };
+
+/** NoncurrentVersionExpiration schema */
+export type NoncurrentVersionExpiration = { noncurrent_days: number };
 
 /** ObjectInfo schema */
 export type ObjectInfo = { content_type: string | null; etag: string; key: string; last_modified: string; size: number; storage_class: string };
@@ -284,6 +507,12 @@ export type ObjectMetadata = { content_type: string | null; etag: string; key: s
 /** ObjectVersionInfo schema */
 export type ObjectVersionInfo = { etag: string; is_latest: boolean; key: string; last_modified: string; size: number; version_id: string };
 
+/** PolicyPrincipalAws schema */
+export type PolicyPrincipalAws = { AWS: string | Array<string> };
+
+/** PolicyStatementDocument schema */
+export type PolicyStatementDocument = { Action: string | Array<string>; Condition?: Record<string, any> | null; Effect: "Allow" | "Deny"; Principal: string | PolicyPrincipalAws; Resource: string | Array<string>; Sid?: string | null };
+
 /** SuccessResponse schema */
 export type SuccessResponse = { success: boolean };
 
@@ -292,6 +521,9 @@ export type TagsRequest = { tags: Record<string, string> };
 
 /** TagsResponse schema */
 export type TagsResponse = { tags: Record<string, string> };
+
+/** Transition schema */
+export type Transition = { date: string | null; days: number | null; storage_class: "STANDARD" | "GLACIER" | "DEEP_ARCHIVE" };
 
 /** VersioningStatus schema */
 export type VersioningStatus = { enabled: boolean };

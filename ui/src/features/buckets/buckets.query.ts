@@ -1,4 +1,11 @@
 import { adminApi } from '../../adapters';
+import type {
+  Acl,
+  BucketPolicyDocument,
+  LifecycleConfiguration,
+  ListMultipartUploadsResponse,
+  MultipartUpload,
+} from '../../adapters/api.g';
 import { unwrapProtectedResponse } from '../auth/admin-session';
 import { countBucketObjects, loadObjectPage } from '../objects/objects.query';
 
@@ -146,6 +153,154 @@ export async function setBucketVersioning({
 }): Promise<{ enabled: boolean }> {
   return unwrapProtectedResponse(
     await adminApi.setBucketVersioning(bucketName, { enabled }, { signal })
+  );
+}
+
+export async function loadBucketAcl({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal: AbortSignal;
+}): Promise<Acl> {
+  return unwrapProtectedResponse(
+    await adminApi.getBucketAcl(bucketName, { signal })
+  );
+}
+
+export async function saveBucketAcl({
+  bucketName,
+  acl,
+  signal,
+}: {
+  bucketName: string;
+  acl: Acl;
+  signal?: AbortSignal;
+}): Promise<Acl> {
+  return unwrapProtectedResponse(
+    await adminApi.setBucketAcl(bucketName, acl, { signal })
+  );
+}
+
+export async function loadBucketPolicy({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal: AbortSignal;
+}): Promise<BucketPolicyDocument> {
+  return unwrapProtectedResponse(
+    await adminApi.getBucketPolicy(bucketName, { signal })
+  );
+}
+
+export async function saveBucketPolicy({
+  bucketName,
+  policy,
+  signal,
+}: {
+  bucketName: string;
+  policy: BucketPolicyDocument;
+  signal?: AbortSignal;
+}): Promise<BucketPolicyDocument> {
+  return unwrapProtectedResponse(
+    await adminApi.setBucketPolicy(bucketName, policy, { signal })
+  );
+}
+
+export async function deleteBucketPolicy({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  unwrapProtectedResponse(await adminApi.deleteBucketPolicy(bucketName, { signal }));
+}
+
+export async function loadBucketLifecycle({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal: AbortSignal;
+}): Promise<LifecycleConfiguration> {
+  return unwrapProtectedResponse(
+    await adminApi.getBucketLifecycle(bucketName, { signal })
+  );
+}
+
+export async function saveBucketLifecycle({
+  bucketName,
+  lifecycle,
+  signal,
+}: {
+  bucketName: string;
+  lifecycle: LifecycleConfiguration;
+  signal?: AbortSignal;
+}): Promise<LifecycleConfiguration> {
+  return unwrapProtectedResponse(
+    await adminApi.setBucketLifecycle(bucketName, lifecycle, { signal })
+  );
+}
+
+export async function deleteBucketLifecycle({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  unwrapProtectedResponse(
+    await adminApi.deleteBucketLifecycle(bucketName, { signal })
+  );
+}
+
+export async function listMultipartUploads({
+  bucketName,
+  next,
+  search,
+  signal,
+}: {
+  bucketName: string;
+  next?: string;
+  search?: string;
+  signal: AbortSignal;
+}): Promise<ListMultipartUploadsResponse> {
+  return unwrapProtectedResponse(
+    await adminApi.listMultipartUploads(
+      bucketName,
+      { next, limit: 50, search: search?.trim() || undefined },
+      { signal }
+    )
+  );
+}
+
+export async function loadMultipartUpload({
+  bucketName,
+  uploadId,
+  signal,
+}: {
+  bucketName: string;
+  uploadId: string;
+  signal: AbortSignal;
+}): Promise<MultipartUpload> {
+  return unwrapProtectedResponse(
+    await adminApi.getMultipartUpload(bucketName, uploadId, { signal })
+  );
+}
+
+export async function abortMultipartUpload({
+  bucketName,
+  uploadId,
+  signal,
+}: {
+  bucketName: string;
+  uploadId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  unwrapProtectedResponse(
+    await adminApi.abortMultipartUpload(bucketName, uploadId, { signal })
   );
 }
 

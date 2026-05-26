@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn should_add_owner_full_control_when_acl_xml_body_omits_it() {
-        let acl = acl_from_xml_body(
-            br#"<?xml version="1.0" encoding="UTF-8"?>
+        // Arrange
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
     <AccessControlList>
         <Grant>
@@ -145,10 +145,12 @@ mod tests {
             <Permission>READ</Permission>
         </Grant>
     </AccessControlList>
-</AccessControlPolicy>"#,
-        )
-        .expect("acl xml should parse");
+</AccessControlPolicy>"#;
 
+        // Act
+        let acl = acl_from_xml_body(xml).expect("acl xml should parse");
+
+        // Assert
         assert!(matches!(acl.grants[0].permission, Permission::FullControl));
         assert!(matches!(acl.grants[1].permission, Permission::Read));
     }

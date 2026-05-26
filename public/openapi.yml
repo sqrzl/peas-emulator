@@ -12,8 +12,8 @@ info:
     separate from the S3, Azure Blob Storage, Google Cloud Storage, and OCI
     compatibility front doors.
 
-    Version 1 is limited to bucket, object, version, and tag administration for
-    local development workflows.
+    Version 1 covers bucket, object, ACL, policy, lifecycle, multipart upload,
+    and version administration for local development workflows.
 servers:
   - url: /admin/v1
     description: Admin API root on the current host
@@ -246,6 +246,250 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/acl:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: getBucketAcl
+      summary: Get bucket ACL
+      responses:
+        '200':
+          description: Bucket ACL returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Acl'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: setBucketAcl
+      summary: Replace bucket ACL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Acl'
+      responses:
+        '200':
+          description: Bucket ACL replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Acl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/policy:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: getBucketPolicy
+      summary: Get bucket policy
+      responses:
+        '200':
+          description: Bucket policy returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketPolicyDocument'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: setBucketPolicy
+      summary: Replace bucket policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BucketPolicyDocument'
+      responses:
+        '200':
+          description: Bucket policy replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketPolicyDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: deleteBucketPolicy
+      summary: Delete bucket policy
+      responses:
+        '204':
+          description: Bucket policy deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/lifecycle:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: getBucketLifecycle
+      summary: Get bucket lifecycle configuration
+      responses:
+        '200':
+          description: Bucket lifecycle returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleConfiguration'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: setBucketLifecycle
+      summary: Replace bucket lifecycle configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecycleConfiguration'
+      responses:
+        '200':
+          description: Bucket lifecycle replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleConfiguration'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+      tags:
+        - Buckets
+      operationId: deleteBucketLifecycle
+      summary: Delete bucket lifecycle configuration
+      responses:
+        '204':
+          description: Bucket lifecycle deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/multipart-uploads:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/Next'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
+      tags:
+        - Buckets
+      operationId: listMultipartUploads
+      summary: List multipart uploads
+      responses:
+        '200':
+          description: Multipart uploads returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListMultipartUploadsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/multipart-uploads/{uploadId}:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/UploadId'
+      tags:
+        - Buckets
+      operationId: getMultipartUpload
+      summary: Get multipart upload
+      responses:
+        '200':
+          description: Multipart upload returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartUpload'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/UploadId'
+      tags:
+        - Buckets
+      operationId: abortMultipartUpload
+      summary: Abort multipart upload
+      responses:
+        '204':
+          description: Multipart upload aborted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects:
     get:
       parameters:
@@ -402,6 +646,25 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}/versions/{versionId}:
+    delete:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
+        - $ref: '#/components/parameters/VersionId'
+      tags:
+        - Objects
+      operationId: deleteObjectVersion
+      summary: Delete object version
+      responses:
+        '204':
+          description: Object version deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /buckets/{bucketName}/objects/{objectKey}/tags:
     get:
       parameters:
@@ -453,6 +716,57 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /buckets/{bucketName}/objects/{objectKey}/acl:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
+      tags:
+        - Objects
+      operationId: getObjectAcl
+      summary: Get object ACL
+      responses:
+        '200':
+          description: Object ACL returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Acl'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      parameters:
+        - $ref: '#/components/parameters/BucketName'
+        - $ref: '#/components/parameters/ObjectKey'
+      tags:
+        - Objects
+      operationId: setObjectAcl
+      summary: Replace object ACL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Acl'
+      responses:
+        '200':
+          description: Object ACL replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Acl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
     AdminSessionCookie:
@@ -478,6 +792,22 @@ components:
       in: path
       required: true
       description: Full object key, URL encoded when used in the path.
+      schema:
+        type: string
+        minLength: 1
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      description: Multipart upload ID.
+      schema:
+        type: string
+        minLength: 1
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      description: Object version identifier.
       schema:
         type: string
         minLength: 1
@@ -779,6 +1109,329 @@ components:
           type: object
           additionalProperties:
             type: string
+    ListMultipartUploadsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - next
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MultipartUpload'
+        next:
+          type:
+            - string
+            - 'null'
+    MultipartUpload:
+      type: object
+      additionalProperties: false
+      required:
+        - upload_id
+        - key
+        - initiated
+        - parts
+      properties:
+        upload_id:
+          type: string
+        key:
+          type: string
+        initiated:
+          type: string
+          format: date-time
+        content_type:
+          type:
+            - string
+            - 'null'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        provider_metadata:
+          type: object
+          additionalProperties:
+            type: string
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/MultipartPart'
+    MultipartPart:
+      type: object
+      additionalProperties: false
+      required:
+        - part_number
+        - etag
+        - size
+        - last_modified
+      properties:
+        part_number:
+          type: integer
+          format: int32
+          minimum: 1
+        etag:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        last_modified:
+          type: string
+          format: date-time
+    Acl:
+      type: object
+      additionalProperties: false
+      required:
+        - canned
+      properties:
+        canned:
+          type: string
+          enum:
+            - private
+            - public-read
+            - public-read-write
+            - authenticated-read
+            - bucket-owner-read
+            - bucket-owner-full-control
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+    Grant:
+      type: object
+      additionalProperties: false
+      required:
+        - grantee
+        - permission
+      properties:
+        grantee:
+          oneOf:
+            - $ref: '#/components/schemas/CanonicalUserGrantee'
+            - $ref: '#/components/schemas/GroupGrantee'
+        permission:
+          type: string
+          enum:
+            - READ
+            - WRITE
+            - READ_ACP
+            - WRITE_ACP
+            - FULL_CONTROL
+    CanonicalUserGrantee:
+      type: object
+      additionalProperties: false
+      required:
+        - Type
+        - ID
+      properties:
+        Type:
+          type: string
+          enum:
+            - CanonicalUser
+        ID:
+          type: string
+        DisplayName:
+          type:
+            - string
+            - 'null'
+    GroupGrantee:
+      type: object
+      additionalProperties: false
+      required:
+        - Type
+        - URI
+      properties:
+        Type:
+          type: string
+          enum:
+            - Group
+        URI:
+          type: string
+    BucketPolicyDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - Version
+        - Statement
+      properties:
+        Version:
+          type: string
+        Statement:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyStatementDocument'
+    PolicyStatementDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - Effect
+        - Principal
+        - Action
+        - Resource
+      properties:
+        Sid:
+          type:
+            - string
+            - 'null'
+        Effect:
+          type: string
+          enum:
+            - Allow
+            - Deny
+        Principal:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/PolicyPrincipalAws'
+        Action:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        Resource:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        Condition:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+    PolicyPrincipalAws:
+      type: object
+      additionalProperties: false
+      required:
+        - AWS
+      properties:
+        AWS:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+    LifecycleConfiguration:
+      type: object
+      additionalProperties: false
+      required:
+        - rules
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/LifecycleRule'
+    LifecycleRule:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - transitions
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - Enabled
+            - Disabled
+        filter:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/LifecycleFilter'
+        expiration:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Expiration'
+        noncurrent_version_expiration:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/NoncurrentVersionExpiration'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transition'
+    LifecycleFilter:
+      type: object
+      additionalProperties: false
+      required:
+        - tags
+      properties:
+        prefix:
+          type:
+            - string
+            - 'null'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/LifecycleTag'
+    LifecycleTag:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - value
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+    Expiration:
+      type: object
+      additionalProperties: false
+      required:
+        - days
+        - date
+        - expired_object_delete_marker
+      properties:
+        days:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          minimum: 0
+        date:
+          type:
+            - string
+            - 'null'
+        expired_object_delete_marker:
+          type:
+            - boolean
+            - 'null'
+    NoncurrentVersionExpiration:
+      type: object
+      additionalProperties: false
+      required:
+        - noncurrent_days
+      properties:
+        noncurrent_days:
+          type: integer
+          format: int32
+          minimum: 0
+    Transition:
+      type: object
+      additionalProperties: false
+      required:
+        - days
+        - date
+        - storage_class
+      properties:
+        days:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          minimum: 0
+        date:
+          type:
+            - string
+            - 'null'
+        storage_class:
+          type: string
+          enum:
+            - STANDARD
+            - GLACIER
+            - DEEP_ARCHIVE
     ErrorResponse:
       type: object
       additionalProperties: false

@@ -14,14 +14,66 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install test validator
+        run: cargo install --git https://github.com/cntryl/tools --locked --force
+
+      - name: Validate tests
+        run: cntryl-tools validate-tests
+
       - name: Validate compatibility matrix
-        run: cargo test compatibility_matrix_should_use_checked_schema_and_known_verifiers
+        run: cargo test compatibility_matrix
 
       - name: Build
         run: cargo build --all-targets
 
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
       - name: Test
         run: cargo test
+
+      - name: Compile benches
+        run: cargo bench --no-run
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Regenerate admin client
+        working-directory: ui
+        run: npm run gen
+
+      - name: Verify generated client is up to date
+        run: git diff --exit-code -- ui/src/adapters/api.g.ts
+
+      - name: Type check
+        working-directory: ui
+        run: npm run type-check
+
+      - name: Lint
+        working-directory: ui
+        run: npm run lint
+
+      - name: Test
+        working-directory: ui
+        run: npm test
+
+      - name: Build
+        working-directory: ui
+        run: npm run build
 
   interop:
     uses: ./.github/workflows/interop.yml

@@ -229,6 +229,31 @@ async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn should_reject_legacy_api_surface_given_live_server_when_mutating_storage() {
+    let server = LiveServer::start_admin(auth_disabled()).await;
+
+    let create_bucket = Request::builder()
+        .method("POST")
+        .uri(format!("{}/api/buckets", server.base_url))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"name":"legacy"}"#))
+        .expect("legacy api request should build");
+    let create_bucket_response = server.request_without_default_auth(create_bucket).await;
+    assert_eq!(create_bucket_response.status(), StatusCode::NOT_FOUND);
+    let _ = text_body(create_bucket_response).await;
+
+    let list_buckets = Request::builder()
+        .method("GET")
+        .uri(format!("{}/admin/v1/buckets", server.base_url))
+        .body(Body::empty())
+        .expect("admin list request should build");
+    let list_buckets_response = server.request(list_buckets).await;
+    assert_eq!(list_buckets_response.status(), StatusCode::OK);
+    let buckets: ListBucketsResponse = json_body(list_buckets_response).await;
+    assert!(buckets.items.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn should_page_and_search_admin_collections_given_live_server_when_listing_resources() {
     let server = LiveServer::start_admin(auth_disabled()).await;
 

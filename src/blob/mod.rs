@@ -273,7 +273,8 @@ mod tests {
     }
 
     #[test]
-    fn should_support_range_metadata_and_version_operations_through_blob_backend() {
+    fn should_read_a_blob_range_through_blob_backend() {
+        // Arrange
         let base = temp_path();
         let storage = FilesystemStorage::new(&base);
         let backend: &dyn BlobBackend = &storage;
@@ -293,11 +294,40 @@ mod tests {
             })
             .expect("put should succeed");
 
+        // Act
         let range = backend
             .get_blob_range("docs", "guide.txt", BlobRange { start: 6, end: 12 })
             .expect("range get should succeed");
+
+        // Assert
         assert_eq!(range.data, b"backend".to_vec());
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_update_blob_metadata_through_blob_backend() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let backend: &dyn BlobBackend = &storage;
+
+        backend
+            .create_namespace("docs".to_string())
+            .expect("namespace create should succeed");
+
+        backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello backend".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("alice"))]),
+                tags: HashMap::from([(String::from("env"), String::from("test"))]),
+            })
+            .expect("put should succeed");
+
+        // Act
         let updated = backend
             .update_blob_metadata(UpdateBlobMetadataRequest {
                 namespace: "docs".to_string(),
@@ -305,11 +335,37 @@ mod tests {
                 metadata: HashMap::from([(String::from("owner"), String::from("bob"))]),
             })
             .expect("metadata update should succeed");
+
+        // Assert
         assert_eq!(updated.metadata.get("owner"), Some(&"bob".to_string()));
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_list_blob_versions_after_versioned_overwrite() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let backend: &dyn BlobBackend = &storage;
+
+        backend
+            .create_namespace("docs".to_string())
+            .expect("namespace create should succeed");
         storage
             .enable_versioning("docs")
             .expect("versioning should enable");
+
+        backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello backend".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("alice"))]),
+                tags: HashMap::from([(String::from("env"), String::from("test"))]),
+            })
+            .expect("versioned put should succeed");
         backend
             .put_blob(PutBlobRequest {
                 namespace: "docs".to_string(),
@@ -321,27 +377,71 @@ mod tests {
             })
             .expect("versioned overwrite should succeed");
 
+        // Act
         let versions = backend
             .list_blob_versions("docs", Some("guide"))
             .expect("version list should succeed");
+
+        // Assert
         assert!(
             versions.len() >= 2,
             "expected current and historical versions after overwrite"
         );
-        let version_id = versions
-            .iter()
-            .find_map(|blob| blob.version_id.clone())
-            .expect("version id should exist");
-        let version = backend
-            .get_blob_version("docs", "guide.txt", &version_id)
-            .expect("version fetch should succeed");
-        assert_eq!(version.version_id.as_deref(), Some(version_id.as_str()));
 
         let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
+    fn should_fetch_a_blob_version_by_id() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let backend: &dyn BlobBackend = &storage;
+
+        backend
+            .create_namespace("docs".to_string())
+            .expect("namespace create should succeed");
+        storage
+            .enable_versioning("docs")
+            .expect("versioning should enable");
+
+        let created_version = backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello backend".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::from([(String::from("owner"), String::from("alice"))]),
+                tags: HashMap::from([(String::from("env"), String::from("test"))]),
+            })
+            .expect("versioned put should succeed");
+        let version_id = created_version
+            .version_id
+            .expect("version id should exist when versioning is enabled");
+        backend
+            .put_blob(PutBlobRequest {
+                namespace: "docs".to_string(),
+                key: "guide.txt".to_string(),
+                data: b"hello versions".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::new(),
+                tags: HashMap::new(),
+            })
+            .expect("versioned overwrite should succeed");
+
+        // Act
+        let version = backend
+            .get_blob_version("docs", "guide.txt", &version_id)
+            .expect("version fetch should succeed");
+
+        // Assert
+        assert_eq!(version.version_id.as_deref(), Some(version_id.as_str()));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn should_preserve_provider_metadata_when_updating_blob_metadata() {
+        // Arrange
         let base = temp_path();
         let storage = FilesystemStorage::new(&base);
         let backend: &dyn BlobBackend = &storage;
@@ -370,9 +470,12 @@ mod tests {
             })
             .expect("metadata update should succeed");
 
+        // Act
         let stored = backend
             .get_blob("azure", "append.log")
             .expect("blob fetch should succeed");
+
+        // Assert
         assert_eq!(
             stored.provider_metadata.get("azure_blob_type"),
             Some(&"AppendBlob".to_string())

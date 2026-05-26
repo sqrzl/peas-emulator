@@ -10,3 +10,17 @@ export function formatRelativeTime(value: string): string {
   const diffHours = Math.round(diffMinutes / 60);
   return `${diffHours}h ago`;
 }
+
+export function formatBytes(size: number): string {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  const kib = size / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(kib >= 10 ? 0 : 1)} KiB`;
+  }
+
+  const mib = kib / 1024;
+  return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`;
+}

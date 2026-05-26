@@ -58,7 +58,8 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_matrix_should_use_checked_schema_and_known_verifiers() {
+    fn should_use_allowed_status_values_in_compatibility_matrix() {
+        // Arrange
         let matrix: serde_json::Value =
             serde_json::from_str(include_str!("../compatibility-matrix.json"))
                 .expect("compatibility matrix should parse");
@@ -66,8 +67,8 @@ mod tests {
             .get("providers")
             .and_then(|providers| providers.as_object())
             .expect("providers should be an object");
-        let known_verifiers = known_verifiers();
 
+        // Act
         for (provider_name, operations) in providers {
             let operations = operations
                 .as_object()
@@ -87,7 +88,36 @@ mod tests {
                     provider_name,
                     operation_name
                 );
+            }
+        }
 
+        // Assert
+    }
+
+    #[test]
+    fn should_require_verifiers_for_pass_entries_in_compatibility_matrix() {
+        // Arrange
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../compatibility-matrix.json"))
+                .expect("compatibility matrix should parse");
+        let providers = matrix
+            .get("providers")
+            .and_then(|providers| providers.as_object())
+            .expect("providers should be an object");
+
+        // Act
+        for (provider_name, operations) in providers {
+            let operations = operations
+                .as_object()
+                .expect("provider operations should be an object");
+            for (operation_name, operation) in operations {
+                let operation = operation
+                    .as_object()
+                    .expect("operation entry should be an object");
+                let status = operation
+                    .get("status")
+                    .and_then(|status| status.as_str())
+                    .expect("status should be a string");
                 let verifiers = operation
                     .get("verified_by")
                     .and_then(|value| value.as_array())
@@ -122,7 +152,37 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
 
+        // Assert
+    }
+
+    #[test]
+    fn should_reference_only_known_verifiers_in_compatibility_matrix() {
+        // Arrange
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../compatibility-matrix.json"))
+                .expect("compatibility matrix should parse");
+        let providers = matrix
+            .get("providers")
+            .and_then(|providers| providers.as_object())
+            .expect("providers should be an object");
+        let known_verifiers = known_verifiers();
+
+        // Act
+        for (provider_name, operations) in providers {
+            let operations = operations
+                .as_object()
+                .expect("provider operations should be an object");
+            for (operation_name, operation) in operations {
+                let operation = operation
+                    .as_object()
+                    .expect("operation entry should be an object");
+                let verifiers = operation
+                    .get("verified_by")
+                    .and_then(|value| value.as_array())
+                    .expect("verified_by should be an array");
                 for verifier in verifiers {
                     let verifier = verifier
                         .as_str()
@@ -137,5 +197,7 @@ mod tests {
                 }
             }
         }
+
+        // Assert
     }
 }

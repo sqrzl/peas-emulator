@@ -36,6 +36,7 @@ import {
   setBucketVersioning,
 } from '../../features/buckets/buckets.query';
 import {
+  deleteObjectVersion,
   deleteObject,
   downloadObjectContent,
   loadObjectMetadata,
@@ -44,7 +45,9 @@ import {
   putObjectContent,
   putObjectTags,
 } from '../../features/objects/objects.query';
-import { formatRelativeTime } from '../../shared/format';
+import BucketControlPlaneSection from '../../features/buckets/bucket-control-plane';
+import ObjectAclSection from '../../features/objects/object-acl-section';
+import { formatBytes, formatRelativeTime } from '../../shared/format';
 
 function currentBucketName(): string {
   if (typeof window === 'undefined') {
@@ -85,20 +88,6 @@ function parseKeyValueLines(value: string): Record<string, string> {
       }
       return items;
     }, {});
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-
-  const kib = size / 1024;
-  if (kib < 1024) {
-    return `${kib.toFixed(kib >= 10 ? 0 : 1)} KiB`;
-  }
-
-  const mib = kib / 1024;
-  return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`;
 }
 
 export default function BucketsPage() {
@@ -368,6 +357,35 @@ export default function BucketsPage() {
         caughtError instanceof Error
           ? caughtError.message
           : 'The admin API could not delete the object.'
+      );
+    } finally {
+      setObjectBusy(false);
+    }
+  }
+
+  async function handleDeleteVersion(versionId: string) {
+    if (!selectedBucketName || !selectedObjectKey || objectBusy()) {
+      return;
+    }
+
+    setObjectBusy(true);
+    setObjectError('');
+
+    try {
+      await deleteObjectVersion({
+        bucketName: selectedBucketName,
+        objectKey: selectedObjectKey,
+        versionId,
+      });
+      metadata.refresh();
+      objects.refresh();
+      versions.refresh();
+      inventory.refresh();
+    } catch (caughtError) {
+      setObjectError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'The admin API could not delete the object version.'
       );
     } finally {
       setObjectBusy(false);
@@ -749,6 +767,10 @@ export default function BucketsPage() {
                       </AlertDialogContent>
                     </AlertDialogPortal>
                   </AlertDialog>
+
+                  <BucketControlPlaneSection
+                    bucketName={selectedBucket.bucket.name}
+                  />
                 </Stack>
               ) : (
                 <EmptyState
@@ -1090,6 +1112,11 @@ export default function BucketsPage() {
             </CardContent>
           </Card>
 
+          <ObjectAclSection
+            bucketName={selectedBucketName}
+            objectKey={selectedObjectKey}
+          />
+
           <Card>
             <CardHeader>
               <CardTitle>Version history</CardTitle>
@@ -1107,6 +1134,7 @@ export default function BucketsPage() {
                         <th>Latest</th>
                         <th>Size</th>
                         <th>Modified</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1116,12 +1144,25 @@ export default function BucketsPage() {
                           <td>{version.is_latest ? 'yes' : 'no'}</td>
                           <td>{formatBytes(version.size)}</td>
                           <td>{formatRelativeTime(version.last_modified)}</td>
+                          <td>
+                            <Inline gap="2" align="center" justify="end" wrap="wrap">
+                              <Button
+                                variant="secondary"
+                                onPress={() =>
+                                  void handleDeleteVersion(version.version_id)
+                                }
+                                disabled={objectBusy()}
+                              >
+                                Delete
+                              </Button>
+                            </Inline>
+                          </td>
                         </tr>
                       ))}
                       {!versions.pending &&
                       (versions.value?.items.length ?? 0) === 0 ? (
                         <tr>
-                          <td colSpan={4}>No version history available.</td>
+                          <td colSpan={5}>No version history available.</td>
                         </tr>
                       ) : null}
                     </tbody>

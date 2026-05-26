@@ -81,6 +81,12 @@ pub struct ListVersionsResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ListMultipartUploadsResponse {
+    pub items: Vec<crate::models::MultipartUpload>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TagsResponse {
     pub tags: std::collections::HashMap<String, String>,
 }

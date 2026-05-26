@@ -227,6 +227,8 @@ mod tests {
 
     #[test]
     fn should_allow_disabling_admin_auth_with_env_override() {
+        // Arrange
+        // Act
         let config = Config::from_env_with(|name| match name {
             ENV_ACCESS_KEY_ID => Some("test-key".to_string()),
             ENV_SECRET_ACCESS_KEY => Some("test-secret".to_string()),
@@ -234,6 +236,7 @@ mod tests {
             _ => None,
         });
 
+        // Assert
         assert!(config.enforce_auth);
         assert!(config.admin_auth_disabled);
         assert!(!config.admin_auth_enforced());

@@ -146,6 +146,52 @@
   gap: var(--ak-space-md);
 }
 
+.control-plane-stack {
+  padding-top: var(--ak-space-md);
+  border-top: 1px solid var(--ak-color-border-subtle);
+}
+
+.control-plane-grid {
+  display: grid;
+  gap: var(--ak-space-md);
+}
+
+.control-plane-section,
+.control-plane-detail {
+  padding: var(--ak-space-md);
+  border: 1px solid var(--ak-color-border-subtle);
+  border-radius: var(--ak-radius-lg);
+  background: var(--ak-color-surface-muted);
+}
+
+.json-editor {
+  width: 100%;
+  min-height: 12rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--ak-color-border-subtle);
+  border-radius: var(--ak-radius-md);
+  background: var(--ak-color-bg);
+  color: var(--ak-color-text);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: var(--ak-font-size-sm);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.json-editor:focus {
+  outline: 2px solid color-mix(in srgb, var(--ak-color-primary) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.run-table tr[data-selected="true"] td {
+  background: color-mix(in srgb, var(--ak-color-primary-soft) 28%, transparent);
+}
+
 .timeline-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

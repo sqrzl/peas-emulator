@@ -122,13 +122,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_issue_and_validate_a_session_cookie() {
+    fn should_issue_a_session_cookie() {
+        // Arrange
         let manager = AdminSessionManager::new().expect("session manager should build");
+
+        // Act
         let cookie = manager
             .issue_session_cookie("admin")
             .expect("cookie should build");
 
+        // Assert
         assert!(cookie.contains(ADMIN_SESSION_COOKIE_NAME));
+    }
+
+    #[test]
+    fn should_validate_an_issued_session_cookie_token() {
+        // Arrange
+        let manager = AdminSessionManager::new().expect("session manager should build");
+        let cookie = manager
+            .issue_session_cookie("admin")
+            .expect("cookie should build");
         let token = cookie
             .split_once('=')
             .expect("cookie should contain token")
@@ -137,23 +150,32 @@ mod tests {
             .next()
             .expect("cookie token should exist");
 
-        assert_eq!(manager.subject_from_token(token).as_deref(), Some("admin"));
+        // Act
+        let subject = manager.subject_from_token(token);
+
+        // Assert
+        assert_eq!(subject.as_deref(), Some("admin"));
     }
 
     #[test]
     fn should_extract_cookie_value_from_cookie_header() {
+        // Arrange
         let cookie_header = "foo=bar; peas_admin_session=abc.def.ghi; theme=tabby";
 
-        assert_eq!(
-            extract_cookie_value(cookie_header, ADMIN_SESSION_COOKIE_NAME),
-            Some("abc.def.ghi")
-        );
+        // Act
+        let cookie_value = extract_cookie_value(cookie_header, ADMIN_SESSION_COOKIE_NAME);
+
+        // Assert
+        assert_eq!(cookie_value, Some("abc.def.ghi"));
     }
 
     #[test]
     fn should_build_session_clear_cookie_header() {
+        // Arrange
+        // Act
         let cookie = AdminSessionManager::clear_session_cookie();
 
+        // Assert
         assert!(cookie.contains("peas_admin_session="));
         assert!(cookie.contains("Max-Age=0"));
     }
