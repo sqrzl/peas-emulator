@@ -20,11 +20,8 @@ FROM rust:latest AS backend
 
 WORKDIR /app
 
-# Copy manifests
-COPY Cargo.toml Cargo.lock* ./
-
 # Copy source code
-COPY src ./src
+COPY . .
 
 # Build the application
 RUN cargo build --release
