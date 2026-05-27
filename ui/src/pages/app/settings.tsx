@@ -18,39 +18,31 @@ export default function SettingsPage() {
     <Stack gap="5">
       <section class="page-heading">
         <Stack gap="2">
-          <Badge>environment</Badge>
-          <h1>Environment and integration</h1>
-          <p class="lead">
-            The admin API client is configured once in the adapter boundary and
-            reused by every real data source.
-          </p>
+          <Badge>integration</Badge>
+          <h1>Session and transport</h1>
+          <p class="lead">The UI uses the generated adapter and same-origin cookies.</p>
         </Stack>
       </section>
 
       <Block size="lg" gap="4" align="start" class="settings-grid">
         <Card>
           <CardHeader>
-            <CardTitle>Admin API client</CardTitle>
-            <CardDescription>
-              Keep transport concerns in the adapter layer and out of route
-              components.
-            </CardDescription>
+            <CardTitle>Transport</CardTitle>
+            <CardDescription>One adapter owns the admin API base URL and cookie policy.</CardDescription>
           </CardHeader>
           <CardContent>
             <Stack gap="3">
               <Badge>baseUrl {adminApiPath}</Badge>
-              <Badge>credentials same-origin</Badge>
-              <Badge>generated OpenAPI adapter</Badge>
+              <Badge>same-origin cookies</Badge>
+              <Badge>generated adapter</Badge>
             </Stack>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Resolved session</CardTitle>
-            <CardDescription>
-              Session status is reported by the documented admin auth operation.
-            </CardDescription>
+            <CardTitle>Session</CardTitle>
+            <CardDescription>Session state comes from the admin auth endpoint.</CardDescription>
           </CardHeader>
           <CardContent>
             <Stack gap="3">
@@ -58,11 +50,11 @@ export default function SettingsPage() {
               {session.value ? (
                 <>
                   <Badge>mode {session.value.mode}</Badge>
-                  <Badge>
-                    username {session.value.username ?? 'not required'}
-                  </Badge>
+                  <Badge>username {session.value.username ?? 'not required'}</Badge>
                 </>
-              ) : null}
+              ) : (
+                <Badge>no active session</Badge>
+              )}
               {session.error ? <Badge>session unavailable</Badge> : null}
             </Stack>
           </CardContent>

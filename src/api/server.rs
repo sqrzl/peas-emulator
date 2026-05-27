@@ -7,6 +7,7 @@ use base64::Engine as _;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server as HyperServer, StatusCode};
+use mime_guess::from_path;
 use serde::de::DeserializeOwned;
 use std::convert::Infallible;
 use std::path::Path;
@@ -93,29 +94,7 @@ async fn handle_ui_request(
             "/app/ui/dist"
         };
 
-        // Try to serve index.html
-        match async_fs::read(format!("{}/index.html", static_dir)).await {
-            Ok(content) => {
-                let body = Body::from(content);
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/html; charset=utf-8")
-                    .body(body)
-                    .unwrap_or_else(|_| {
-                        let mut resp = Response::new(Body::empty());
-                        *resp.status_mut() = StatusCode::OK;
-                        resp
-                    }))
-            }
-            Err(_) => Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("Static content not found"))
-                .unwrap_or_else(|_| {
-                    let mut resp = Response::new(Body::from("Static content not found"));
-                    *resp.status_mut() = StatusCode::NOT_FOUND;
-                    resp
-                })),
-        }
+        return Ok(serve_static_content(Path::new(static_dir), &path).await);
     } else {
         let default_content =
             "<html><body><h1>Peas Emulator</h1><p>Running in headless mode</p></body></html>";
@@ -126,6 +105,50 @@ async fn handle_ui_request(
             .unwrap_or_else(|_| Response::new(Body::from(default_content))))
     }
 }
+
+    async fn serve_static_content(static_dir: &Path, request_path: &str) -> Response<Body> {
+        let normalized_path = request_path.trim_start_matches('/');
+        let candidates: Vec<String> = if normalized_path.is_empty() {
+            vec!["index.html".to_string()]
+        } else if Path::new(normalized_path).extension().is_some() {
+            vec![normalized_path.to_string()]
+        } else {
+            vec![
+                format!("{normalized_path}/index.html"),
+                "index.html".to_string(),
+            ]
+        };
+
+        for relative_path in candidates {
+            let file_path = static_dir.join(&relative_path);
+            if let Ok(content) = async_fs::read(&file_path).await {
+                let content_type = if file_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "index.html")
+                {
+                    "text/html; charset=utf-8".to_string()
+                } else {
+                    from_path(&file_path)
+                        .first_or_octet_stream()
+                        .essence_str()
+                        .to_string()
+                };
+
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", content_type)
+                    .body(Body::from(content))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
+            }
+        }
+
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from("Static content not found"))
+            .unwrap_or_else(|_| Response::new(Body::from("Static content not found")))
+    }
 
 async fn handle_admin_login(
     config: Arc<crate::Config>,
@@ -292,4 +315,81 @@ async fn read_json<T: DeserializeOwned>(req: Request<Body>) -> Result<T> {
         .await
         .map_err(|e| Error::InvalidRequest(e.to_string()))?;
     serde_json::from_slice(&bytes).map_err(|e| Error::InvalidRequest(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serve_static_content;
+    use hyper::body::to_bytes;
+    use hyper::StatusCode;
+    use std::fs;
+
+    fn temp_static_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("peas-ui-static-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp static dir should be created");
+        dir
+    }
+
+    #[tokio::test]
+    async fn should_serve_static_assets_with_their_real_mime_type() {
+        let static_dir = temp_static_dir();
+        fs::create_dir_all(static_dir.join("assets")).expect("asset dir should be created");
+        fs::write(
+            static_dir.join("assets/app.js"),
+            "export const app = 'peas';",
+        )
+        .expect("asset should be written");
+
+        let response = serve_static_content(&static_dir, "/assets/app.js").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .expect("content-type header should exist")
+            .to_str()
+            .expect("content-type should be valid utf-8");
+        assert!(content_type.contains("javascript"), "content-type = {content_type}");
+
+        let body = to_bytes(response.into_body()).await.expect("body should read");
+        assert_eq!(body.as_ref(), b"export const app = 'peas';");
+    }
+
+    #[tokio::test]
+    async fn should_fall_back_to_index_for_spa_routes() {
+        let static_dir = temp_static_dir();
+        fs::write(static_dir.join("index.html"), "<!doctype html><div id=\"app\"></div>")
+            .expect("index should be written");
+
+        let response = serve_static_content(&static_dir, "/dashboard/settings").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .expect("content-type header should exist")
+                .to_str()
+                .expect("content-type should be valid utf-8"),
+            "text/html; charset=utf-8"
+        );
+
+        let body = to_bytes(response.into_body()).await.expect("body should read");
+        assert!(String::from_utf8(body.to_vec())
+            .expect("body should be utf-8")
+            .contains("id=\"app\""));
+    }
+
+    #[tokio::test]
+    async fn should_return_not_found_for_missing_static_assets() {
+        let static_dir = temp_static_dir();
+        fs::write(static_dir.join("index.html"), "<!doctype html><div id=\"app\"></div>")
+            .expect("index should be written");
+
+        let response = serve_static_content(&static_dir, "/assets/missing.js").await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body()).await.expect("body should read");
+        assert_eq!(body.as_ref(), b"Static content not found");
+    }
 }

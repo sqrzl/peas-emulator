@@ -1,5 +1,4 @@
 import { resource } from '@askrjs/askr/resources';
-import { BarChart, Sparkline } from '@askrjs/charts/components';
 import { AlertCircleIcon, RefreshCwIcon } from '@askrjs/lucide';
 import { Button } from '@askrjs/themes/controls';
 import {
@@ -53,12 +52,9 @@ export default function AdminHomePage() {
     <Stack gap="5">
       <section class="page-heading">
         <Stack gap="2">
-          <Badge>live admin data</Badge>
+          <Badge>overview</Badge>
           <h1>Storage overview</h1>
-          <p class="lead">
-            Bucket inventory, object counts, and versioning status pulled from
-            the real admin API.
-          </p>
+          <p class="lead">Live bucket inventory from the admin API.</p>
         </Stack>
         <Inline gap="2" align="center">
           {operations.pending && snapshot ? <Badge>refreshing</Badge> : null}
@@ -69,11 +65,11 @@ export default function AdminHomePage() {
       </section>
 
       {operations.pending && !snapshot ? (
-        <Block size="sm" gap="4">
-          <Skeleton style="height: 8rem" />
-          <Skeleton style="height: 8rem" />
-          <Skeleton style="height: 8rem" />
-        </Block>
+        <Stack gap="3">
+          <Skeleton style="height: 6rem" />
+          <Skeleton style="height: 6rem" />
+          <Skeleton style="height: 18rem" />
+        </Stack>
       ) : null}
 
       {snapshot ? (
@@ -112,41 +108,10 @@ export default function AdminHomePage() {
             />
           </Block>
 
-          <Block size="lg" gap="4" align="stretch" class="chart-grid">
-            <Card>
-              <CardHeader>
-                <CardTitle>Objects per bucket</CardTitle>
-                <CardDescription>
-                  Real storage inventory grouped by bucket.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <BarChart
-                  label="Objects per bucket"
-                  data={snapshot.objectCounts}
-                />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Bucket age</CardTitle>
-                <CardDescription>
-                  Newest buckets stay visible so freshness is obvious.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Sparkline label="Bucket age" data={snapshot.bucketAges} />
-              </CardContent>
-            </Card>
-          </Block>
-
           <Card>
             <CardHeader>
               <CardTitle>Recent buckets</CardTitle>
-              <CardDescription>
-                Bucket metadata comes from the live admin API, not a local demo
-                fixture.
-              </CardDescription>
+              <CardDescription>Bucket metadata comes from the live API.</CardDescription>
             </CardHeader>
             <CardContent>
               <div class="run-table-wrap">

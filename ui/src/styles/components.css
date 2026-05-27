@@ -1,21 +1,10 @@
 .app-root {
   min-height: 100vh;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--ak-color-surface-muted) 58%, transparent),
-      transparent 22rem
-    ),
-    var(--ak-color-bg);
+  background: var(--ak-color-bg);
 }
 
-.public-shell,
-.admin-shell {
-  min-height: 100vh;
-}
-
-.public-header,
-.admin-header {
+.app-header,
+.auth-header {
   position: sticky;
   z-index: 20;
   top: 0;
@@ -24,9 +13,17 @@
   backdrop-filter: blur(14px);
 }
 
-.public-main,
-.admin-main {
+.app-main,
+.auth-main {
   min-width: 0;
+}
+
+.app-main {
+  padding-block: var(--ak-space-6) var(--ak-space-10);
+}
+
+.auth-main {
+  padding-block: var(--ak-space-8);
 }
 
 .brand-mark {
@@ -38,6 +35,14 @@
   background: var(--ak-color-primary);
   color: var(--ak-color-primary-contrast);
   font-weight: var(--ak-font-weight-bold);
+}
+
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ak-space-3);
+  color: inherit;
+  text-decoration: none;
 }
 
 .page-heading {
@@ -69,12 +74,6 @@
   gap: var(--ak-space-md);
 }
 
-.chart-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.72fr);
-  gap: var(--ak-space-md);
-}
-
 .hero-copy {
   max-inline-size: 48rem;
 }
@@ -102,16 +101,6 @@
   height: 0.625rem;
   border-radius: 999px;
   background: var(--ak-color-success);
-}
-
-.card-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: var(--ak-radius-md);
-  background: var(--ak-color-primary-soft);
-  color: var(--ak-color-primary);
 }
 
 .run-table {
@@ -215,8 +204,7 @@
 @media (max-width: 64rem) {
   .hero-grid,
   .operations-grid,
-  .settings-grid,
-  .chart-grid {
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 

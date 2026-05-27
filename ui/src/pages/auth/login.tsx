@@ -1,16 +1,9 @@
 import { state } from '@askrjs/askr';
 import { navigate } from '@askrjs/askr/router';
-import { LockKeyholeIcon } from '@askrjs/lucide';
 import { Input } from '@askrjs/ui';
 import { Button, Field, FieldHint } from '@askrjs/themes/controls';
 import { Container, Section, Stack } from '@askrjs/themes/layouts';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@askrjs/themes/surfaces';
+import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@askrjs/themes/surfaces';
 import { loginAdminSession } from '../../features/auth/admin-session';
 
 function returnPath(): string {
@@ -25,8 +18,8 @@ function returnPath(): string {
 }
 
 export default function LoginPage() {
-  const [username, setUsername] = state('admin');
-  const [password, setPassword] = state('admin');
+  const [username, setUsername] = state('');
+  const [password, setPassword] = state('');
   const [error, setError] = state('');
   const [pending, setPending] = state(false);
 
@@ -62,13 +55,11 @@ export default function LoginPage() {
       <Container size="sm">
         <Card variant="raised">
           <CardHeader>
-            <span class="card-icon">
-              <LockKeyholeIcon size={18} aria-hidden="true" />
-            </span>
-            <CardTitle>Login</CardTitle>
+            <Badge>session cookie</Badge>
+            <CardTitle>Sign in</CardTitle>
             <CardDescription>
-              Use the admin credentials from docker compose to enter the
-              console.
+              Enter the local admin credentials to create a cookie-backed
+              session.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -92,6 +83,7 @@ export default function LoginPage() {
                     }
                     autoComplete="username"
                     disabled={pending()}
+                      placeholder="username"
                   />
                 </Field>
                 <Field>
@@ -107,9 +99,10 @@ export default function LoginPage() {
                     }
                     autoComplete="current-password"
                     disabled={pending()}
+                      placeholder="password"
                   />
                   <FieldHint>
-                    Demo credentials are prefilled as admin / admin.
+                      The UI stores an HttpOnly session cookie after sign-in.
                   </FieldHint>
                 </Field>
                 {error() ? (
@@ -122,9 +115,7 @@ export default function LoginPage() {
                   onPress={() => void handleSubmit()}
                   disabled={pending()}
                 >
-                  {pending()
-                    ? 'Checking credentials...'
-                    : 'Continue to console'}
+                  {pending() ? 'Creating session...' : 'Create session'}
                 </Button>
               </Stack>
             </form>

@@ -1,31 +1,26 @@
 import { MoonIcon, SunIcon } from '@askrjs/lucide';
 import { Link } from '@askrjs/askr/router';
-import { Button } from '@askrjs/themes/controls';
 import { Container, Inline } from '@askrjs/themes/layouts';
 import { Header } from '@askrjs/themes/shells';
-import { NavBrand, NavGroup, Navbar, NavLink } from '@askrjs/themes/navs';
+import { NavBrand, NavGroup, Navbar } from '@askrjs/themes/navs';
+import { Badge } from '@askrjs/themes/surfaces';
 import { ThemeToggle } from '@askrjs/themes/theme';
 
 export default function AuthLayout({ children }: { children?: unknown }) {
   return (
     <>
-      <Header position="sticky">
-        <Container>
+      <Header position="sticky" class="auth-header">
+        <Container size="fluid">
           <Navbar aria-label="Authentication navigation" breakpoint="md">
             <NavBrand>
               <Link href="/auth" class="brand-link">
-                <span class="brand-mark">A</span>
-                <strong>{'ui'}</strong>
+                <span class="brand-mark">P</span>
+                <strong>Peas</strong>
               </Link>
             </NavBrand>
-            <NavGroup align="center">
-              <NavLink href="/auth" match="exact">
-                Login
-              </NavLink>
-              <NavLink href="/auth/logout">Logout</NavLink>
-            </NavGroup>
             <NavGroup align="end">
               <Inline gap="2" align="center">
+                <Badge>session cookie</Badge>
                 <ThemeToggle
                   variant="ghost"
                   size="icon"
@@ -33,15 +28,12 @@ export default function AuthLayout({ children }: { children?: unknown }) {
                   lightIcon={<SunIcon size={18} aria-hidden="true" />}
                   darkIcon={<MoonIcon size={18} aria-hidden="true" />}
                 />
-                <Button asChild>
-                  <Link href="/app">Open console</Link>
-                </Button>
               </Inline>
             </NavGroup>
           </Navbar>
         </Container>
       </Header>
-      <main>{children}</main>
+      <main class="auth-main">{children}</main>
     </>
   );
 }

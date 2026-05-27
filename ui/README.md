@@ -84,11 +84,11 @@ states stay visible in route components.
 ## What This Template Includes
 
 - Guest login, protected application routes, and generated session resolution
-- Theme provider, header/nav/sidebar, cards, badges, buttons, empty states, and layout primitives
-- A dashboard with complete paginated bucket/object totals and charts
+- Theme provider, top navbar, cards, badges, buttons, empty states, and layout primitives
+- A stripped-down overview with live bucket totals and recent bucket rows
 - Bucket CRUD, versioning controls, object content and metadata upload,
   downloads, tags, and paginated versions
-- A read-only integration view reporting API path and resolved session mode
+- A transport/session view reporting the API path and resolved session mode
 
 ## API Boundary
 

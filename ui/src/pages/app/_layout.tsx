@@ -1,70 +1,35 @@
-import {
-  DatabaseIcon,
-  HomeIcon,
-  LogOutIcon,
-  MoonIcon,
-  SettingsIcon,
-  SunIcon,
-} from '@askrjs/lucide';
 import { Link } from '@askrjs/askr/router';
-import { Container, Inline, Stack } from '@askrjs/themes/layouts';
-import { Header, Shell, ShellMain, ShellNav } from '@askrjs/themes/shells';
-import { NavBrand, NavGroup, NavLink, Sidebar } from '@askrjs/themes/navs';
+import { Button } from '@askrjs/themes/controls';
+import { Container, Inline } from '@askrjs/themes/layouts';
+import { Header } from '@askrjs/themes/shells';
+import { NavBrand, NavGroup, Navbar, NavLink } from '@askrjs/themes/navs';
 import { Badge } from '@askrjs/themes/surfaces';
+import { MoonIcon, SunIcon } from '@askrjs/lucide';
 import { ThemeToggle } from '@askrjs/themes/theme';
 import { appNavItems } from '../../shared/navigation';
 
-const icons = {
-  home: <HomeIcon size={16} aria-hidden="true" />,
-  buckets: <DatabaseIcon size={16} aria-hidden="true" />,
-  settings: <SettingsIcon size={16} aria-hidden="true" />,
-};
-
 export default function AppLayout({ children }: { children?: unknown }) {
   return (
-    <Shell variant="sidebar" class="admin-shell">
-      <ShellNav>
-        <Sidebar
-          aria-label="Admin navigation"
-          breakpoint="md"
-          collapsible="icon"
-        >
-          <NavBrand>
-            <Link href="/app" class="brand-link">
-              <span class="brand-mark">A</span>
-              <strong>{'ui'}</strong>
-            </Link>
-          </NavBrand>
-          <NavGroup label="Workspace">
-            {appNavItems.map((item) => (
-              <NavLink key={item.href} href={item.href} match={item.match}>
-                <Inline as="span" gap="2" align="center">
-                  {icons[item.icon]}
-                  <span>{item.label}</span>
-                </Inline>
-              </NavLink>
-            ))}
-          </NavGroup>
-          <NavGroup label="Session" align="end">
-            <NavLink href="/auth/logout" match="exact">
-              <Inline as="span" gap="2" align="center">
-                <LogOutIcon size={16} aria-hidden="true" />
-                <span>Sign out</span>
-              </Inline>
-            </NavLink>
-          </NavGroup>
-        </Sidebar>
-      </ShellNav>
-      <ShellMain>
-        <Header position="sticky" class="admin-header">
-          <Container size="fluid">
-            <Inline justify="between" align="center" gap="3" wrap="wrap">
-              <Stack gap="none">
-                <span class="eyebrow">Storage console</span>
-                <strong>Bucket and object control plane</strong>
-              </Stack>
+    <>
+      <Header position="sticky" class="app-header">
+        <Container size="fluid">
+          <Navbar aria-label="Primary navigation" breakpoint="md">
+            <NavBrand>
+              <Link href="/app" class="brand-link">
+                <span class="brand-mark">P</span>
+                <strong>Peas</strong>
+              </Link>
+            </NavBrand>
+            <NavGroup align="center">
+              {appNavItems.map((item) => (
+                <NavLink key={item.href} href={item.href} match={item.match}>
+                  {item.label}
+                </NavLink>
+              ))}
+            </NavGroup>
+            <NavGroup align="end">
               <Inline gap="2" align="center" wrap="wrap">
-                <Badge>live admin API</Badge>
+                <Badge>session cookie</Badge>
                 <ThemeToggle
                   variant="ghost"
                   size="icon"
@@ -72,14 +37,17 @@ export default function AppLayout({ children }: { children?: unknown }) {
                   lightIcon={<SunIcon size={18} aria-hidden="true" />}
                   darkIcon={<MoonIcon size={18} aria-hidden="true" />}
                 />
+                <Button variant="secondary" asChild>
+                  <Link href="/auth/logout">Sign out</Link>
+                </Button>
               </Inline>
-            </Inline>
-          </Container>
-        </Header>
-        <Container size="fluid" class="admin-main">
-          {children}
+            </NavGroup>
+          </Navbar>
         </Container>
-      </ShellMain>
-    </Shell>
+      </Header>
+      <main class="app-main">
+        <Container size="fluid">{children}</Container>
+      </main>
+    </>
   );
 }
