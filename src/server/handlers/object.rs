@@ -565,7 +565,7 @@ pub async fn object_put(
         ));
     }
 
-    if let Err(e) = validation::validate_object_key(key) {
+    if let Err(e) = validation::validate_blob_key(key) {
         return Ok(xml_error_response(
             StatusCode::BAD_REQUEST,
             "InvalidKey",

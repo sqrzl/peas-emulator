@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vite-plus/test';
 
 import {
   createBucket,
+  deleteBucketWithContents,
+  listBucketPage,
   loadBuckets,
   setBucketVersioning,
 } from '../src/features/buckets/buckets.query';
 import {
+  countBucketObjects,
+  deleteAllBucketObjects,
   deleteObject,
   downloadObjectContent,
   loadObjectMetadata,
+  loadObjectPage,
   loadObjectTags,
   loadObjectVersions,
   putObjectContent,
@@ -73,6 +78,51 @@ function installBlobApiFetchMock(): void {
     string,
     { body: string; contentType: string }
   >();
+  const bucketObjects = new Map<string, Array<{
+    key: string;
+    size: number;
+    etag: string;
+    last_modified: string;
+    content_type: string;
+    storage_class: string;
+  }>>([
+    ['alpha', [
+      {
+        key: 'docs/readme.txt',
+        size: 5,
+        etag: 'etag-alpha-1',
+        last_modified: '2026-05-25T10:00:00.000Z',
+        content_type: 'text/plain',
+        storage_class: 'standard',
+      },
+      {
+        key: 'notes.txt',
+        size: 18,
+        etag: 'etag-alpha-2',
+        last_modified: '2026-05-25T10:05:00.000Z',
+        content_type: 'text/plain',
+        storage_class: 'standard',
+      },
+    ]],
+    ['beta', [
+      {
+        key: 'image.png',
+        size: 12,
+        etag: 'etag-beta-1',
+        last_modified: '2026-05-25T08:30:00.000Z',
+        content_type: 'image/png',
+        storage_class: 'standard',
+      },
+      {
+        key: 'notes.txt',
+        size: 18,
+        etag: 'etag-beta-2',
+        last_modified: '2026-05-25T08:35:00.000Z',
+        content_type: 'text/plain',
+        storage_class: 'standard',
+      },
+    ]],
+  ]);
   let storedTags: Record<string, string> = {};
 
   const mockFetch: typeof fetch = async (
@@ -99,20 +149,35 @@ function installBlobApiFetchMock(): void {
     );
 
     if (url.pathname === '/admin/v1/buckets' && method === 'GET') {
+      const search = url.searchParams.get('search') ?? undefined;
+      const next = url.searchParams.get('next') ?? undefined;
+      const items = [
+        {
+          name: 'alpha',
+          created_at: '2026-05-25T09:00:00.000Z',
+          versioning_enabled: true,
+        },
+        {
+          name: 'beta',
+          created_at: '2026-05-24T09:00:00.000Z',
+          versioning_enabled: false,
+        },
+      ];
+
+      if (search) {
+        return jsonResponse({
+          items: items.filter((bucket) => bucket.name.includes(search)),
+          next: null,
+        });
+      }
+
+      if (next === 'bucket-page-2') {
+        return jsonResponse({ items: [items[1]], next: null });
+      }
+
       return jsonResponse({
-        items: [
-          {
-            name: 'alpha',
-            created_at: '2026-05-25T09:00:00.000Z',
-            versioning_enabled: true,
-          },
-          {
-            name: 'beta',
-            created_at: '2026-05-24T09:00:00.000Z',
-            versioning_enabled: false,
-          },
-        ],
-        next: null,
+        items: [items[0]],
+        next: 'bucket-page-2',
       });
     }
 
@@ -144,41 +209,33 @@ function installBlobApiFetchMock(): void {
       url.pathname === '/admin/v1/buckets/alpha/objects' &&
       method === 'GET'
     ) {
+      const search = url.searchParams.get('search') ?? undefined;
+      const next = url.searchParams.get('next') ?? undefined;
+      const items = bucketObjects.get('alpha') ?? [];
+
+      if (search) {
+        return jsonResponse({
+          items: items.filter((object) => object.key.includes(search)),
+          next: null,
+        });
+      }
+
+      if (next === 'object-page-2') {
+        return jsonResponse({
+          items: items.slice(1),
+          next: null,
+        });
+      }
+
       return jsonResponse({
-        items: [
-          {
-            key: 'docs/readme.txt',
-            size: 5,
-            etag: 'etag-alpha-1',
-            last_modified: '2026-05-25T10:00:00.000Z',
-            content_type: 'text/plain',
-            storage_class: 'standard',
-          },
-        ],
-        next: null,
+        items: items.slice(0, 1),
+        next: items.length > 1 ? 'object-page-2' : null,
       });
     }
 
     if (url.pathname === '/admin/v1/buckets/beta/objects' && method === 'GET') {
       return jsonResponse({
-        items: [
-          {
-            key: 'image.png',
-            size: 12,
-            etag: 'etag-beta-1',
-            last_modified: '2026-05-25T08:30:00.000Z',
-            content_type: 'image/png',
-            storage_class: 'standard',
-          },
-          {
-            key: 'notes.txt',
-            size: 18,
-            etag: 'etag-beta-2',
-            last_modified: '2026-05-25T08:35:00.000Z',
-            content_type: 'text/plain',
-            storage_class: 'standard',
-          },
-        ],
+        items: bucketObjects.get('beta') ?? [],
         next: null,
       });
     }
@@ -229,6 +286,30 @@ function installBlobApiFetchMock(): void {
       method === 'DELETE'
     ) {
       storedObjects.delete('docs/readme.txt');
+      bucketObjects.set(
+        'alpha',
+        (bucketObjects.get('alpha') ?? []).filter(
+          (object) => object.key !== 'docs/readme.txt'
+        )
+      );
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      url.pathname === '/admin/v1/buckets/alpha/objects/notes.txt' &&
+      method === 'DELETE'
+    ) {
+      bucketObjects.set(
+        'alpha',
+        (bucketObjects.get('alpha') ?? []).filter(
+          (object) => object.key !== 'notes.txt'
+        )
+      );
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === '/admin/v1/buckets/alpha' && method === 'DELETE') {
+      bucketObjects.set('alpha', []);
       return new Response(null, { status: 204 });
     }
 
@@ -320,9 +401,49 @@ describe('generated admin feature workflows', () => {
       expect(versioning.enabled).toBe(true);
       expect(snapshot.totalBuckets).toBe(2);
       expect(snapshot.versioningEnabledBuckets).toBe(1);
-      expect(snapshot.totalObjects).toBe(3);
+      expect(snapshot.totalObjects).toBe(4);
       expect(snapshot.buckets[0].name).toBe('alpha');
-      expect(snapshot.buckets[0].objectCount).toBe(1);
+      expect(snapshot.buckets[0].objectCount).toBe(2);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it('supports bucket and object paging/search through generated list queries', async () => {
+    installBlobApiFetchMock();
+    const signal = new AbortController().signal;
+
+    try {
+      const bucketPage1 = await listBucketPage({ signal });
+      const bucketPage2 = await listBucketPage({
+        next: bucketPage1.next ?? undefined,
+        signal,
+      });
+      const bucketSearch = await listBucketPage({ search: 'alpha', signal });
+
+      const objectPage1 = await loadObjectPage({ bucketName: 'alpha', signal });
+      const objectPage2 = await loadObjectPage({
+        bucketName: 'alpha',
+        next: objectPage1.next ?? undefined,
+        signal,
+      });
+      const objectSearch = await loadObjectPage({
+        bucketName: 'alpha',
+        search: 'notes',
+        signal,
+      });
+
+      expect(bucketPage1.items[0]?.name).toBe('alpha');
+      expect(bucketPage1.next).toBe('bucket-page-2');
+      expect(bucketPage2.items[0]?.name).toBe('beta');
+      expect(bucketSearch.items).toHaveLength(1);
+      expect(bucketSearch.items[0]?.name).toBe('alpha');
+
+      expect(objectPage1.items[0]?.key).toBe('docs/readme.txt');
+      expect(objectPage1.next).toBe('object-page-2');
+      expect(objectPage2.items[0]?.key).toBe('notes.txt');
+      expect(objectSearch.items).toHaveLength(1);
+      expect(objectSearch.items[0]?.key).toBe('notes.txt');
     } finally {
       restoreFetch();
     }
@@ -388,6 +509,30 @@ describe('generated admin feature workflows', () => {
       expect(metadata.metadata.owner).toBe('alice');
       expect(tags.tags.env).toBe('test');
       expect(versions.items[0].version_id).toBe('v1');
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it('deletes bucket contents before deleting the bucket', async () => {
+    installBlobApiFetchMock();
+    const signal = new AbortController().signal;
+
+    try {
+      expect(
+        await countBucketObjects({ bucketName: 'alpha', signal })
+      ).toBe(2);
+
+      const deletedObjects = await deleteAllBucketObjects({
+        bucketName: 'alpha',
+      });
+      expect(deletedObjects).toBe(2);
+
+      const result = await deleteBucketWithContents({ bucketName: 'alpha' });
+      expect(result.deletedObjects).toBe(0);
+      expect(
+        await countBucketObjects({ bucketName: 'alpha', signal })
+      ).toBe(0);
     } finally {
       restoreFetch();
     }

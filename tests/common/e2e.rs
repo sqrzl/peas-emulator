@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine as _;
 use hyper::body::to_bytes;
 use hyper::client::HttpConnector;
 use hyper::{Body, Client, Request, Response};
@@ -39,7 +37,7 @@ pub struct LiveServer {
     pub client: Client<HttpConnector, Body>,
     task: JoinHandle<peas_emulator::Result<()>>,
     storage_dir: PathBuf,
-    default_admin_authorization: Option<String>,
+    default_admin_cookie: Option<String>,
 }
 
 impl LiveServer {
@@ -60,7 +58,7 @@ impl LiveServer {
             client: Client::new(),
             task,
             storage_dir,
-            default_admin_authorization: None,
+            default_admin_cookie: None,
         };
         server.wait_until_ready().await;
         server
@@ -79,17 +77,51 @@ impl LiveServer {
             blobs_path: storage_dir.to_string_lossy().to_string(),
             ..auth_config
         });
-        let default_admin_authorization = config.admin_auth_enforced().then(|| {
-            build_basic_auth_header(config.access_key().unwrap(), config.secret_key().unwrap())
-        });
-        let task = tokio::spawn(start_ui_server(storage, config));
-        let server = Self {
+        let task = tokio::spawn(start_ui_server(storage, config.clone()));
+        let mut server = Self {
             base_url: format!("http://127.0.0.1:{ui_port}"),
             client: Client::new(),
             task,
             storage_dir,
-            default_admin_authorization,
+            default_admin_cookie: None,
         };
+        server.wait_until_ready_path("/admin/v1/auth/session").await;
+
+        if config.admin_auth_enforced() {
+            let login_request = Request::builder()
+                .method("POST")
+                .uri(format!("{}/admin/v1/auth/login", server.base_url))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{}","password":"{}"}}"#,
+                    config
+                        .access_key()
+                        .expect("admin access key should exist when auth is enforced"),
+                    config
+                        .secret_key()
+                        .expect("admin secret key should exist when auth is enforced")
+                )))
+                .expect("admin login request should build");
+            let login_response = server.request_without_default_auth(login_request).await;
+            assert_eq!(
+                login_response.status(),
+                hyper::StatusCode::OK,
+                "admin session login should succeed before live tests run"
+            );
+
+            let cookie = login_response
+                .headers()
+                .get("set-cookie")
+                .expect("login response should set a cookie")
+                .to_str()
+                .expect("set-cookie header should be valid utf-8")
+                .split(';')
+                .next()
+                .expect("set-cookie header should contain a cookie value")
+                .to_string();
+            server.default_admin_cookie = Some(cookie);
+        }
+
         server.wait_until_ready_path("/admin/v1/buckets").await;
         server
     }
@@ -139,25 +171,18 @@ impl LiveServer {
     ) -> Result<Response<Body>, hyper::Error> {
         if use_default_admin_auth
             && request.uri().path().starts_with("/admin/v1")
-            && !request.headers().contains_key("authorization")
+            && !request.headers().contains_key("cookie")
         {
-            if let Some(auth_header) = &self.default_admin_authorization {
+            if let Some(cookie) = &self.default_admin_cookie {
                 request.headers_mut().insert(
-                    "authorization",
-                    auth_header
-                        .parse()
-                        .expect("authorization header should parse"),
+                    "cookie",
+                    cookie.parse().expect("cookie header should parse"),
                 );
             }
         }
 
         self.client.request(request).await
     }
-}
-
-fn build_basic_auth_header(access_key: &str, secret_key: &str) -> String {
-    let encoded = STANDARD.encode(format!("{}:{}", access_key, secret_key));
-    format!("Basic {}", encoded)
 }
 
 impl Drop for LiveServer {

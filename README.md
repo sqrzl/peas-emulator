@@ -44,8 +44,7 @@ cargo run
 
 If you set `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY`, the storage front doors enforce auth.
 The admin API at `/admin/v1` will also require auth using those same values. The
-browser UI exchanges them for an HttpOnly admin session cookie; API clients may
-continue to use HTTP Basic auth.
+browser UI exchanges them for an HttpOnly admin session cookie.
 
 If you want to keep the admin API open for local development while still enforcing provider
 auth, set `ADMIN_AUTH_DISABLED=true`.
@@ -76,9 +75,9 @@ npm run lint
 npm run build
 ```
 
-Node 24 or newer is required. The console supports login/logout and open-auth
-mode, dashboard totals and charts, bucket CRUD and versioning, nested object
-keys, raw content transfer with upload metadata, tags, and object versions.
+Node 24 or newer is required. The console currently supports a simple admin
+flow: login/logout, a bucket table with add-bucket modal, a bucket blob table
+with add-blob upload modal, and a blob details page.
 
 ## Docker
 

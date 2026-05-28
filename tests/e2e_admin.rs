@@ -578,7 +578,7 @@ async fn should_return_expected_errors_given_invalid_admin_requests_when_using_l
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_credentials() {
+async fn should_require_session_cookie_given_admin_auth_enabled_when_request_has_no_credentials() {
     let server = LiveServer::start_admin(auth_enabled("admin-key", "admin-secret")).await;
 
     let unauthenticated = Request::builder()
@@ -594,9 +594,9 @@ async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_
     let invalid_session = Request::builder()
         .method("GET")
         .uri(format!("{}/admin/v1/auth/session", server.base_url))
-        .header("authorization", "Basic bm90OnZhbGlk")
+        .header("cookie", "peas_admin_session=invalid")
         .body(Body::empty())
-        .expect("invalid session request should build");
+        .expect("invalid cookie request should build");
     let invalid_session_response = server.request_without_default_auth(invalid_session).await;
     assert_eq!(invalid_session_response.status(), StatusCode::UNAUTHORIZED);
 
@@ -608,15 +608,15 @@ async fn should_require_basic_auth_given_admin_auth_enabled_when_request_has_no_
     let authenticated_response = server.request(authenticated).await;
     assert_eq!(authenticated_response.status(), StatusCode::OK);
 
-    let basic_session = Request::builder()
+    let session_request = Request::builder()
         .method("GET")
         .uri(format!("{}/admin/v1/auth/session", server.base_url))
         .body(Body::empty())
-        .expect("basic session request should build");
-    let basic_session_response = server.request(basic_session).await;
-    assert_eq!(basic_session_response.status(), StatusCode::OK);
-    let session: AdminSessionResponse = json_body(basic_session_response).await;
-    assert_eq!(session.mode, "basic");
+        .expect("session request should build");
+    let session_response = server.request(session_request).await;
+    assert_eq!(session_response.status(), StatusCode::OK);
+    let session: AdminSessionResponse = json_body(session_response).await;
+    assert_eq!(session.mode, "session");
     assert_eq!(session.username.as_deref(), Some("admin-key"));
 }
 

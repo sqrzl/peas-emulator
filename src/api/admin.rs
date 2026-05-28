@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use crate::services::{bucket as bucket_service, json_response, object as object_service};
 use crate::storage::Storage;
+use crate::utils::validation;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use hyper::body::to_bytes;
@@ -291,6 +292,10 @@ fn parse_bucket_and_remainder(rest: &str) -> Result<(String, Option<&str>)> {
         return Err(Error::InvalidRequest("Missing bucket".into()));
     }
 
+    if let Err(message) = validation::validate_bucket_name(&bucket) {
+        return Err(Error::InvalidRequest(message));
+    }
+
     Ok((bucket, remainder))
 }
 
@@ -323,6 +328,9 @@ async fn create_bucket(storage: Arc<dyn Storage>, req: Request<Body>) -> Result<
 
     let payload: CreateReq = read_json(req).await?;
     let name = payload.name;
+    if let Err(message) = validation::validate_bucket_name(&name) {
+        return Err(Error::InvalidRequest(message));
+    }
     tokio::task::block_in_place(|| bucket_service::create_bucket(storage.as_ref(), name.clone()))?;
     let bucket =
         tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), &name))?;
@@ -602,10 +610,6 @@ async fn handle_object_request(
         };
     }
 
-    if object_rest.contains('/') {
-        return Err(Error::RouteNotFound(path));
-    }
-
     let key = decode_component(object_rest);
     match method {
         Method::GET => get_object_metadata(storage, bucket, &key),
@@ -650,6 +654,9 @@ async fn put_object_content(
     key: &str,
     req: Request<Body>,
 ) -> Result<Response<Body>> {
+    if let Err(message) = validation::validate_blob_key(key) {
+        return Err(Error::InvalidRequest(message));
+    }
     let existed = tokio::task::block_in_place(|| {
         object_service::object_exists(storage.as_ref(), bucket, key)
     })?;
@@ -762,6 +769,9 @@ async fn set_object_acl(
     key: &str,
     req: Request<Body>,
 ) -> Result<Response<Body>> {
+    if let Err(message) = validation::validate_blob_key(key) {
+        return Err(Error::InvalidRequest(message));
+    }
     let acl: crate::models::policy::Acl = read_json(req).await?;
     tokio::task::block_in_place(|| {
         object_service::put_object_acl(storage.as_ref(), bucket, key, acl.clone())
@@ -792,6 +802,9 @@ async fn put_object_tags(
         tags: HashMap<String, String>,
     }
 
+    if let Err(message) = validation::validate_blob_key(key) {
+        return Err(Error::InvalidRequest(message));
+    }
     let body: TagsReq = read_json(req).await?;
     tokio::task::block_in_place(|| {
         object_service::put_object_tags(storage.as_ref(), bucket, key, body.tags.clone())
@@ -974,6 +987,31 @@ mod tests {
         assert_json_content_type(&resp);
         let tags: TagsResponse = json_body(resp).await;
         assert_eq!(tags.tags.get("env"), Some(&"dev".to_string()));
+
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri("/admin/v1/buckets/demo/objects/dir1/dir2/blobkey.png/content")
+                .header("content-type", "text/plain")
+                .body(Body::from("nested"))
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+
+            assert_eq!(resp.status(), StatusCode::CREATED);
+            assert_json_content_type(&resp);
+            let nested: ObjectMetadata = json_body(resp).await;
+            assert_eq!(nested.key, "dir1/dir2/blobkey.png");
+
+            let req = Request::builder()
+                .method(Method::GET)
+                .uri("/admin/v1/buckets/demo/objects/dir1/dir2/blobkey.png")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_json_content_type(&resp);
+            let nested_metadata: ObjectMetadata = json_body(resp).await;
+            assert_eq!(nested_metadata.key, "dir1/dir2/blobkey.png");
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -7,7 +7,11 @@ import type {
   MultipartUpload,
 } from '../../adapters/api.g';
 import { unwrapProtectedResponse } from '../auth/admin-session';
-import { countBucketObjects, loadObjectPage } from '../objects/objects.query';
+import {
+  countBucketObjects,
+  deleteAllBucketObjects,
+  loadObjectPage,
+} from '../objects/objects.query';
 
 export type BucketOverviewItem = {
   name: string;
@@ -91,6 +95,30 @@ export async function listBucketPage({
   };
 }
 
+export async function loadAllBucketPages({
+  search,
+  signal,
+}: {
+  search?: string;
+  signal: AbortSignal;
+}): Promise<BucketPage['items']> {
+  const items: BucketPage['items'] = [];
+  let next: string | undefined;
+
+  do {
+    const page = await listBucketPage({
+      next,
+      search,
+      signal,
+    });
+
+    items.push(...page.items);
+    next = page.next ?? undefined;
+  } while (next);
+
+  return items;
+}
+
 export async function loadBucket({
   bucketName,
   signal,
@@ -140,6 +168,18 @@ export async function deleteBucket({
   signal?: AbortSignal;
 }): Promise<void> {
   unwrapProtectedResponse(await adminApi.deleteBucket(bucketName, { signal }));
+}
+
+export async function deleteBucketWithContents({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal?: AbortSignal;
+}): Promise<{ deletedObjects: number }> {
+  const deletedObjects = await deleteAllBucketObjects({ bucketName, signal });
+  await deleteBucket({ bucketName, signal });
+  return { deletedObjects };
 }
 
 export async function setBucketVersioning({
@@ -215,7 +255,9 @@ export async function deleteBucketPolicy({
   bucketName: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  unwrapProtectedResponse(await adminApi.deleteBucketPolicy(bucketName, { signal }));
+  unwrapProtectedResponse(
+    await adminApi.deleteBucketPolicy(bucketName, { signal })
+  );
 }
 
 export async function loadBucketLifecycle({

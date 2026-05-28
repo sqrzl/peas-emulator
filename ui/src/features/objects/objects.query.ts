@@ -39,6 +39,33 @@ export async function loadObjectPage({
   );
 }
 
+export async function loadAllObjectPages({
+  bucketName,
+  search,
+  signal,
+}: {
+  bucketName: string;
+  search?: string;
+  signal: AbortSignal;
+}): Promise<ObjectInfo[]> {
+  const items: ObjectInfo[] = [];
+  let next: string | undefined;
+
+  do {
+    const page = await loadObjectPage({
+      bucketName,
+      next,
+      search,
+      signal,
+    });
+
+    items.push(...page.items);
+    next = page.next ?? undefined;
+  } while (next);
+
+  return items;
+}
+
 export async function countBucketObjects({
   bucketName,
   signal,
@@ -222,6 +249,37 @@ export async function deleteObject({
   unwrapProtectedResponse(
     await adminApi.deleteObject(bucketName, objectKey, { signal })
   );
+}
+
+export async function deleteAllBucketObjects({
+  bucketName,
+  signal,
+}: {
+  bucketName: string;
+  signal?: AbortSignal;
+}): Promise<number> {
+  let deleted = 0;
+  let keepDeleting = true;
+
+  while (keepDeleting) {
+    const page = await loadObjectPage({
+      bucketName,
+      next: undefined,
+      signal: signal ?? new AbortController().signal,
+    });
+
+    if (page.items.length === 0) {
+      keepDeleting = false;
+      continue;
+    }
+
+    for (const object of page.items) {
+      await deleteObject({ bucketName, objectKey: object.key, signal });
+      deleted += 1;
+    }
+  }
+
+  return deleted;
 }
 
 export async function deleteObjectVersion({

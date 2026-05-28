@@ -88,7 +88,7 @@ impl Config {
     /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
     /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
     /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
-    /// - `ADMIN_AUTH_DISABLED`: Disable `/admin/v1` Basic auth even when provider auth is enabled
+    /// - `ADMIN_AUTH_DISABLED`: Disable `/admin/v1` session auth even when provider auth is enabled
     pub fn from_env() -> Self {
         Self::from_env_with(|name| env::var(name).ok())
     }
@@ -118,7 +118,7 @@ impl Config {
         }
     }
 
-    /// Whether the admin API should enforce Basic auth.
+    /// Whether the admin API should enforce session auth.
     pub fn admin_auth_enforced(&self) -> bool {
         self.enforce_auth && !self.admin_auth_disabled
     }

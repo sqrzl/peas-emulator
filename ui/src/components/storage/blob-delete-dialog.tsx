@@ -1,0 +1,76 @@
+import { Show } from "@askrjs/askr/control";
+import { Button, ButtonGroup, FieldError } from "@askrjs/themes/controls";
+import { Stack } from "@askrjs/themes/layouts";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogOverlay,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@askrjs/ui";
+
+export type BlobDeleteTarget = {
+  deleting: boolean;
+  error: string;
+  blobKey: string;
+};
+
+export default function BlobDeleteDialog({
+  bucketName,
+  onCancel,
+  onConfirm,
+  target,
+}: {
+  bucketName: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  target: BlobDeleteTarget | null;
+}) {
+  return (
+    <AlertDialog
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open) {
+          onCancel();
+        }
+      }}
+    >
+      <AlertDialogPortal>
+        <AlertDialogOverlay />
+        <AlertDialogContent>
+          <Stack gap="4">
+            <Stack gap="1">
+              <AlertDialogTitle>Delete blob</AlertDialogTitle>
+              <AlertDialogDescription>
+                {target
+                  ? `Delete ${target.blobKey} from ${bucketName}.`
+                  : "Delete this blob."}
+              </AlertDialogDescription>
+            </Stack>
+            <Show when={target?.error}>
+              <FieldError role="alert">{target?.error}</FieldError>
+            </Show>
+            <ButtonGroup>
+              <Button
+                type="button"
+                disabled={target?.deleting}
+                onPress={onConfirm}
+              >
+                {target?.deleting ? "Deleting..." : "Delete blob"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={target?.deleting}
+                onPress={onCancel}
+              >
+                Cancel
+              </Button>
+            </ButtonGroup>
+          </Stack>
+        </AlertDialogContent>
+      </AlertDialogPortal>
+    </AlertDialog>
+  );
+}

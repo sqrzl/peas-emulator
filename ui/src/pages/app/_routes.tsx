@@ -1,10 +1,17 @@
-import { route } from '@askrjs/askr/router';
-import BucketsPage from './buckets';
-import AdminHomePage from './admin-home';
-import SettingsPage from './settings';
+import { route } from "@askrjs/askr/router";
+import Buckets from "./buckets";
+import BucketPage from "./bucket";
+import BlobPage from "./blob";
 
 export function registerAppRoutes(): void {
-  route('/app', AdminHomePage);
-  route('/app/buckets', BucketsPage);
-  route('/app/settings', SettingsPage);
+  route("/admin", Buckets);
+  route(`/admin/{bucketName}`, (params) => (
+    <BucketPage bucketName={params.bucketName ?? ""} />
+  ));
+  route("/app/{bucketName}/{blobId}", (params) => (
+    <BlobPage
+      bucketName={params.bucketName ?? ""}
+      blobId={params.blobId ?? ""}
+    />
+  ));
 }

@@ -1,9 +1,9 @@
-/// Request validation utilities for S3-compatible API
-/// Validates a bucket name according to S3 rules
+/// Request validation utilities for the storage APIs.
+/// Validates a bucket name against the common cross-vendor subset.
 /// - Must be between 3 and 63 characters
-/// - Can contain lowercase letters, numbers, hyphens
+/// - Can contain lowercase letters, numbers, and hyphens
 /// - Cannot start or end with a hyphen
-/// - Cannot be formatted as IP address (e.g., 192.168.1.1)
+/// - Cannot contain consecutive hyphens
 pub fn validate_bucket_name(name: &str) -> Result<(), String> {
     if name.len() < 3 {
         return Err("Bucket name must be at least 3 characters long".to_string());
@@ -18,38 +18,64 @@ pub fn validate_bucket_name(name: &str) -> Result<(), String> {
 
     if !name
         .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(
-            "Bucket name can only contain lowercase letters, numbers, hyphens, and dots"
-                .to_string(),
+            "Bucket name can only contain lowercase letters, numbers, and hyphens".to_string(),
         );
     }
 
-    // Check if it looks like an IP address
-    if name.split('.').all(|part| part.parse::<u8>().is_ok()) {
-        return Err("Bucket name cannot be formatted as IP address".to_string());
+    if name.contains("--") {
+        return Err("Bucket name cannot contain consecutive hyphens".to_string());
     }
 
     Ok(())
 }
 
-/// Validates an object key
-/// - Can be 0 to 1024 bytes (UTF-8)
-/// - Can contain any Unicode character
-pub fn validate_object_key(key: &str) -> Result<(), String> {
+/// Validates a blob key.
+/// - Must be 1 to 1024 bytes
+/// - Can contain slash-separated path segments
+/// - Path segments may contain ASCII letters, numbers, dots, underscores, and hyphens
+/// - Path segments cannot be empty or dot segments
+pub fn validate_blob_key(key: &str) -> Result<(), String> {
     let byte_len = key.len();
+
+    if byte_len == 0 {
+        return Err("Blob key cannot be empty".to_string());
+    }
 
     if byte_len > 1024 {
         return Err(format!(
-            "Object key cannot exceed 1024 bytes (got {})",
+            "Blob key cannot exceed 1024 bytes (got {})",
             byte_len
         ));
     }
 
-    // Object keys can be empty (but we might want to reject this in practice)
-    // For now, allow 0-1024 bytes as per S3 spec
+    for segment in key.split('/') {
+        if segment.is_empty() {
+            return Err("Blob key cannot contain empty path segments".to_string());
+        }
+
+        if segment == "." || segment == ".." {
+            return Err("Blob key cannot contain dot path segments".to_string());
+        }
+
+        if !segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        {
+            return Err(
+                "Blob key can only contain ASCII letters, numbers, dots, underscores, hyphens, and slashes"
+                    .to_string(),
+            );
+        }
+    }
+
     Ok(())
+}
+
+pub fn validate_object_key(key: &str) -> Result<(), String> {
+    validate_blob_key(key)
 }
 
 /// Validates a multipart part number
@@ -165,23 +191,52 @@ mod tests {
         assert!(validate_bucket_name("10.0.0.1").is_err());
     }
 
-    // Object key validation tests
     #[test]
-    fn should_accept_valid_object_key() {
+    fn should_reject_bucket_name_with_dots() {
+        assert!(validate_bucket_name("bucket.name").is_err());
+    }
+
+    #[test]
+    fn should_reject_bucket_name_with_consecutive_hyphens() {
+        assert!(validate_bucket_name("bucket--name").is_err());
+    }
+
+    // Blob key validation tests
+    #[test]
+    fn should_accept_valid_blob_key() {
         // Arrange
         // Act
-        assert!(validate_object_key("my-object.txt").is_ok());
-        assert!(validate_object_key("path/to/object").is_ok());
-        assert!(validate_object_key("").is_ok());
-        assert!(validate_object_key("🎉 emoji.txt").is_ok());
+        assert!(validate_blob_key("blobkey.png").is_ok());
+        assert!(validate_blob_key("dir1/dir2/blobkey.png").is_ok());
+        assert!(validate_blob_key("dir1/.hidden/blobkey.png").is_ok());
+        assert!(validate_blob_key("dir1/dir2/blob-key_1.png").is_ok());
 
         // Assert
     }
 
     #[test]
-    fn should_reject_object_key_too_long() {
+    fn should_reject_blob_key_too_long() {
         let long_key = "a".repeat(1025);
-        assert!(validate_object_key(&long_key).is_err());
+        assert!(validate_blob_key(&long_key).is_err());
+    }
+
+    #[test]
+    fn should_reject_blob_key_with_empty_segment() {
+        assert!(validate_blob_key("dir1//blobkey.png").is_err());
+        assert!(validate_blob_key("/blobkey.png").is_err());
+        assert!(validate_blob_key("blobkey.png/").is_err());
+    }
+
+    #[test]
+    fn should_reject_blob_key_with_dot_segments() {
+        assert!(validate_blob_key("./blobkey.png").is_err());
+        assert!(validate_blob_key("dir1/../blobkey.png").is_err());
+    }
+
+    #[test]
+    fn should_reject_blob_key_with_non_url_friendly_characters() {
+        assert!(validate_blob_key("🎉 emoji.txt").is_err());
+        assert!(validate_blob_key("folder/blob key.txt").is_err());
     }
 
     // Part number validation tests

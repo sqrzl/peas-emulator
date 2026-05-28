@@ -19,7 +19,6 @@ servers:
     description: Admin API root on the current host
 security:
   - AdminSessionCookie: []
-  - AdminBasicAuth: []
 tags:
   - name: Auth
     description: Authentication session management.
@@ -88,7 +87,6 @@ paths:
     get:
       security:
         - AdminSessionCookie: []
-        - AdminBasicAuth: []
         - {}
       tags:
         - Auth
@@ -96,8 +94,8 @@ paths:
       summary: Get admin session status
       description: >-
         Resolves whether the current browser request is operating through an
-        authenticated session, Basic auth, or an open local-development admin
-        API configuration.
+        authenticated session or an open local-development admin API
+        configuration.
       responses:
         '200':
           description: Session status returned successfully.
@@ -500,10 +498,10 @@ paths:
       tags:
         - Objects
       operationId: listObjects
-      summary: List objects in a bucket
+      summary: List blobs in a bucket
       responses:
         '200':
-          description: Objects returned successfully.
+          description: Blobs returned successfully.
           content:
             application/json:
               schema:
@@ -524,10 +522,10 @@ paths:
       tags:
         - Objects
       operationId: getObjectMetadata
-      summary: Get object metadata
+      summary: Get blob metadata
       responses:
         '200':
-          description: Object metadata returned.
+          description: Blob metadata returned.
           content:
             application/json:
               schema:
@@ -545,10 +543,10 @@ paths:
       tags:
         - Objects
       operationId: deleteObject
-      summary: Delete object
+      summary: Delete blob
       responses:
         '204':
-          description: Object deleted.
+          description: Blob deleted.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -563,10 +561,10 @@ paths:
       tags:
         - Objects
       operationId: downloadObjectContent
-      summary: Download object content
+      summary: Download blob content
       responses:
         '200':
-          description: Object content returned.
+          description: Blob content returned.
           content:
             '*/*':
               schema:
@@ -585,12 +583,12 @@ paths:
       tags:
         - Objects
       operationId: putObjectContent
-      summary: Create or replace object content
+      summary: Create or replace blob content
       description: >-
-        Stores arbitrary bytes and preserves the request content type when
-        provided; otherwise the stored content type defaults to
-        application/octet-stream. Request headers prefixed with
-        `x-amz-meta-` are stored as object metadata.
+        Stores arbitrary bytes for a slash-separated blob key and preserves the
+        request content type when provided; otherwise the stored content type
+        defaults to application/octet-stream. Request headers prefixed with
+        `x-amz-meta-` are stored as blob metadata.
       requestBody:
         required: true
         content:
@@ -600,13 +598,13 @@ paths:
               format: binary
       responses:
         '201':
-          description: Object created.
+          description: Blob created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObjectMetadata'
         '200':
-          description: Object replaced.
+          description: Blob replaced.
           content:
             application/json:
               schema:
@@ -630,10 +628,10 @@ paths:
       tags:
         - Objects
       operationId: listObjectVersions
-      summary: List object versions
+      summary: List blob versions
       responses:
         '200':
-          description: Object versions returned.
+          description: Blob versions returned.
           content:
             application/json:
               schema:
@@ -655,10 +653,10 @@ paths:
       tags:
         - Objects
       operationId: deleteObjectVersion
-      summary: Delete object version
+      summary: Delete blob version
       responses:
         '204':
-          description: Object version deleted.
+          description: Blob version deleted.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -673,10 +671,10 @@ paths:
       tags:
         - Tags
       operationId: getObjectTags
-      summary: Get object tags
+      summary: Get blob tags
       responses:
         '200':
-          description: Tags returned.
+          description: Blob tags returned.
           content:
             application/json:
               schema:
@@ -694,7 +692,7 @@ paths:
       tags:
         - Tags
       operationId: putObjectTags
-      summary: Replace object tags
+      summary: Replace blob tags
       requestBody:
         required: true
         content:
@@ -703,7 +701,7 @@ paths:
               $ref: '#/components/schemas/TagsRequest'
       responses:
         '200':
-          description: Tags replaced.
+          description: Blob tags replaced.
           content:
             application/json:
               schema:
@@ -724,10 +722,10 @@ paths:
       tags:
         - Objects
       operationId: getObjectAcl
-      summary: Get object ACL
+      summary: Get blob ACL
       responses:
         '200':
-          description: Object ACL returned.
+          description: Blob ACL returned.
           content:
             application/json:
               schema:
@@ -745,7 +743,7 @@ paths:
       tags:
         - Objects
       operationId: setObjectAcl
-      summary: Replace object ACL
+      summary: Replace blob ACL
       requestBody:
         required: true
         content:
@@ -754,7 +752,7 @@ paths:
               $ref: '#/components/schemas/Acl'
       responses:
         '200':
-          description: Object ACL replaced.
+          description: Blob ACL replaced.
           content:
             application/json:
               schema:
@@ -774,27 +772,26 @@ components:
       in: cookie
       name: peas_admin_session
       description: HttpOnly JWT session cookie issued by /auth/login.
-    AdminBasicAuth:
-      type: http
-      scheme: basic
-      description: Required when admin credentials are configured and admin auth is enabled.
   parameters:
     BucketName:
       name: bucketName
       in: path
       required: true
-      description: Bucket name.
+      description: Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
       schema:
         type: string
-        minLength: 1
+        minLength: 3
+        maxLength: 63
+        pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
     ObjectKey:
       name: objectKey
       in: path
       required: true
-      description: Full object key, URL encoded when used in the path.
+      description: Slash-separated blob key. URL encode the full key when used in the path.
       schema:
         type: string
         minLength: 1
+        pattern: '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$'
     UploadId:
       name: uploadId
       in: path
@@ -843,13 +840,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
-      description: Authentication is required or the provided admin credentials are invalid.
-      headers:
-        WWW-Authenticate:
-          description: Basic auth challenge for the admin API.
-          schema:
-            type: string
-            example: Basic realm="Peas Admin"
+      description: Authentication is required or the provided admin session cookie is invalid.
       content:
         application/json:
           schema:
@@ -904,7 +895,6 @@ components:
           enum:
             - open
             - session
-            - basic
         username:
           type:
             - string
@@ -925,7 +915,9 @@ components:
       properties:
         name:
           type: string
-          minLength: 1
+          minLength: 3
+          maxLength: 63
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
     BucketInfo:
       type: object
       additionalProperties: false

@@ -5,6 +5,7 @@ import { Button } from '@askrjs/themes/controls';
 import { Container, Section, Stack } from '@askrjs/themes/layouts';
 import { EmptyState } from '@askrjs/themes/feedback';
 import { logoutAdminSession } from '../../features/auth/admin-session';
+import { loginPath } from '../../shared/routes';
 
 export default function LogoutPage() {
   const logout = resource(({ signal }) => logoutAdminSession({ signal }), []);
@@ -29,19 +30,19 @@ export default function LogoutPage() {
               ? 'The auth cookie could not be cleared right now.'
               : isSigningOut
                 ? 'Clearing the auth cookie now.'
-                : 'You can return to login whenever you want to start a new session.'
+                : 'Return to login to start a new session.'
           }
           actions={
             signOutFailed ? (
               <Stack gap="3">
                 <Button onPress={() => logout.refresh()}>Try again</Button>
                 <Button variant="secondary" asChild>
-                  <Link href="/auth">Go to login</Link>
+                  <Link href={loginPath()}>Go to login</Link>
                 </Button>
               </Stack>
             ) : isSigningOut ? null : (
               <Button asChild>
-                <Link href="/auth">Go to login</Link>
+                <Link href={loginPath()}>Go to login</Link>
               </Button>
             )
           }

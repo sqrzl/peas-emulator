@@ -2,8 +2,6 @@ use crate::auth::{AdminLoginRequest, AdminSessionManager};
 use crate::error::{Error, Result};
 use crate::services::{json_error_response, json_response};
 use crate::storage::Storage;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine as _;
 use hyper::body::to_bytes;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server as HyperServer, StatusCode};
@@ -106,49 +104,54 @@ async fn handle_ui_request(
     }
 }
 
-    async fn serve_static_content(static_dir: &Path, request_path: &str) -> Response<Body> {
-        let normalized_path = request_path.trim_start_matches('/');
-        let candidates: Vec<String> = if normalized_path.is_empty() {
-            vec!["index.html".to_string()]
-        } else if Path::new(normalized_path).extension().is_some() {
-            vec![normalized_path.to_string()]
-        } else {
-            vec![
-                format!("{normalized_path}/index.html"),
-                "index.html".to_string(),
-            ]
-        };
+async fn serve_static_content(static_dir: &Path, request_path: &str) -> Response<Body> {
+    let normalized_path = request_path.trim_start_matches('/');
+    let is_spa_route = normalized_path == "app"
+        || normalized_path.starts_with("app/")
+        || normalized_path == "auth"
+        || normalized_path.starts_with("auth/");
+    let candidates: Vec<String> = if normalized_path.is_empty() {
+        vec!["index.html".to_string()]
+    } else if Path::new(normalized_path).extension().is_some() && !is_spa_route {
+        vec![normalized_path.to_string()]
+    } else {
+        vec![
+            normalized_path.to_string(),
+            format!("{normalized_path}/index.html"),
+            "index.html".to_string(),
+        ]
+    };
 
-        for relative_path in candidates {
-            let file_path = static_dir.join(&relative_path);
-            if let Ok(content) = async_fs::read(&file_path).await {
-                let content_type = if file_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name == "index.html")
-                {
-                    "text/html; charset=utf-8".to_string()
-                } else {
-                    from_path(&file_path)
-                        .first_or_octet_stream()
-                        .essence_str()
-                        .to_string()
-                };
+    for relative_path in candidates {
+        let file_path = static_dir.join(&relative_path);
+        if let Ok(content) = async_fs::read(&file_path).await {
+            let content_type = if file_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "index.html")
+            {
+                "text/html; charset=utf-8".to_string()
+            } else {
+                from_path(&file_path)
+                    .first_or_octet_stream()
+                    .essence_str()
+                    .to_string()
+            };
 
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", content_type)
-                    .body(Body::from(content))
-                    .unwrap_or_else(|_| Response::new(Body::empty()));
-            }
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", content_type)
+                .body(Body::from(content))
+                .unwrap_or_else(|_| Response::new(Body::empty()));
         }
-
-        Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header("content-type", "text/plain; charset=utf-8")
-            .body(Body::from("Static content not found"))
-            .unwrap_or_else(|_| Response::new(Body::from("Static content not found")))
     }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(Body::from("Static content not found"))
+        .unwrap_or_else(|_| Response::new(Body::from("Static content not found")))
+}
 
 async fn handle_admin_login(
     config: Arc<crate::Config>,
@@ -240,8 +243,6 @@ fn handle_admin_session(
         ("open", None)
     } else if let Some(username) = admin_session.subject_from_request(&req) {
         ("session", Some(username))
-    } else if let Some(username) = admin_basic_auth_subject(&req, &config) {
-        ("basic", Some(username))
     } else {
         return admin_unauthorized_response();
     };
@@ -264,40 +265,16 @@ fn admin_request_is_authorized(
         return true;
     }
 
-    if admin_session.has_valid_session(req) {
-        return true;
-    }
-
-    admin_basic_auth_subject(req, config).is_some()
-}
-
-fn admin_basic_auth_subject(req: &Request<Body>, config: &crate::Config) -> Option<String> {
-    let auth_header = req.headers().get("authorization")?.to_str().ok()?;
-    let encoded = auth_header.strip_prefix("Basic ")?;
-    let decoded = STANDARD.decode(encoded).ok()?;
-    let decoded = String::from_utf8(decoded).ok()?;
-    let (provided_key, provided_secret) = decoded.split_once(':')?;
-
-    config
-        .validate_credentials(provided_key, provided_secret)
-        .then(|| provided_key.to_string())
+    admin_session.has_valid_session(req)
 }
 
 fn admin_unauthorized_response() -> Response<Body> {
     let body = crate::api::models::ErrorResponse {
         error: "Unauthorized".to_string(),
         code: "Unauthorized".to_string(),
-        details: Some(
-            "Provide a valid admin session cookie or Basic auth with ACCESS_KEY_ID and SECRET_ACCESS_KEY"
-                .to_string(),
-        ),
+        details: Some("Provide a valid admin session cookie.".to_string()),
     };
-    let mut response = json_response(StatusCode::UNAUTHORIZED, &body);
-    response.headers_mut().insert(
-        "www-authenticate",
-        hyper::header::HeaderValue::from_static("Basic realm=\"Peas Admin\""),
-    );
-    response
+    json_response(StatusCode::UNAUTHORIZED, &body)
 }
 
 fn admin_login_unauthorized_response() -> Response<Body> {
@@ -349,17 +326,25 @@ mod tests {
             .expect("content-type header should exist")
             .to_str()
             .expect("content-type should be valid utf-8");
-        assert!(content_type.contains("javascript"), "content-type = {content_type}");
+        assert!(
+            content_type.contains("javascript"),
+            "content-type = {content_type}"
+        );
 
-        let body = to_bytes(response.into_body()).await.expect("body should read");
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("body should read");
         assert_eq!(body.as_ref(), b"export const app = 'peas';");
     }
 
     #[tokio::test]
     async fn should_fall_back_to_index_for_spa_routes() {
         let static_dir = temp_static_dir();
-        fs::write(static_dir.join("index.html"), "<!doctype html><div id=\"app\"></div>")
-            .expect("index should be written");
+        fs::write(
+            static_dir.join("index.html"),
+            "<!doctype html><div id=\"app\"></div>",
+        )
+        .expect("index should be written");
 
         let response = serve_static_content(&static_dir, "/dashboard/settings").await;
 
@@ -374,7 +359,9 @@ mod tests {
             "text/html; charset=utf-8"
         );
 
-        let body = to_bytes(response.into_body()).await.expect("body should read");
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("body should read");
         assert!(String::from_utf8(body.to_vec())
             .expect("body should be utf-8")
             .contains("id=\"app\""));
@@ -383,13 +370,42 @@ mod tests {
     #[tokio::test]
     async fn should_return_not_found_for_missing_static_assets() {
         let static_dir = temp_static_dir();
-        fs::write(static_dir.join("index.html"), "<!doctype html><div id=\"app\"></div>")
-            .expect("index should be written");
+        fs::write(
+            static_dir.join("index.html"),
+            "<!doctype html><div id=\"app\"></div>",
+        )
+        .expect("index should be written");
 
         let response = serve_static_content(&static_dir, "/assets/missing.js").await;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let body = to_bytes(response.into_body()).await.expect("body should read");
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("body should read");
         assert_eq!(body.as_ref(), b"Static content not found");
+    }
+
+    #[tokio::test]
+    async fn should_fall_back_to_index_for_spa_routes_with_dotted_segments() {
+        let static_dir = temp_static_dir();
+        fs::write(
+            static_dir.join("index.html"),
+            "<!doctype html><div id=\"app\"></div>",
+        )
+        .expect("index should be written");
+
+        let response =
+            serve_static_content(&static_dir, "/app/buckets/demo/blobs/readme.txt").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .expect("content-type header should exist")
+                .to_str()
+                .expect("content-type should be valid utf-8"),
+            "text/html; charset=utf-8"
+        );
     }
 }

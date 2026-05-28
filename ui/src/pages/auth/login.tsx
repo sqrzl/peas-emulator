@@ -1,40 +1,52 @@
-import { state } from '@askrjs/askr';
-import { navigate } from '@askrjs/askr/router';
-import { Input } from '@askrjs/ui';
-import { Button, Field, FieldHint } from '@askrjs/themes/controls';
-import { Container, Section, Stack } from '@askrjs/themes/layouts';
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@askrjs/themes/surfaces';
-import { loginAdminSession } from '../../features/auth/admin-session';
+import { state } from "@askrjs/askr";
+import { navigate } from "@askrjs/askr/router";
+import { Input } from "@askrjs/ui";
+import { Button, Field } from "@askrjs/themes/controls";
+import { Container, Section, Stack } from "@askrjs/themes/layouts";
+import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { loginAdminSession } from "../../features/auth/admin-session";
+import { adminBucketsPath } from "../../shared/routes";
 
 function returnPath(): string {
-  if (typeof window === 'undefined') {
-    return '/app';
+  if (typeof window === "undefined") {
+    return adminBucketsPath();
   }
 
-  const candidate = new URLSearchParams(window.location.search).get('next');
-  return candidate?.startsWith('/') && !candidate.startsWith('//')
+  const candidate = new URLSearchParams(window.location.search).get("next");
+  return candidate?.startsWith("/") && !candidate.startsWith("//")
     ? candidate
-    : '/app';
+    : adminBucketsPath();
 }
 
 export default function LoginPage() {
-  const [username, setUsername] = state('');
-  const [password, setPassword] = state('');
-  const [error, setError] = state('');
+  const [error, setError] = state("");
   const [pending, setPending] = state(false);
 
-  async function handleSubmit() {
+  async function handleSubmit(event: Event) {
     if (pending()) {
       return;
     }
 
+    const target = event.target instanceof Element ? event.target : null;
+    const form = target?.closest("form");
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const usernameInput = form.querySelector("#username");
+    const passwordInput = form.querySelector("#password");
     const credentials = {
-      username: username().trim(),
-      password: password(),
+      username:
+        usernameInput instanceof HTMLInputElement
+          ? usernameInput.value.trim()
+          : "",
+      password:
+        passwordInput instanceof HTMLInputElement ? passwordInput.value : "",
     };
 
     setPending(true);
-    setError('');
+    setError("");
 
     try {
       await loginAdminSession(credentials);
@@ -43,7 +55,7 @@ export default function LoginPage() {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : 'The admin server is unavailable right now.'
+          : "The admin server is unavailable right now.",
       );
     } finally {
       setPending(false);
@@ -53,20 +65,15 @@ export default function LoginPage() {
   return (
     <Section size="4">
       <Container size="sm">
-        <Card variant="raised">
+          <Card variant="raised">
           <CardHeader>
-            <Badge>session cookie</Badge>
             <CardTitle>Sign in</CardTitle>
-            <CardDescription>
-              Enter the local admin credentials to create a cookie-backed
-              session.
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <form
               onSubmit={(event: Event) => {
                 event.preventDefault();
-                void handleSubmit();
+                void handleSubmit(event);
               }}
             >
               <Stack gap="4">
@@ -74,48 +81,31 @@ export default function LoginPage() {
                   <label for="username">Username</label>
                   <Input
                     id="username"
+                    name="username"
                     type="text"
-                    value={username()}
-                    onInput={(event: Event) =>
-                      setUsername(
-                        (event.currentTarget as HTMLInputElement).value
-                      )
-                    }
                     autoComplete="username"
                     disabled={pending()}
-                      placeholder="username"
+                    placeholder="username"
                   />
                 </Field>
                 <Field>
                   <label for="password">Password</label>
                   <Input
                     id="password"
+                    name="password"
                     type="password"
-                    value={password()}
-                    onInput={(event: Event) =>
-                      setPassword(
-                        (event.currentTarget as HTMLInputElement).value
-                      )
-                    }
                     autoComplete="current-password"
                     disabled={pending()}
-                      placeholder="password"
+                    placeholder="password"
                   />
-                  <FieldHint>
-                      The UI stores an HttpOnly session cookie after sign-in.
-                  </FieldHint>
                 </Field>
                 {error() ? (
-                  <p role="alert" class="form-error">
+                  <p role="alert">
                     {error()}
                   </p>
                 ) : null}
-                <Button
-                  type="submit"
-                  onPress={() => void handleSubmit()}
-                  disabled={pending()}
-                >
-                  {pending() ? 'Creating session...' : 'Create session'}
+                <Button type="submit" disabled={pending()}>
+                  {pending() ? "Signing in..." : "Sign in"}
                 </Button>
               </Stack>
             </form>
