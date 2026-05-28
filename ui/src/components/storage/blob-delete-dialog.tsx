@@ -1,6 +1,6 @@
-import { Show } from "@askrjs/askr/control";
-import { Button, ButtonGroup, FieldError } from "@askrjs/themes/controls";
-import { Stack } from "@askrjs/themes/layouts";
+import { Show } from '@askrjs/askr/control';
+import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
+import { Stack } from '@askrjs/themes/layouts';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -8,13 +8,10 @@ import {
   AlertDialogOverlay,
   AlertDialogPortal,
   AlertDialogTitle,
-} from "@askrjs/ui";
+} from '@askrjs/ui';
+import type { DeleteTarget } from '../../features/storage/use-delete-target';
 
-export type BlobDeleteTarget = {
-  deleting: boolean;
-  error: string;
-  blobKey: string;
-};
+export type BlobDeleteTarget = DeleteTarget<{ blobKey: string }>;
 
 export default function BlobDeleteDialog({
   bucketName,
@@ -45,7 +42,7 @@ export default function BlobDeleteDialog({
               <AlertDialogDescription>
                 {target
                   ? `Delete ${target.blobKey} from ${bucketName}.`
-                  : "Delete this blob."}
+                  : 'Delete this blob.'}
               </AlertDialogDescription>
             </Stack>
             <Show when={target?.error}>
@@ -57,7 +54,7 @@ export default function BlobDeleteDialog({
                 disabled={target?.deleting}
                 onPress={onConfirm}
               >
-                {target?.deleting ? "Deleting..." : "Delete blob"}
+                {target?.deleting ? 'Deleting...' : 'Delete blob'}
               </Button>
               <Button
                 type="button"

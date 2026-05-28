@@ -20,7 +20,9 @@ describe('shared route helpers', () => {
     expect(blobPath('demo-bucket', 'dir1/dir2/blobkey.png')).toBe(
       `${bucketPath('demo-bucket')}/${nestedBlobId}`
     );
-    expect(blobPath('demo-bucket', 'dir1/dir2/blobkey.png')).not.toContain('%2F');
+    expect(blobPath('demo-bucket', 'dir1/dir2/blobkey.png')).not.toContain(
+      '%2F'
+    );
   });
 
   it('points the canonical ui routes at the admin surface', () => {

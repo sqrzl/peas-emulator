@@ -1,15 +1,15 @@
-import { Link } from "@askrjs/askr/router";
-import { LogOutIcon, MoonIcon, SunIcon } from "@askrjs/lucide";
-import { Container, Section, Stack } from "@askrjs/themes/layouts";
+import { Link } from '@askrjs/askr/router';
+import { LogOutIcon, MoonIcon, SunIcon } from '@askrjs/lucide';
+import { Container, Section, Stack } from '@askrjs/themes/layouts';
 import {
   Header,
   NavBrand,
   NavGroup,
   NavLink,
   Navbar,
-} from "@askrjs/themes/shells";
-import { ThemeToggle } from "@askrjs/themes/theme";
-import { adminBucketsPath, logoutPath } from "../../shared/routes";
+} from '@askrjs/themes/shells';
+import { ThemeToggle } from '@askrjs/themes/theme';
+import { adminBucketsPath, logoutPath } from '../../shared/routes';
 
 export default function AppLayout({ children }: { children?: unknown }) {
   return (

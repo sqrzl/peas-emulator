@@ -1,7 +1,13 @@
-import { state } from "@askrjs/askr";
-import { Show } from "@askrjs/askr/control";
-import { Button, ButtonGroup, Field, FieldError } from "@askrjs/themes/controls";
-import { Stack } from "@askrjs/themes/layouts";
+import { state } from '@askrjs/askr';
+import { Show } from '@askrjs/askr/control';
+import { createMutation } from '@askrjs/askr/data';
+import {
+  Button,
+  ButtonGroup,
+  Field,
+  FieldError,
+} from '@askrjs/themes/controls';
+import { Stack } from '@askrjs/themes/layouts';
 import {
   Dialog,
   DialogClose,
@@ -12,58 +18,48 @@ import {
   DialogTitle,
   Input,
   Label,
-} from "@askrjs/ui";
-import { createBucket } from "../../features/buckets/buckets.query";
+} from '@askrjs/ui';
+import { createBucket } from '../../features/buckets/buckets.query';
+import { bucketListKey } from '../../features/storage/keys';
 
-export default function BucketModal({
-  onCreated,
-}: {
-  onCreated?: () => void;
-}) {
+export default function BucketModal() {
   const [isOpen, setOpen] = state(false);
-  const [error, setError] = state("");
-  const [pending, setPending] = state(false);
+  const [error, setError] = state('');
 
-  async function handleSubmit(event: Event) {
+  const create = createMutation({
+    action: (name: string, { signal }) => createBucket({ name, signal }),
+    affects: () => [bucketListKey],
+    afterSuccess: 'invalidate',
+  });
+
+  async function submit(event: Event) {
     event.preventDefault();
-    if (pending()) {
+    if (create.pending) {
       return;
     }
 
-    const target = event.target instanceof Element ? event.target : null;
-    const form = target?.closest("form");
-
-    if (!(form instanceof HTMLFormElement)) {
-      return;
-    }
-
-    const bucketNameInput = form.querySelector("#bucket-name");
-    const name =
-      bucketNameInput instanceof HTMLInputElement
-        ? bucketNameInput.value.trim()
-        : "";
+    const form =
+      event.target instanceof Element ? event.target.closest('form') : null;
+    const input = form?.querySelector('#bucket-name');
+    const name = input instanceof HTMLInputElement ? input.value.trim() : '';
 
     if (!name) {
-      setError("Bucket name is required.");
+      setError('Bucket name is required.');
       return;
     }
 
-    setPending(true);
-    setError("");
+    setError('');
 
     try {
-      await createBucket({ name });
-      form.reset();
+      await create.execute(name);
+      form?.reset();
       setOpen(false);
-      onCreated?.();
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : "Bucket could not be created."
+          : 'Bucket could not be created.'
       );
-    } finally {
-      setPending(false);
     }
   }
 
@@ -77,32 +73,29 @@ export default function BucketModal({
             <Stack gap="4">
               <Stack gap="1">
                 <DialogTitle>Add bucket</DialogTitle>
-                <DialogDescription>Create a bucket in the emulator.</DialogDescription>
+                <DialogDescription>
+                  Create a bucket in the emulator.
+                </DialogDescription>
               </Stack>
-              <form
-                onSubmit={(event: Event) => {
-                  void handleSubmit(event);
-                }}
-              >
+              <form onSubmit={(event: Event) => void submit(event)}>
                 <Stack gap="4">
                   <Field>
                     <Label for="bucket-name">Bucket name</Label>
-                    <Input id="bucket-name" name="bucket-name" disabled={pending()} />
+                    <Input
+                      id="bucket-name"
+                      name="bucket-name"
+                      disabled={create.pending}
+                    />
                   </Field>
                   <Show when={error()}>
                     <FieldError role="alert">{error()}</FieldError>
                   </Show>
                   <ButtonGroup>
-                    <Button type="submit" disabled={pending()}>
-                      {pending() ? "Creating..." : "Create bucket"}
+                    <Button type="submit" disabled={create.pending}>
+                      {create.pending ? 'Creating...' : 'Create bucket'}
                     </Button>
-                    <DialogClose
-                      asChild
-                      onPress={() => {
-                        setError("");
-                      }}
-                    >
-                      <Button variant="secondary" disabled={pending()}>
+                    <DialogClose asChild onPress={() => setError('')}>
+                      <Button variant="secondary" disabled={create.pending}>
                         Cancel
                       </Button>
                     </DialogClose>

@@ -1,25 +1,30 @@
-import { state } from "@askrjs/askr";
-import { navigate } from "@askrjs/askr/router";
-import { Input } from "@askrjs/ui";
-import { Button, Field } from "@askrjs/themes/controls";
-import { Container, Section, Stack } from "@askrjs/themes/layouts";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
-import { loginAdminSession } from "../../features/auth/admin-session";
-import { adminBucketsPath } from "../../shared/routes";
+import { state } from '@askrjs/askr';
+import { navigate } from '@askrjs/askr/router';
+import { Input } from '@askrjs/ui';
+import { Button, Field } from '@askrjs/themes/controls';
+import { Container, Section, Stack } from '@askrjs/themes/layouts';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@askrjs/themes/surfaces';
+import { loginAdminSession } from '../../features/auth/admin-session';
+import { adminBucketsPath } from '../../shared/routes';
 
 function returnPath(): string {
-  if (typeof window === "undefined") {
+  if (typeof window === 'undefined') {
     return adminBucketsPath();
   }
 
-  const candidate = new URLSearchParams(window.location.search).get("next");
-  return candidate?.startsWith("/") && !candidate.startsWith("//")
+  const candidate = new URLSearchParams(window.location.search).get('next');
+  return candidate?.startsWith('/') && !candidate.startsWith('//')
     ? candidate
     : adminBucketsPath();
 }
 
 export default function LoginPage() {
-  const [error, setError] = state("");
+  const [error, setError] = state('');
   const [pending, setPending] = state(false);
 
   async function handleSubmit(event: Event) {
@@ -28,25 +33,25 @@ export default function LoginPage() {
     }
 
     const target = event.target instanceof Element ? event.target : null;
-    const form = target?.closest("form");
+    const form = target?.closest('form');
 
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
 
-    const usernameInput = form.querySelector("#username");
-    const passwordInput = form.querySelector("#password");
+    const usernameInput = form.querySelector('#username');
+    const passwordInput = form.querySelector('#password');
     const credentials = {
       username:
         usernameInput instanceof HTMLInputElement
           ? usernameInput.value.trim()
-          : "",
+          : '',
       password:
-        passwordInput instanceof HTMLInputElement ? passwordInput.value : "",
+        passwordInput instanceof HTMLInputElement ? passwordInput.value : '',
     };
 
     setPending(true);
-    setError("");
+    setError('');
 
     try {
       await loginAdminSession(credentials);
@@ -55,7 +60,7 @@ export default function LoginPage() {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : "The admin server is unavailable right now.",
+          : 'The admin server is unavailable right now.'
       );
     } finally {
       setPending(false);
@@ -65,7 +70,7 @@ export default function LoginPage() {
   return (
     <Section size="4">
       <Container size="sm">
-          <Card variant="raised">
+        <Card variant="raised">
           <CardHeader>
             <CardTitle>Sign in</CardTitle>
           </CardHeader>
@@ -99,13 +104,9 @@ export default function LoginPage() {
                     placeholder="password"
                   />
                 </Field>
-                {error() ? (
-                  <p role="alert">
-                    {error()}
-                  </p>
-                ) : null}
+                {error() ? <p role="alert">{error()}</p> : null}
                 <Button type="submit" disabled={pending()}>
-                  {pending() ? "Signing in..." : "Sign in"}
+                  {pending() ? 'Signing in...' : 'Sign in'}
                 </Button>
               </Stack>
             </form>

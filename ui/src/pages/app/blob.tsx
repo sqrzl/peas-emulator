@@ -1,11 +1,11 @@
-import { resource } from "@askrjs/askr/resources";
-import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { EmptyState } from "@askrjs/themes/feedback";
-import { Stack } from "@askrjs/themes/layouts";
-import BlobDetails from "../../components/storage/blob-details";
-import { loadAllBlobPages } from "../../features/blobs/blobs.query";
-import { bucketPath, blobIdFromBlobKey } from "../../shared/routes";
+import { resource } from '@askrjs/askr/resources';
+import { Link } from '@askrjs/askr/router';
+import { Button } from '@askrjs/themes/controls';
+import { EmptyState } from '@askrjs/themes/feedback';
+import { Stack } from '@askrjs/themes/layouts';
+import BlobDetails from '../../components/storage/blob-details';
+import { loadAllBlobPages } from '../../features/blobs/blobs.query';
+import { bucketPath, blobIdFromBlobKey } from '../../shared/routes';
 
 export default function Blob({
   bucketName,
@@ -20,11 +20,11 @@ export default function Blob({
         bucketName,
         signal,
       }),
-    [bucketName],
+    [bucketName]
   );
 
   const resolvedBlob = blobs.value?.find(
-    (blob) => blobIdFromBlobKey(blob.key) === blobId,
+    (blob) => blobIdFromBlobKey(blob.key) === blobId
   );
 
   if (blobs.error && !blobs.value) {

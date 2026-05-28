@@ -1,5 +1,5 @@
-import { Button, ButtonGroup, FieldError } from "@askrjs/themes/controls";
-import { Stack } from "@askrjs/themes/layouts";
+import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
+import { Stack } from '@askrjs/themes/layouts';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -7,16 +7,11 @@ import {
   AlertDialogOverlay,
   AlertDialogPortal,
   AlertDialogTitle,
-} from "@askrjs/ui";
-import { Show } from "@askrjs/askr/control";
+} from '@askrjs/ui';
+import { Show } from '@askrjs/askr/control';
+import type { DeleteTarget } from '../../features/storage/use-delete-target';
 
-export type BucketDeleteTarget = {
-  blobCount: number | null;
-  bucketName: string;
-  deleting: boolean;
-  error: string;
-  pendingCount: boolean;
-};
+export type BucketDeleteTarget = DeleteTarget<{ bucketName: string }>;
 
 export default function BucketDeleteDialog({
   onCancel,
@@ -44,10 +39,10 @@ export default function BucketDeleteDialog({
               <AlertDialogTitle>Delete bucket</AlertDialogTitle>
               <AlertDialogDescription>
                 {target?.pendingCount
-                  ? "Checking how many blobs are in this bucket."
+                  ? 'Checking how many blobs are in this bucket.'
                   : target
-                    ? `You are going to delete ${target.blobCount ?? 0} blobs from ${target.bucketName}.`
-                    : "You are going to delete this bucket."}
+                    ? `You are going to delete ${target.count ?? 0} blobs from ${target.bucketName}.`
+                    : 'You are going to delete this bucket.'}
               </AlertDialogDescription>
               <p>This also removes the bucket itself.</p>
             </Stack>
@@ -61,10 +56,10 @@ export default function BucketDeleteDialog({
                 onPress={onConfirm}
               >
                 {target?.deleting
-                  ? "Deleting..."
+                  ? 'Deleting...'
                   : target
-                    ? `Delete bucket and ${target.blobCount ?? 0} blobs`
-                    : "Delete bucket"}
+                    ? `Delete bucket and ${target.count ?? 0} blobs`
+                    : 'Delete bucket'}
               </Button>
               <Button
                 type="button"

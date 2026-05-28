@@ -1,11 +1,16 @@
-import { state } from "@askrjs/askr";
-import { For, Show } from "@askrjs/askr/control";
-import { resource } from "@askrjs/askr/resources";
-import { Link } from "@askrjs/askr/router";
-import { Button, ButtonGroup, FieldError } from "@askrjs/themes/controls";
-import { EmptyState } from "@askrjs/themes/feedback";
-import { Stack } from "@askrjs/themes/layouts";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { state } from '@askrjs/askr';
+import { For, Show } from '@askrjs/askr/control';
+import { resource } from '@askrjs/askr/resources';
+import { Link } from '@askrjs/askr/router';
+import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
+import { EmptyState } from '@askrjs/themes/feedback';
+import { Stack } from '@askrjs/themes/layouts';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@askrjs/themes/surfaces';
 import {
   Table,
   TableBody,
@@ -13,14 +18,14 @@ import {
   TableHead,
   TableHeaderCell,
   TableRow,
-} from "@askrjs/ui";
+} from '@askrjs/ui';
 import {
   downloadBlobContent,
   loadBlobMetadata,
   type BlobMetadata,
-} from "../../features/blobs/blobs.query";
-import { formatBytes, formatRelativeTime } from "../../shared/format";
-import { bucketPath } from "../../shared/routes";
+} from '../../features/blobs/blobs.query';
+import { formatBytes, formatRelativeTime } from '../../shared/format';
+import { bucketPath } from '../../shared/routes';
 
 function formatBlobSize(size: number): string {
   return `${formatBytes(size)} (${size.toLocaleString()} bytes)`;
@@ -34,9 +39,10 @@ export default function BlobDetails({
   blobKey: string;
 }) {
   const [downloadPending, setDownloadPending] = state(false);
-  const [downloadError, setDownloadError] = state("");
+  const [downloadError, setDownloadError] = state('');
   const metadata = resource(
-    ({ signal }) => loadBlobMetadata({ bucketName, objectKey: blobKey, signal }),
+    ({ signal }) =>
+      loadBlobMetadata({ bucketName, objectKey: blobKey, signal }),
     [bucketName, blobKey]
   );
 
@@ -46,12 +52,15 @@ export default function BlobDetails({
     }
 
     setDownloadPending(true);
-    setDownloadError("");
+    setDownloadError('');
 
     try {
-      const downloaded = await downloadBlobContent({ bucketName, objectKey: blobKey });
+      const downloaded = await downloadBlobContent({
+        bucketName,
+        objectKey: blobKey,
+      });
       const href = window.URL.createObjectURL(downloaded.blob);
-      const link = document.createElement("a");
+      const link = document.createElement('a');
       link.href = href;
       link.download = downloaded.fileName;
       document.body.appendChild(link);
@@ -64,7 +73,7 @@ export default function BlobDetails({
       setDownloadError(
         caughtError instanceof Error
           ? caughtError.message
-          : "Blob download could not start."
+          : 'Blob download could not start.'
       );
     } finally {
       setDownloadPending(false);
@@ -81,7 +90,9 @@ export default function BlobDetails({
     );
   }
 
-  const customMetadata = metadata.value ? Object.entries(metadata.value.metadata) : [];
+  const customMetadata = metadata.value
+    ? Object.entries(metadata.value.metadata)
+    : [];
 
   return (
     <Stack gap="4">
@@ -89,8 +100,11 @@ export default function BlobDetails({
         <Button variant="secondary" asChild>
           <Link href={bucketPath(bucketName)}>Back to bucket</Link>
         </Button>
-        <Button onPress={() => void handleDownload()} disabled={downloadPending()}>
-          {downloadPending() ? "Downloading..." : "Download blob"}
+        <Button
+          onPress={() => void handleDownload()}
+          disabled={downloadPending()}
+        >
+          {downloadPending() ? 'Downloading...' : 'Download blob'}
         </Button>
       </ButtonGroup>
 
@@ -127,7 +141,7 @@ export default function BlobDetails({
                     <TableRow>
                       <TableHeaderCell>Content type</TableHeaderCell>
                       <TableCell>
-                        {blob.content_type ?? "application/octet-stream"}
+                        {blob.content_type ?? 'application/octet-stream'}
                       </TableCell>
                     </TableRow>
                     <TableRow>
@@ -136,7 +150,7 @@ export default function BlobDetails({
                     </TableRow>
                     <TableRow>
                       <TableHeaderCell>Version ID</TableHeaderCell>
-                      <TableCell>{blob.version_id ?? "unversioned"}</TableCell>
+                      <TableCell>{blob.version_id ?? 'unversioned'}</TableCell>
                     </TableRow>
                     <TableRow>
                       <TableHeaderCell>Storage class</TableHeaderCell>
@@ -144,7 +158,9 @@ export default function BlobDetails({
                     </TableRow>
                     <TableRow>
                       <TableHeaderCell>Last modified</TableHeaderCell>
-                      <TableCell>{formatRelativeTime(blob.last_modified)}</TableCell>
+                      <TableCell>
+                        {formatRelativeTime(blob.last_modified)}
+                      </TableCell>
                     </TableRow>
                   </TableBody>
                 </Table>

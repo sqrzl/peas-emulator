@@ -78,50 +78,59 @@ function installBlobApiFetchMock(): void {
     string,
     { body: string; contentType: string }
   >();
-  const bucketObjects = new Map<string, Array<{
-    key: string;
-    size: number;
-    etag: string;
-    last_modified: string;
-    content_type: string;
-    storage_class: string;
-  }>>([
-    ['alpha', [
-      {
-        key: 'docs/readme.txt',
-        size: 5,
-        etag: 'etag-alpha-1',
-        last_modified: '2026-05-25T10:00:00.000Z',
-        content_type: 'text/plain',
-        storage_class: 'standard',
-      },
-      {
-        key: 'notes.txt',
-        size: 18,
-        etag: 'etag-alpha-2',
-        last_modified: '2026-05-25T10:05:00.000Z',
-        content_type: 'text/plain',
-        storage_class: 'standard',
-      },
-    ]],
-    ['beta', [
-      {
-        key: 'image.png',
-        size: 12,
-        etag: 'etag-beta-1',
-        last_modified: '2026-05-25T08:30:00.000Z',
-        content_type: 'image/png',
-        storage_class: 'standard',
-      },
-      {
-        key: 'notes.txt',
-        size: 18,
-        etag: 'etag-beta-2',
-        last_modified: '2026-05-25T08:35:00.000Z',
-        content_type: 'text/plain',
-        storage_class: 'standard',
-      },
-    ]],
+  const bucketObjects = new Map<
+    string,
+    Array<{
+      key: string;
+      size: number;
+      etag: string;
+      last_modified: string;
+      content_type: string;
+      storage_class: string;
+    }>
+  >([
+    [
+      'alpha',
+      [
+        {
+          key: 'docs/readme.txt',
+          size: 5,
+          etag: 'etag-alpha-1',
+          last_modified: '2026-05-25T10:00:00.000Z',
+          content_type: 'text/plain',
+          storage_class: 'standard',
+        },
+        {
+          key: 'notes.txt',
+          size: 18,
+          etag: 'etag-alpha-2',
+          last_modified: '2026-05-25T10:05:00.000Z',
+          content_type: 'text/plain',
+          storage_class: 'standard',
+        },
+      ],
+    ],
+    [
+      'beta',
+      [
+        {
+          key: 'image.png',
+          size: 12,
+          etag: 'etag-beta-1',
+          last_modified: '2026-05-25T08:30:00.000Z',
+          content_type: 'image/png',
+          storage_class: 'standard',
+        },
+        {
+          key: 'notes.txt',
+          size: 18,
+          etag: 'etag-beta-2',
+          last_modified: '2026-05-25T08:35:00.000Z',
+          content_type: 'text/plain',
+          storage_class: 'standard',
+        },
+      ],
+    ],
   ]);
   let storedTags: Record<string, string> = {};
 
@@ -519,9 +528,7 @@ describe('generated admin feature workflows', () => {
     const signal = new AbortController().signal;
 
     try {
-      expect(
-        await countBucketObjects({ bucketName: 'alpha', signal })
-      ).toBe(2);
+      expect(await countBucketObjects({ bucketName: 'alpha', signal })).toBe(2);
 
       const deletedObjects = await deleteAllBucketObjects({
         bucketName: 'alpha',
@@ -530,9 +537,7 @@ describe('generated admin feature workflows', () => {
 
       const result = await deleteBucketWithContents({ bucketName: 'alpha' });
       expect(result.deletedObjects).toBe(0);
-      expect(
-        await countBucketObjects({ bucketName: 'alpha', signal })
-      ).toBe(0);
+      expect(await countBucketObjects({ bucketName: 'alpha', signal })).toBe(0);
     } finally {
       restoreFetch();
     }

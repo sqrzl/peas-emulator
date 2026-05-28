@@ -31,8 +31,11 @@ function sha1(bytes: Uint8Array): Uint8Array {
 
     for (let index = 16; index < 80; index += 1) {
       words[index] = rotateLeft(
-        words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16],
-        1,
+        words[index - 3] ^
+          words[index - 8] ^
+          words[index - 14] ^
+          words[index - 16],
+        1
       );
     }
 
@@ -86,20 +89,22 @@ function sha1(bytes: Uint8Array): Uint8Array {
 }
 
 function formatUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 export function loginPath(): string {
-  return "/login";
+  return '/login';
 }
 
 export function logoutPath(): string {
-  return "/logout";
+  return '/logout';
 }
 
 export function adminBucketsPath(): string {
-  return "/admin/buckets";
+  return '/admin/buckets';
 }
 
 export function homePath(): string {

@@ -1,18 +1,11 @@
-import { state } from "@askrjs/askr";
-import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Inline, Stack } from "@askrjs/themes/layouts";
-import BlobModal from "../../components/storage/blob-modal";
-import BlobTable from "../../components/storage/blob-table";
-import { adminBucketsPath } from "../../shared/routes";
+import { Link } from '@askrjs/askr/router';
+import { Button } from '@askrjs/themes/controls';
+import { Inline, Stack } from '@askrjs/themes/layouts';
+import BlobModal from '../../components/storage/blob-modal';
+import BlobTable from '../../components/storage/blob-table';
+import { adminBucketsPath } from '../../shared/routes';
 
 export default function Bucket({ bucketName }: { bucketName: string }) {
-  const [reloadKey, setReloadKey] = state(0);
-
-  function refreshBlobs() {
-    setReloadKey((value) => value + 1);
-  }
-
   return (
     <Stack gap="4">
       <Inline justify="between" align="center" gap="3" wrap="wrap">
@@ -24,18 +17,11 @@ export default function Bucket({ bucketName }: { bucketName: string }) {
           <Button variant="secondary" asChild>
             <Link href={adminBucketsPath()}>Back to buckets</Link>
           </Button>
-          <Button variant="secondary" onPress={refreshBlobs}>
-            Refresh
-          </Button>
-          <BlobModal bucketName={bucketName} onUploaded={refreshBlobs} />
+          <BlobModal bucketName={bucketName} />
         </Inline>
       </Inline>
 
-      <BlobTable
-        key={`blob-table-${bucketName}-${reloadKey()}`}
-        bucketName={bucketName}
-        reloadKey={reloadKey()}
-      />
+      <BlobTable bucketName={bucketName} />
     </Stack>
   );
 }
