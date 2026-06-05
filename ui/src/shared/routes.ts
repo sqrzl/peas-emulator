@@ -115,7 +115,10 @@ export function bucketPath(bucketName: string): string {
   return `${adminBucketsPath()}/${encodeURIComponent(bucketName)}`;
 }
 
-export function bucketFolderPath(bucketName: string, pathPrefix: string): string {
+export function bucketFolderPath(
+  bucketName: string,
+  pathPrefix: string
+): string {
   const normalized = pathPrefix.trim().replace(/^\/+|\/+$/g, '');
   if (!normalized) {
     return bucketPath(bucketName);

@@ -25,7 +25,7 @@ function readQueryParam(name: string): string {
   }
 
   return window.location.search
-    ? new URLSearchParams(window.location.search).get(name)?.trim() ?? ''
+    ? (new URLSearchParams(window.location.search).get(name)?.trim() ?? '')
     : '';
 }
 

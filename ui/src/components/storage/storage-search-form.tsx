@@ -66,7 +66,12 @@ export default function StorageSearchForm({
       <Inline align="end" gap="3" wrap="wrap">
         <Field>
           <Label for={inputId}>{label}</Label>
-          <Input id={inputId} name={inputId} ref={initializeInput} onInput={handleInput} />
+          <Input
+            id={inputId}
+            name={inputId}
+            ref={initializeInput}
+            onInput={handleInput}
+          />
         </Field>
         <ButtonGroup>
           <Button type="submit">Search</Button>

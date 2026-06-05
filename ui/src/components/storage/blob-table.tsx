@@ -33,7 +33,10 @@ function formatBlobSize(size: number): string {
   return `${formatBytes(size)} (${size.toLocaleString()} bytes)`;
 }
 
-function collectRows(items: BlobInfo[], pathPrefix: string): {
+function collectRows(
+  items: BlobInfo[],
+  pathPrefix: string
+): {
   folders: FolderRow[];
   blobs: BlobInfo[];
 } {

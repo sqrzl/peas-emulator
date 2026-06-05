@@ -81,7 +81,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Delete bucket
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
@@ -92,7 +92,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get bucket
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<BucketDetails>
    */
@@ -103,7 +103,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get bucket ACL
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<Acl>
    */
@@ -114,7 +114,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Replace bucket ACL
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<Acl>
@@ -127,7 +127,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Delete bucket lifecycle configuration
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
@@ -138,7 +138,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get bucket lifecycle configuration
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<LifecycleConfiguration>
    */
@@ -149,7 +149,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Replace bucket lifecycle configuration
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<LifecycleConfiguration>
@@ -162,7 +162,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * List multipart uploads
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param query - Query parameters
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListMultipartUploadsResponse>
@@ -175,7 +175,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Abort multipart upload
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param uploadId - Multipart upload ID.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
@@ -188,7 +188,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get multipart upload
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param uploadId - Multipart upload ID.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<MultipartUpload>
@@ -199,9 +199,9 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<MultipartUpload>>;
   /**
-   * List objects in a bucket
+   * List blobs in a bucket
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param query - Query parameters
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListObjectsResponse>
@@ -212,10 +212,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<ListObjectsResponse>>;
   /**
-   * Delete object
+   * Delete blob
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
@@ -225,10 +225,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<boolean>>;
   /**
-   * Get object metadata
+   * Get blob metadata
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ObjectMetadata>
    */
@@ -238,10 +238,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<ObjectMetadata>>;
   /**
-   * Get object ACL
+   * Get blob ACL
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<Acl>
    */
@@ -251,10 +251,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<Acl>>;
   /**
-   * Replace object ACL
+   * Replace blob ACL
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<Acl>
@@ -266,10 +266,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<Acl>>;
   /**
-   * Download object content
+   * Download blob content
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<Blob>
    */
@@ -279,10 +279,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<Blob>>;
   /**
-   * Create or replace object content
+   * Create or replace blob content
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ObjectMetadata>
@@ -295,10 +295,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<ObjectMetadata>>;
   /**
-   * Get object tags
+   * Get blob tags
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<TagsResponse>
    */
@@ -308,10 +308,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<TagsResponse>>;
   /**
-   * Replace object tags
+   * Replace blob tags
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<TagsResponse>
@@ -323,10 +323,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<TagsResponse>>;
   /**
-   * List object versions
+   * List blob versions
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param query - Query parameters
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<ListVersionsResponse>
@@ -338,10 +338,10 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<ListVersionsResponse>>;
   /**
-   * Delete object version
+   * Delete blob version
    *
-   * @param bucketName - Bucket name.
-   * @param objectKey - Full object key, URL encoded when used in the path.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
+   * @param objectKey - Slash-separated blob key. URL encode the full key when used in the path.
    * @param versionId - Object version identifier.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
@@ -355,7 +355,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Delete bucket policy
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<boolean>
    */
@@ -366,7 +366,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get bucket policy
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<BucketPolicyDocument>
    */
@@ -377,7 +377,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Replace bucket policy
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<BucketPolicyDocument>
@@ -390,7 +390,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Get bucket versioning status
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<VersioningStatus>
    */
@@ -401,7 +401,7 @@ export function createAdapter(client: FetchClient): {
   /**
    * Set bucket versioning status
    *
-   * @param bucketName - Bucket name.
+   * @param bucketName - Bucket name. Use 3-63 lowercase letters, numbers, and hyphens.
    * @param body - Request body
    * @param options - Request options (signal, timeout, operationId)
    * @returns Promise resolving to FetchResponse<VersioningStatus>

@@ -152,52 +152,67 @@ impl LockFreeIndex {
     }
 }
 
+impl Default for LockFreeIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::LockFreeIndex;
 
     #[test]
-    fn list_prefix_marker_uses_start_bounds() {
+    fn should_use_start_bounds_when_listing_with_prefix_and_marker() {
+        // Arrange
         let index = LockFreeIndex::new();
         index.insert("bucket".to_string(), "apple".to_string());
         index.insert("bucket".to_string(), "banana".to_string());
         index.insert("bucket".to_string(), "cherry".to_string());
 
+        // Act
+        let result_from_marker = index.list_prefix_marker("bucket", None, Some("banana"), Some(10));
+        let result_from_prefix = index.list_prefix_marker("bucket", Some("b"), None, Some(10));
+        let result_from_prefix_and_earlier_marker =
+            index.list_prefix_marker("bucket", Some("b"), Some("apple"), Some(10));
+        let result_from_prefix_and_far_earlier_marker =
+            index.list_prefix_marker("bucket", Some("c"), Some("a"), Some(10));
+
+        // Assert
         assert_eq!(
-            index.list_prefix_marker("bucket", None, Some("banana"), Some(10)),
+            result_from_marker,
             vec!["cherry".to_string()]
         );
         assert_eq!(
-            index.list_prefix_marker("bucket", Some("b"), None, Some(10)),
+            result_from_prefix,
             vec!["banana".to_string()]
         );
         assert_eq!(
-            index.list_prefix_marker("bucket", Some("b"), Some("apple"), Some(10)),
+            result_from_prefix_and_earlier_marker,
             vec!["banana".to_string()]
         );
         assert_eq!(
-            index.list_prefix_marker("bucket", Some("c"), Some("a"), Some(10)),
+            result_from_prefix_and_far_earlier_marker,
             vec!["cherry".to_string()]
         );
     }
 
     #[test]
-    fn list_prefix_limits_to_prefix_range() {
+    fn should_limit_list_results_to_matching_prefix_range() {
+        // Arrange
         let index = LockFreeIndex::new();
         index.insert("bucket".to_string(), "alpha".to_string());
         index.insert("bucket".to_string(), "beta".to_string());
         index.insert("bucket".to_string(), "beta2".to_string());
         index.insert("bucket".to_string(), "gamma".to_string());
 
+        // Act
+        let result = index.list("bucket", Some("beta"));
+
+        // Assert
         assert_eq!(
-            index.list("bucket", Some("beta")),
+            result,
             vec!["beta".to_string(), "beta2".to_string()]
         );
-    }
-}
-
-impl Default for LockFreeIndex {
-    fn default() -> Self {
-        Self::new()
     }
 }
