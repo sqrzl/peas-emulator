@@ -1,10 +1,11 @@
 use crate::auth::HttpRequestLike;
 use crate::body::Body;
-use bytes::Bytes;
-use http::{Method, Response as HttpResponse, StatusCode, Uri};
+use bytes::{Bytes, BytesMut};
+use http::{HeaderMap, Method, Response as HttpResponse, StatusCode, Uri};
 use http_body_util::BodyExt;
 use hyper::Request as HyperRequest;
 use std::collections::HashMap;
+use std::fmt;
 use std::str::FromStr;
 
 /// Parsed HTTP request with extracted components
@@ -15,6 +16,31 @@ pub struct Request {
     pub body: Bytes,
     pub path_params: HashMap<String, String>,
     pub query_params: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+pub enum RequestParseError {
+    BodyRead(String),
+    BodyTooLarge {
+        max_request_bytes: usize,
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+    },
+}
+
+impl fmt::Display for RequestParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BodyRead(message) => write!(f, "{message}"),
+            Self::BodyTooLarge {
+                max_request_bytes, ..
+            } => write!(
+                f,
+                "request body exceeds MAX_REQUEST_BYTES ({max_request_bytes} bytes)"
+            ),
+        }
+    }
 }
 
 impl HttpRequestLike for Request {
@@ -54,11 +80,39 @@ impl HttpRequestLike for Request {
 impl Request {
     pub async fn from_hyper<B>(req: HyperRequest<B>) -> Result<Self, String>
     where
-        B: hyper::body::Body<Data = Bytes> + Send + 'static,
+        B: hyper::body::Body<Data = Bytes> + Send + Unpin + 'static,
+        B::Error: std::fmt::Display,
+    {
+        Self::from_hyper_with_max_body(req, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn from_hyper_with_max_body<B>(
+        req: HyperRequest<B>,
+        max_request_bytes: Option<usize>,
+    ) -> Result<Self, RequestParseError>
+    where
+        B: hyper::body::Body<Data = Bytes> + Send + Unpin + 'static,
         B::Error: std::fmt::Display,
     {
         let (parts, body) = req.into_parts();
-        let body_bytes = body.collect().await.map_err(|e| e.to_string())?.to_bytes();
+        let method = parts.method.clone();
+        let uri = parts.uri.clone();
+        let headers = parts.headers.clone();
+        let body_bytes = collect_body(body, max_request_bytes)
+            .await
+            .map_err(|err| match err {
+                RequestParseError::BodyTooLarge {
+                    max_request_bytes, ..
+                } => RequestParseError::BodyTooLarge {
+                    max_request_bytes,
+                    method,
+                    uri,
+                    headers,
+                },
+                other => other,
+            })?;
 
         let mut query_params = HashMap::new();
         if let Some(query) = parts.uri.query() {
@@ -111,6 +165,42 @@ impl Request {
     pub fn has_query_param(&self, name: &str) -> bool {
         self.query_params.contains_key(name)
     }
+}
+
+async fn collect_body<B>(
+    mut body: B,
+    max_request_bytes: Option<usize>,
+) -> Result<Bytes, RequestParseError>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    let Some(max_request_bytes) = max_request_bytes else {
+        return body
+            .collect()
+            .await
+            .map(|collected| collected.to_bytes())
+            .map_err(|err| RequestParseError::BodyRead(err.to_string()));
+    };
+
+    let mut bytes = BytesMut::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|err| RequestParseError::BodyRead(err.to_string()))?;
+        if let Some(data) = frame.data_ref() {
+            let next_len = bytes.len().saturating_add(data.len());
+            if next_len > max_request_bytes {
+                return Err(RequestParseError::BodyTooLarge {
+                    max_request_bytes,
+                    method: Method::GET,
+                    uri: Uri::from_static("/"),
+                    headers: HeaderMap::new(),
+                });
+            }
+            bytes.extend_from_slice(data);
+        }
+    }
+
+    Ok(bytes.freeze())
 }
 
 /// Builder for HTTP responses

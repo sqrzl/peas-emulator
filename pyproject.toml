@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peas-emulator-sdk-certification"
+version = "0.1.0"
+description = "Official SDK certification harness for PEAS emulator support workflows"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "sqrzl" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+sdk-tests = [
+  "pytest>=8.0,<9.0",
+  "boto3>=1.34,<2.0",
+  "azure-storage-blob>=12.19,<13.0",
+  "google-cloud-storage>=2.16,<4.0",
+  "oci>=2.120,<3.0",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["sdk-tests"]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+]

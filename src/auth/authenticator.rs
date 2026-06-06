@@ -189,6 +189,7 @@ mod tests {
             lifecycle_interval: Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         }
     }
 

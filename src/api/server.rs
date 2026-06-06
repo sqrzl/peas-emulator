@@ -60,6 +60,20 @@ async fn handle_ui_request(
 ) -> std::result::Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_string();
 
+    if path == "/healthz" {
+        if req.method() == Method::GET {
+            return Ok(crate::health::response(storage.as_ref(), config.as_ref()));
+        }
+        return Ok(json_error_response(&Error::MethodNotAllowed(format!(
+            "{} /healthz",
+            req.method()
+        ))));
+    }
+
+    if request_content_length_exceeds(&req, config.max_request_bytes) {
+        return Ok(admin_payload_too_large_response(config.max_request_bytes));
+    }
+
     if path == crate::auth::admin_session::ADMIN_LOGIN_PATH {
         let resp = handle_admin_login(config, admin_session, req).await;
         return Ok(resp);
@@ -109,6 +123,27 @@ async fn handle_ui_request(
             .body_str(default_content)
             .build())
     }
+}
+
+fn request_content_length_exceeds(req: &Request<RequestBody>, max_request_bytes: usize) -> bool {
+    req.headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|content_length| content_length > max_request_bytes)
+        .unwrap_or(false)
+}
+
+fn admin_payload_too_large_response(max_request_bytes: usize) -> Response<Body> {
+    let body = crate::api::models::ErrorResponse {
+        error: "Payload too large".to_string(),
+        code: "PayloadTooLarge".to_string(),
+        details: Some(format!(
+            "Request body exceeds MAX_REQUEST_BYTES ({max_request_bytes} bytes)"
+        )),
+    };
+
+    json_response(StatusCode::PAYLOAD_TOO_LARGE, &body)
 }
 
 async fn serve_static_content(static_dir: &Path, request_path: &str) -> Response<Body> {

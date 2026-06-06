@@ -20,8 +20,9 @@ A multi-provider blob and object storage emulator for local development and comp
 ## Current Scope
 
 - Peas exposes native front doors for S3, Azure Blob Storage, GCS, and OCI on top of a shared filesystem-backed blob core.
-- The checked compatibility matrix is fully green for the in-scope operations shipped by this repo.
-- The interop harness exercises official/common SDK paths for S3, Azure, GCS, and OCI.
+- The checked compatibility matrix marks each operation as `certified`, `partial`, `unsupported`, or `deferred`.
+- The SDK certification harness exercises official Python SDK clients for S3, Azure Blob, GCS, and OCI.
+- Support certification details, known limitations, and issue-triage guidance live in `docs/support-certification.md`.
 
 ## Known Gaps
 
@@ -48,6 +49,32 @@ browser UI exchanges them for an HttpOnly admin session cookie.
 
 If you want to keep the admin API open for local development while still enforcing provider
 auth, set `ADMIN_AUTH_DISABLED=true`.
+
+Set `MAX_REQUEST_BYTES` to cap buffered request bodies before streaming support is
+certified. Oversized uploads return provider-shaped `413 Payload Too Large`
+responses.
+
+Both the API and UI ports expose a support health endpoint:
+
+```bash
+curl http://127.0.0.1:9000/healthz
+curl http://127.0.0.1:9001/healthz
+```
+
+## SDK Certification
+
+```bash
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[sdk-tests]"
+python -m pytest
+```
+
+To run against an existing PEAS process:
+
+```bash
+PEAS_API_URL=http://127.0.0.1:9000 python -m pytest
+```
 
 ## Admin API Contract
 

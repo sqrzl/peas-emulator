@@ -13,6 +13,7 @@ pub struct FilesystemStorage {
     base_path: PathBuf,
     index: Arc<LockFreeIndex>,
     uploads_cache: Mutex<HashMap<String, HashMap<String, MultipartUpload>>>,
+    object_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl Storage for FilesystemStorage {
@@ -89,6 +90,9 @@ impl Storage for FilesystemStorage {
             if metadata.is_dir() {
                 let name = entry.file_name();
                 if let Some(bucket_name) = name.to_str() {
+                    if bucket_name.starts_with('.') {
+                        continue;
+                    }
                     let mut bucket = Bucket::new(bucket_name.to_string());
                     bucket.versioning_enabled = self.versioning_enabled(bucket_name);
                     bucket.metadata = self.read_bucket_metadata(bucket_name)?;
@@ -121,6 +125,10 @@ impl Storage for FilesystemStorage {
     }
 
     fn put_object(&self, bucket: &str, key: String, object: Object) -> Result<()> {
+        let object_lock = self.object_lock(bucket, &key)?;
+        let _guard = object_lock
+            .lock()
+            .map_err(|_| Error::InternalError("Failed to lock object for write".to_string()))?;
         let bucket_dir = self.bucket_dir(bucket);
 
         if !bucket_dir.exists() {
@@ -229,6 +237,10 @@ impl Storage for FilesystemStorage {
     }
 
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock
+            .lock()
+            .map_err(|_| Error::InternalError("Failed to lock object for delete".to_string()))?;
         let object_id = Self::compute_object_id(bucket, key);
         let object_id_dir = self.object_id_dir(bucket, &object_id);
 
@@ -269,6 +281,10 @@ impl Storage for FilesystemStorage {
         key: &str,
         storage_class: &str,
     ) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock.lock().map_err(|_| {
+            Error::InternalError("Failed to lock object for metadata update".to_string())
+        })?;
         let object_id = Self::compute_object_id(bucket, key);
         let metadata_path = self.object_metadata_path(bucket, &object_id);
 
@@ -312,8 +328,7 @@ impl Storage for FilesystemStorage {
         let path = self.bucket_acl_path(bucket);
         let json = serde_json::to_vec(&acl)
             .map_err(|e| Error::InternalError(format!("Failed to serialize bucket ACL: {}", e)))?;
-        fs::write(&path, json)
-            .map_err(|e| Error::InternalError(format!("Failed to write bucket ACL: {}", e)))
+        Self::atomic_write(&path, &json)
     }
 
     fn get_object_acl(&self, bucket: &str, key: &str) -> Result<Acl> {
@@ -330,6 +345,10 @@ impl Storage for FilesystemStorage {
     }
 
     fn put_object_acl(&self, bucket: &str, key: &str, acl: Acl) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock.lock().map_err(|_| {
+            Error::InternalError("Failed to lock object for ACL update".to_string())
+        })?;
         let object_id = Self::compute_object_id(bucket, key);
         let metadata_path = self.object_metadata_path(bucket, &object_id);
 
@@ -378,8 +397,7 @@ impl Storage for FilesystemStorage {
         let json = serde_json::to_vec(&config).map_err(|e| {
             Error::InternalError(format!("Failed to serialize lifecycle config: {}", e))
         })?;
-        fs::write(&lifecycle_path, json)
-            .map_err(|e| Error::InternalError(format!("Failed to write lifecycle config: {}", e)))
+        Self::atomic_write(&lifecycle_path, &json)
     }
 
     fn delete_bucket_lifecycle(&self, bucket: &str) -> Result<()> {
@@ -432,8 +450,7 @@ impl Storage for FilesystemStorage {
         let policy_json = serde_json::to_vec(&policy)
             .map_err(|e| Error::InternalError(format!("Failed to serialize policy: {}", e)))?;
 
-        fs::write(&policy_path, policy_json)
-            .map_err(|e| Error::InternalError(format!("Failed to write policy: {}", e)))
+        Self::atomic_write(&policy_path, &policy_json)
     }
 
     fn delete_bucket_policy(&self, bucket: &str) -> Result<()> {
@@ -446,6 +463,31 @@ impl Storage for FilesystemStorage {
         if policy_path.exists() {
             fs::remove_file(&policy_path)
                 .map_err(|e| Error::InternalError(format!("Failed to delete policy: {}", e)))?;
+        }
+        Ok(())
+    }
+
+    fn put_provider_state(&self, provider: &str, key: &str, data: Vec<u8>) -> Result<()> {
+        let path = self.provider_state_path(provider, key);
+        Self::atomic_write(&path, &data)
+    }
+
+    fn get_provider_state(&self, provider: &str, key: &str) -> Result<Vec<u8>> {
+        let path = self.provider_state_path(provider, key);
+        if !path.exists() {
+            return Err(Error::KeyNotFound);
+        }
+
+        fs::read(&path)
+            .map_err(|e| Error::InternalError(format!("Failed to read provider state: {}", e)))
+    }
+
+    fn delete_provider_state(&self, provider: &str, key: &str) -> Result<()> {
+        let path = self.provider_state_path(provider, key);
+        if path.exists() {
+            fs::remove_file(path).map_err(|e| {
+                Error::InternalError(format!("Failed to delete provider state: {}", e))
+            })?;
         }
         Ok(())
     }
@@ -467,6 +509,10 @@ impl Storage for FilesystemStorage {
         key: &str,
         tags: HashMap<String, String>,
     ) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock.lock().map_err(|_| {
+            Error::InternalError("Failed to lock object for tag update".to_string())
+        })?;
         let object_id = Self::compute_object_id(bucket, key);
         let metadata_path = self.object_metadata_path(bucket, &object_id);
 
@@ -484,6 +530,10 @@ impl Storage for FilesystemStorage {
     }
 
     fn delete_object_tags(&self, bucket: &str, key: &str) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock.lock().map_err(|_| {
+            Error::InternalError("Failed to lock object for tag update".to_string())
+        })?;
         let object_id = Self::compute_object_id(bucket, key);
         let metadata_path = self.object_metadata_path(bucket, &object_id);
 
@@ -607,8 +657,7 @@ impl Storage for FilesystemStorage {
 
         // Write part data
         let part_path = self.part_path(bucket, upload_id, part_number);
-        fs::write(&part_path, &data)
-            .map_err(|e| Error::InternalError(format!("Failed to write part: {}", e)))?;
+        Self::atomic_write(&part_path, &data)?;
 
         let mut cache = self
             .uploads_cache
@@ -771,8 +820,7 @@ impl Storage for FilesystemStorage {
 
         // Mark bucket as versioning-enabled by creating a marker file
         let versioning_marker = self.versioning_marker(bucket);
-        fs::write(&versioning_marker, "")
-            .map_err(|e| Error::InternalError(format!("Failed to enable versioning: {}", e)))?;
+        Self::atomic_write(&versioning_marker, b"")?;
         Ok(())
     }
 
@@ -893,6 +941,10 @@ impl Storage for FilesystemStorage {
     }
 
     fn delete_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<()> {
+        let object_lock = self.object_lock(bucket, key)?;
+        let _guard = object_lock.lock().map_err(|_| {
+            Error::InternalError("Failed to lock object for version delete".to_string())
+        })?;
         if !self.bucket_exists(bucket)? {
             return Err(Error::BucketNotFound);
         }
@@ -1287,6 +1339,78 @@ mod tests {
             .collect();
         assert_eq!(version_ids.len(), 1);
         assert!(version_ids.contains(&first_version_id));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_persist_provider_state_without_listing_it_as_a_bucket() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+
+        // Act
+        storage
+            .put_provider_state("gcs", "session-1", b"state".to_vec())
+            .unwrap();
+        let restored = FilesystemStorage::new(&base);
+
+        // Assert
+        assert_eq!(
+            restored.get_provider_state("gcs", "session-1").unwrap(),
+            b"state".to_vec()
+        );
+        assert!(restored.list_buckets().unwrap().is_empty());
+
+        restored.delete_provider_state("gcs", "session-1").unwrap();
+        assert!(matches!(
+            restored.get_provider_state("gcs", "session-1"),
+            Err(Error::KeyNotFound)
+        ));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_coordinate_concurrent_writes_to_same_object() {
+        // Arrange
+        let base = temp_path();
+        let storage = Arc::new(FilesystemStorage::new(&base));
+        storage.create_bucket("concurrent".to_string()).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+
+        // Act
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let storage = storage.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let payload = format!("payload-{index}");
+                    storage
+                        .put_object(
+                            "concurrent",
+                            "same.txt".to_string(),
+                            Object::new(
+                                "same.txt".to_string(),
+                                payload.into_bytes(),
+                                "text/plain".to_string(),
+                            ),
+                        )
+                        .unwrap();
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Assert
+        let stored = storage.get_object("concurrent", "same.txt").unwrap();
+        let payload = String::from_utf8(stored.data).unwrap();
+        assert!(payload.starts_with("payload-"));
+        assert_eq!(stored.size, payload.len() as u64);
 
         let _ = std::fs::remove_dir_all(&base);
     }

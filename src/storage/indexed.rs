@@ -355,4 +355,16 @@ impl Storage for IndexedStorage {
     fn delete_bucket_policy(&self, bucket: &str) -> Result<()> {
         self.inner.delete_bucket_policy(bucket)
     }
+
+    fn put_provider_state(&self, provider: &str, key: &str, data: Vec<u8>) -> Result<()> {
+        self.inner.put_provider_state(provider, key, data)
+    }
+
+    fn get_provider_state(&self, provider: &str, key: &str) -> Result<Vec<u8>> {
+        self.inner.get_provider_state(provider, key)
+    }
+
+    fn delete_provider_state(&self, provider: &str, key: &str) -> Result<()> {
+        self.inner.delete_provider_state(provider, key)
+    }
 }

@@ -7,6 +7,24 @@ type Body = Full<Bytes>;
 use hyper::{Request, StatusCode};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn should_report_health_given_live_server_when_using_api_port() {
+    let server = LiveServer::start_s3(auth_disabled()).await;
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("{}/healthz", server.base_url))
+        .body(Body::default())
+        .expect("health request should build");
+    let response = server.request(request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text_body(response).await;
+    assert!(body.contains(r#""status":"ok""#));
+    assert!(body.contains(r#""storage_ready":true"#));
+    assert!(body.contains("s3-family"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn should_round_trip_bucket_and_object_given_live_server_when_using_basic_s3_crud_flows() {
     let server = LiveServer::start_s3(auth_disabled()).await;
 
@@ -62,4 +80,25 @@ async fn should_reject_unsigned_request_given_live_server_when_s3_auth_is_enforc
         response.status(),
         StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
     ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_reject_oversized_upload_given_live_server_when_max_request_bytes_is_exceeded() {
+    let mut config = auth_disabled();
+    config.max_request_bytes = 3;
+    let server = LiveServer::start_s3(config).await;
+
+    let request = Request::builder()
+        .method("PUT")
+        .uri(format!("{}/too-large-bucket/hello.txt", server.base_url))
+        .header("content-type", "text/plain")
+        .header("content-length", "4")
+        .body(Body::from("nope"))
+        .expect("oversized request should build");
+    let response = server.request(request).await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = text_body(response).await;
+    assert!(body.contains("EntityTooLarge"));
+    assert!(body.contains("MAX_REQUEST_BYTES"));
 }

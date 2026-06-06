@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 impl FilesystemStorage {
     pub fn new(base_path: impl AsRef<Path>) -> Self {
@@ -27,6 +28,13 @@ impl FilesystemStorage {
                 };
 
                 if metadata.is_dir() {
+                    if entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.starts_with('.'))
+                    {
+                        continue;
+                    }
                     if let Some(bucket_name) = entry.file_name().to_str().map(|s| s.to_string()) {
                         index.get_or_create_bucket(bucket_name.clone());
 
@@ -56,11 +64,32 @@ impl FilesystemStorage {
             base_path,
             index,
             uploads_cache: Mutex::new(HashMap::new()),
+            object_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(super) fn object_lock(&self, bucket: &str, key: &str) -> Result<Arc<Mutex<()>>> {
+        let lock_key = format!("{bucket}/{key}");
+        let mut locks = self
+            .object_locks
+            .lock()
+            .map_err(|_| Error::InternalError("Failed to lock object lock registry".to_string()))?;
+        Ok(locks
+            .entry(lock_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone())
     }
 
     pub(super) fn bucket_dir(&self, bucket: &str) -> PathBuf {
         self.base_path.join(bucket)
+    }
+
+    pub(super) fn provider_state_path(&self, provider: &str, key: &str) -> PathBuf {
+        let state_id = Self::compute_object_id(provider, key);
+        self.base_path
+            .join(".provider-state")
+            .join(provider)
+            .join(format!("{state_id}.json"))
     }
 
     pub(super) fn bucket_acl_path(&self, bucket: &str) -> PathBuf {
@@ -192,19 +221,20 @@ impl FilesystemStorage {
             .parent()
             .ok_or_else(|| Error::InternalError("Invalid multipart upload path".to_string()))?;
 
-        let file = fs::File::create(upload_path).map_err(|e| {
-            Error::InternalError(format!("Failed to write multipart upload record: {}", e))
-        })?;
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer(&mut writer, upload).map_err(|e| {
-            Error::InternalError(format!(
-                "Failed to serialize multipart upload record: {}",
-                e
-            ))
-        })?;
-        writer.flush().map_err(|e| {
-            Error::InternalError(format!("Failed to write multipart upload record: {}", e))
-        })?;
+        let mut buffer = Vec::new();
+        {
+            let mut writer = std::io::BufWriter::new(&mut buffer);
+            serde_json::to_writer(&mut writer, upload).map_err(|e| {
+                Error::InternalError(format!(
+                    "Failed to serialize multipart upload record: {}",
+                    e
+                ))
+            })?;
+            writer.flush().map_err(|e| {
+                Error::InternalError(format!("Failed to write multipart upload record: {}", e))
+            })?;
+        }
+        Self::atomic_write(upload_path, &buffer)?;
 
         Ok(())
     }
@@ -349,22 +379,12 @@ impl FilesystemStorage {
         })?;
 
         let object_data_path = self.object_data_path(bucket, object_id);
-        let mut file = fs::File::create(&object_data_path)
-            .map_err(|e| Error::InternalError(format!("Failed to create object file: {}", e)))?;
-
-        file.write_all(&object.data)
-            .map_err(|e| Error::InternalError(format!("Failed to write object data: {}", e)))?;
+        Self::atomic_write(&object_data_path, &object.data)?;
 
         let metadata_path = self.object_metadata_path(bucket, object_id);
         let metadata_json = serde_json::to_string(object)
             .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-
-        let mut meta_file = fs::File::create(&metadata_path)
-            .map_err(|e| Error::InternalError(format!("Failed to create metadata file: {}", e)))?;
-
-        meta_file
-            .write_all(metadata_json.as_bytes())
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))?;
+        Self::atomic_write(&metadata_path, metadata_json.as_bytes())?;
 
         Ok(())
     }
@@ -385,17 +405,14 @@ impl FilesystemStorage {
         version_object.version_id = Some(version_id.to_string());
 
         let version_data_path = self.version_data_path(bucket, object_id, version_id);
-        fs::write(&version_data_path, &version_object.data)
-            .map_err(|e| Error::InternalError(format!("Failed to write version data: {}", e)))?;
+        Self::atomic_write(&version_data_path, &version_object.data)?;
 
         let version_metadata_path = self.version_metadata_path(bucket, object_id, version_id);
         let metadata_json = serde_json::to_string(&version_object).map_err(|e| {
             Error::InternalError(format!("Failed to serialize version metadata: {}", e))
         })?;
 
-        fs::write(&version_metadata_path, metadata_json).map_err(|e| {
-            Error::InternalError(format!("Failed to write version metadata: {}", e))
-        })?;
+        Self::atomic_write(&version_metadata_path, metadata_json.as_bytes())?;
 
         Ok(())
     }
@@ -421,8 +438,7 @@ impl FilesystemStorage {
         let json = serde_json::to_vec(metadata).map_err(|e| {
             Error::InternalError(format!("Failed to serialize bucket metadata: {}", e))
         })?;
-        fs::write(&path, json)
-            .map_err(|e| Error::InternalError(format!("Failed to write bucket metadata: {}", e)))
+        Self::atomic_write(&path, &json)
     }
 
     pub(super) fn read_object_metadata(&self, metadata_path: &Path) -> Result<Object> {
@@ -439,8 +455,7 @@ impl FilesystemStorage {
     ) -> Result<()> {
         let json = serde_json::to_string(object)
             .map_err(|e| Error::InternalError(format!("Failed to serialize metadata: {}", e)))?;
-        fs::write(metadata_path, json)
-            .map_err(|e| Error::InternalError(format!("Failed to write metadata: {}", e)))
+        Self::atomic_write(metadata_path, json.as_bytes())
     }
 
     pub(super) fn version_entries_exist(&self, bucket: &str, object_id: &str) -> Result<bool> {
@@ -453,5 +468,38 @@ impl FilesystemStorage {
             .map_err(|e| Error::InternalError(format!("Failed to read versions dir: {}", e)))?;
 
         Ok(entries.flatten().next().is_some())
+    }
+
+    pub(super) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| Error::InternalError("Invalid file path".to_string()))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            Error::InternalError(format!("Failed to create parent directory: {}", e))
+        })?;
+
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::InternalError("Invalid file name".to_string()))?;
+        let temp_path = parent.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
+        let write_result = (|| -> Result<()> {
+            let mut file = fs::File::create(&temp_path)
+                .map_err(|e| Error::InternalError(format!("Failed to create temp file: {}", e)))?;
+            file.write_all(bytes)
+                .map_err(|e| Error::InternalError(format!("Failed to write temp file: {}", e)))?;
+            file.sync_all()
+                .map_err(|e| Error::InternalError(format!("Failed to sync temp file: {}", e)))?;
+            fs::rename(&temp_path, path)
+                .map_err(|e| Error::InternalError(format!("Failed to commit temp file: {}", e)))?;
+            Ok(())
+        })();
+
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
+
+        write_result
     }
 }

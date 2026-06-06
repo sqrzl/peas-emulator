@@ -3,6 +3,7 @@ use crate::body::Body;
 use crate::hyper_compat::Compat;
 use crate::providers::AdapterRegistry;
 use crate::storage::Storage;
+use ::http::{HeaderMap, Method, Uri};
 use hyper::service::{service_fn, Service};
 use hyper::{Request, Response, StatusCode};
 use std::convert::Infallible;
@@ -13,7 +14,7 @@ mod handlers;
 mod http;
 
 pub(crate) use handlers::handle_request as handle_s3_request;
-pub use http::{Request as RequestExt, ResponseBuilder, RouteMatch, Router};
+pub use http::{Request as RequestExt, RequestParseError, ResponseBuilder, RouteMatch, Router};
 
 pub async fn serve_h1_connection<S>(
     stream: tokio::net::TcpStream,
@@ -102,10 +103,23 @@ async fn handle_request<B>(
     req: Request<B>,
 ) -> Result<Response<Body>, Infallible>
 where
-    B: hyper::body::Body<Data = bytes::Bytes> + Send + 'static,
+    B: hyper::body::Body<Data = bytes::Bytes> + Send + Unpin + 'static,
     B::Error: std::fmt::Display,
 {
-    match http::Request::from_hyper(req).await {
+    match http::Request::from_hyper_with_max_body(req, Some(auth_config.max_request_bytes)).await {
+        Ok(parsed_req) if parsed_req.path() == "/healthz" => {
+            if parsed_req.method() == Method::GET {
+                Ok(crate::health::response(
+                    storage.as_ref(),
+                    auth_config.as_ref(),
+                ))
+            } else {
+                Ok(simple_text_response(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "Method Not Allowed",
+                ))
+            }
+        }
         Ok(parsed_req) => match adapters.handle(storage, auth_config, parsed_req).await {
             Ok(response) => Ok(response),
             Err(e) => {
@@ -116,11 +130,104 @@ where
                 ))
             }
         },
+        Err(RequestParseError::BodyTooLarge {
+            max_request_bytes,
+            method,
+            uri,
+            headers,
+        }) => Ok(payload_too_large_response(
+            &method,
+            &uri,
+            &headers,
+            max_request_bytes,
+        )),
         Err(e) => {
             error!("Failed to parse request: {}", e);
             Ok(simple_text_response(StatusCode::BAD_REQUEST, "Bad Request"))
         }
     }
+}
+
+fn payload_too_large_response(
+    _method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    max_request_bytes: usize,
+) -> Response<Body> {
+    let message = format!("Request body exceeds MAX_REQUEST_BYTES ({max_request_bytes} bytes)");
+    let path = uri.path();
+    let host = headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let authorization = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let query = uri.query().unwrap_or("");
+
+    if headers.contains_key("x-ms-version")
+        || authorization.starts_with("SharedKey ")
+        || query.contains("restype=")
+        || query.contains("comp=")
+    {
+        let body = format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>RequestBodyTooLarge</Code><Message>{}</Message></Error>",
+            escape_xml(&message)
+        );
+        return ResponseBuilder::new(StatusCode::PAYLOAD_TOO_LARGE)
+            .content_type("application/xml")
+            .header("x-ms-error-code", "RequestBodyTooLarge")
+            .body(body.into_bytes())
+            .build();
+    }
+
+    if host.split(':').next().is_some_and(|host| {
+        host.eq_ignore_ascii_case("storage.googleapis.com")
+            || host.eq_ignore_ascii_case("storage.localhost")
+    }) || path.starts_with("/storage/v1/")
+        || path.starts_with("/download/storage/v1/")
+        || path.starts_with("/upload/storage/v1/")
+        || authorization.starts_with("GOOG1 ")
+        || query.contains("GoogleAccessId=")
+    {
+        let body = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>EntityTooLarge</Code><Message>{}</Message></Error>",
+            escape_xml(&message)
+        );
+        return ResponseBuilder::new(StatusCode::PAYLOAD_TOO_LARGE)
+            .content_type("application/xml")
+            .body(body.into_bytes())
+            .build();
+    }
+
+    if path.starts_with("/n/") || authorization.starts_with("Signature ") {
+        let body = serde_json::json!({
+            "code": "PayloadTooLarge",
+            "message": message,
+        });
+        return ResponseBuilder::new(StatusCode::PAYLOAD_TOO_LARGE)
+            .content_type("application/json")
+            .body(body.to_string().into_bytes())
+            .build();
+    }
+
+    let req_id = crate::utils::headers::generate_request_id();
+    let body = crate::utils::xml::error_xml("EntityTooLarge", &message, &req_id);
+    ResponseBuilder::new(StatusCode::PAYLOAD_TOO_LARGE)
+        .content_type("application/xml; charset=utf-8")
+        .header("x-amz-request-id", &req_id)
+        .body(body.into_bytes())
+        .build()
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]
@@ -148,6 +255,7 @@ mod adapter_routing_tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 

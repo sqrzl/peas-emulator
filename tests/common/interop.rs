@@ -30,6 +30,7 @@ pub fn auth_disabled() -> Arc<Config> {
         lifecycle_interval: std::time::Duration::from_secs(3600),
         api_port: 9000,
         ui_port: 9001,
+        max_request_bytes: peas_emulator::config::DEFAULT_MAX_REQUEST_BYTES,
     })
 }
 
@@ -43,6 +44,7 @@ pub fn auth_enabled(key: &str, secret: &str) -> Arc<Config> {
         lifecycle_interval: std::time::Duration::from_secs(3600),
         api_port: 9000,
         ui_port: 9001,
+        max_request_bytes: peas_emulator::config::DEFAULT_MAX_REQUEST_BYTES,
     })
 }
 

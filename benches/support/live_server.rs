@@ -44,6 +44,7 @@ pub fn auth_disabled() -> Config {
         lifecycle_interval: Duration::from_secs(3600),
         api_port: 9000,
         ui_port: 9001,
+        max_request_bytes: peas_emulator::config::DEFAULT_MAX_REQUEST_BYTES,
     }
 }
 

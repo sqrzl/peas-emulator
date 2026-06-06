@@ -86,6 +86,24 @@ async fn json_body<T: DeserializeOwned>(response: Response<Incoming>) -> T {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn should_report_health_given_live_server_when_using_admin_port() {
+    let server = LiveServer::start_admin(auth_disabled()).await;
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("{}/healthz", server.base_url))
+        .body(Body::default())
+        .expect("health request should build");
+    let response = server.request_without_default_auth(request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text_body(response).await;
+    assert!(body.contains(r#""status":"ok""#));
+    assert!(body.contains(r#""storage_ready":true"#));
+    assert!(body.contains("azure-blob"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn should_round_trip_admin_bucket_and_object_given_live_server_when_using_admin_api() {
     let server = LiveServer::start_admin(auth_disabled()).await;
 

@@ -6,6 +6,7 @@ pub mod body;
 mod compatibility_matrix;
 pub mod config;
 pub mod error;
+pub mod health;
 pub mod hyper_compat;
 pub mod lifecycle;
 pub mod models;

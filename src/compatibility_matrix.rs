@@ -29,12 +29,14 @@ mod tests {
             "interop_s3::should_assemble_completed_object_given_uploaded_parts_when_finishing_s3_multipart_upload",
             "interop_s3::should_list_multiple_versions_given_versioning_enabled_when_object_is_overwritten",
             "interop_s3::should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows",
+            "providers::azure::tests::should_commit_and_list_blocks_after_adapter_restart",
             "providers::azure::tests::should_commit_block_blob_from_put_block_list",
             "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
             "providers::azure::tests::should_manage_leases_snapshots_and_immutability",
             "providers::azure::tests::should_support_append_and_page_blob_writes",
             "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
             "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization",
+            "providers::gcs::tests::should_complete_resumable_upload_after_adapter_restart",
             "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
             "providers::gcs::tests::should_increment_generation_on_overwrite_and_patch_metageneration",
             "providers::gcs::tests::should_enforce_gcs_generation_and_metageneration_preconditions",
@@ -54,6 +56,19 @@ mod tests {
             "server::http::tests::should_route_virtual_hosted_style_bucket_requests",
             "services::object::tests::should_list_object_versions_through_service",
             "services::object::tests::should_roundtrip_object_through_service",
+        ])
+    }
+
+    fn known_sdk_verifiers() -> HashSet<&'static str> {
+        HashSet::from([
+            "sdk-tests/test_azure_sdk.py::test_azure_block_blob_workflow",
+            "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows",
+            "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows",
+            "sdk-tests/test_gcs_sdk.py::test_gcs_resumable_upload_workflow",
+            "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows",
+            "sdk-tests/test_oci_sdk.py::test_oci_multipart_workflow",
+            "sdk-tests/test_s3_sdk.py::test_s3_core_bucket_object_and_metadata_workflows",
+            "sdk-tests/test_s3_sdk.py::test_s3_multipart_and_versioning_workflows",
         ])
     }
 
@@ -88,6 +103,99 @@ mod tests {
                     provider_name,
                     operation_name
                 );
+            }
+        }
+
+        // Assert
+    }
+
+    #[test]
+    fn should_use_allowed_support_tiers_in_compatibility_matrix() {
+        // Arrange
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../compatibility-matrix.json"))
+                .expect("compatibility matrix should parse");
+        let providers = matrix
+            .get("providers")
+            .and_then(|providers| providers.as_object())
+            .expect("providers should be an object");
+
+        // Act
+        for (provider_name, operations) in providers {
+            let operations = operations
+                .as_object()
+                .expect("provider operations should be an object");
+            for (operation_name, operation) in operations {
+                let operation = operation
+                    .as_object()
+                    .expect("operation entry should be an object");
+                let support_tier = operation
+                    .get("support_tier")
+                    .and_then(|support_tier| support_tier.as_str())
+                    .expect("support_tier should be a string");
+                assert!(
+                    matches!(
+                        support_tier,
+                        "certified" | "partial" | "unsupported" | "deferred"
+                    ),
+                    "unexpected support tier '{}' for {}.{}",
+                    support_tier,
+                    provider_name,
+                    operation_name
+                );
+            }
+        }
+
+        // Assert
+    }
+
+    #[test]
+    fn should_require_sdk_verifiers_and_limitations_fields_in_compatibility_matrix() {
+        // Arrange
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../compatibility-matrix.json"))
+                .expect("compatibility matrix should parse");
+        let providers = matrix
+            .get("providers")
+            .and_then(|providers| providers.as_object())
+            .expect("providers should be an object");
+
+        // Act
+        for (provider_name, operations) in providers {
+            let operations = operations
+                .as_object()
+                .expect("provider operations should be an object");
+            for (operation_name, operation) in operations {
+                let operation = operation
+                    .as_object()
+                    .expect("operation entry should be an object");
+                let support_tier = operation
+                    .get("support_tier")
+                    .and_then(|support_tier| support_tier.as_str())
+                    .expect("support_tier should be a string");
+                let sdk_verifiers = operation
+                    .get("sdk_verified_by")
+                    .and_then(|value| value.as_array())
+                    .expect("sdk_verified_by should be an array");
+                let limitations = operation
+                    .get("limitations")
+                    .and_then(|value| value.as_array())
+                    .expect("limitations should be an array");
+                if support_tier == "certified" {
+                    assert!(
+                        !sdk_verifiers.is_empty(),
+                        "certified support tier for {}.{} must name at least one SDK verifier",
+                        provider_name,
+                        operation_name
+                    );
+                } else {
+                    assert!(
+                        !limitations.is_empty(),
+                        "non-certified support tier for {}.{} must document limitations",
+                        provider_name,
+                        operation_name
+                    );
+                }
             }
         }
 
@@ -190,6 +298,49 @@ mod tests {
                     assert!(
                         known_verifiers.contains(verifier),
                         "unknown verifier '{}' declared for {}.{}",
+                        verifier,
+                        provider_name,
+                        operation_name
+                    );
+                }
+            }
+        }
+
+        // Assert
+    }
+
+    #[test]
+    fn should_reference_only_known_sdk_verifiers_in_compatibility_matrix() {
+        // Arrange
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../compatibility-matrix.json"))
+                .expect("compatibility matrix should parse");
+        let providers = matrix
+            .get("providers")
+            .and_then(|providers| providers.as_object())
+            .expect("providers should be an object");
+        let known_sdk_verifiers = known_sdk_verifiers();
+
+        // Act
+        for (provider_name, operations) in providers {
+            let operations = operations
+                .as_object()
+                .expect("provider operations should be an object");
+            for (operation_name, operation) in operations {
+                let operation = operation
+                    .as_object()
+                    .expect("operation entry should be an object");
+                let sdk_verifiers = operation
+                    .get("sdk_verified_by")
+                    .and_then(|value| value.as_array())
+                    .expect("sdk_verified_by should be an array");
+                for verifier in sdk_verifiers {
+                    let verifier = verifier
+                        .as_str()
+                        .expect("SDK verifier entries should be strings");
+                    assert!(
+                        known_sdk_verifiers.contains(verifier),
+                        "unknown SDK verifier '{}' declared for {}.{}",
                         verifier,
                         provider_name,
                         operation_name

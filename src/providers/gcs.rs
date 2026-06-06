@@ -10,6 +10,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hmac::{Hmac, KeyInit, Mac};
 use http::{Method, StatusCode};
 use hyper::Response;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -19,8 +21,9 @@ use std::sync::{Arc, Mutex};
 
 const GCS_GENERATION_KEY: &str = "__peas_gcs_generation";
 const GCS_METAGENERATION_KEY: &str = "__peas_gcs_metageneration";
+const GCS_RESUMABLE_SESSION_STATE: &str = "gcs-resumable-session";
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ResumableSession {
     bucket: String,
     key: String,
@@ -51,6 +54,39 @@ impl GcsAdapter {
         ResponseBuilder::new(status)
             .header("x-guploader-uploadid", &uuid::Uuid::new_v4().to_string())
             .header("date", &crate::utils::headers::format_last_modified())
+    }
+
+    fn load_provider_state<T>(
+        storage: &dyn Storage,
+        provider: &str,
+        key: &str,
+    ) -> Result<Option<T>, String>
+    where
+        T: DeserializeOwned,
+    {
+        match storage.get_provider_state(provider, key) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|err| format!("Failed to parse provider state: {err}")),
+            Err(crate::error::Error::KeyNotFound) => Ok(None),
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
+    fn save_provider_state<T>(
+        storage: &dyn Storage,
+        provider: &str,
+        key: &str,
+        value: &T,
+    ) -> Result<(), String>
+    where
+        T: Serialize,
+    {
+        let bytes = serde_json::to_vec(value)
+            .map_err(|err| format!("Failed to serialize provider state: {err}"))?;
+        storage
+            .put_provider_state(provider, key, bytes)
+            .map_err(|err| err.to_string())
     }
 
     fn xml_response(status: StatusCode, body: String) -> Response<Body> {
@@ -141,6 +177,12 @@ impl GcsAdapter {
             })
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect()
+    }
+
+    fn decode_object_path(path: &str) -> Result<String, String> {
+        urlencoding::decode(path)
+            .map(|decoded| decoded.into_owned())
+            .map_err(|err| format!("Invalid encoded GCS object path: {err}"))
     }
 
     fn next_generation(existing: Option<&crate::models::Object>) -> String {
@@ -507,6 +549,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
@@ -520,6 +563,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
@@ -711,6 +755,58 @@ mod tests {
             .expect("body should read")
             .to_bytes();
         assert_eq!(body.as_ref(), b"chunked");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_complete_resumable_upload_after_adapter_restart() {
+        let adapter = GcsAdapter::new();
+        let storage = temp_storage();
+        storage.create_bucket("videos".to_string()).unwrap();
+
+        let response = adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "POST",
+                    "http://localhost/upload/storage/v1/b/videos/o?uploadType=resumable&name=restart.txt",
+                    &[
+                        ("host", "storage.googleapis.com"),
+                        ("x-upload-content-type", "text/plain"),
+                    ],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("resumable init should succeed");
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok())
+            .expect("location should exist")
+            .to_string();
+
+        let restarted = GcsAdapter::new();
+        restarted
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    &location,
+                    &[("host", "storage.googleapis.com")],
+                    b"restart gcs",
+                )
+                .await,
+            )
+            .await
+            .expect("resumable commit after restart should succeed");
+
+        let stored = storage
+            .get_object("videos", "restart.txt")
+            .expect("resumable object should persist");
+        assert_eq!(stored.data.as_slice(), b"restart gcs");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1504,21 +1600,25 @@ impl GcsAdapter {
                 .ok_or_else(|| "Missing resumable upload object name".to_string())?
                 .to_string();
             let session_id = uuid::Uuid::new_v4().to_string();
+            let session = ResumableSession {
+                bucket,
+                key,
+                content_type: req
+                    .header("x-upload-content-type")
+                    .unwrap_or("application/octet-stream")
+                    .to_string(),
+                metadata: Self::metadata_from_headers(&req),
+            };
+            Self::save_provider_state(
+                storage.as_ref(),
+                GCS_RESUMABLE_SESSION_STATE,
+                &session_id,
+                &session,
+            )?;
             self.resumable_sessions
                 .lock()
                 .map_err(|_| "Failed to lock resumable sessions".to_string())?
-                .insert(
-                    session_id.clone(),
-                    ResumableSession {
-                        bucket,
-                        key,
-                        content_type: req
-                            .header("x-upload-content-type")
-                            .unwrap_or("application/octet-stream")
-                            .to_string(),
-                        metadata: Self::metadata_from_headers(&req),
-                    },
-                );
+                .insert(session_id.clone(), session);
             let upload_location =
                 format!("{}/upload/resumable/{}", request_origin(&req), session_id);
             return Ok(Self::response(StatusCode::OK)
@@ -1534,13 +1634,19 @@ impl GcsAdapter {
             .collect();
         if parts.starts_with(&["upload", "resumable"]) && parts.len() == 3 {
             let session_id = parts[2];
-            let mut sessions = self
-                .resumable_sessions
-                .lock()
-                .map_err(|_| "Failed to lock resumable sessions".to_string())?;
-            let session = sessions
-                .remove(session_id)
-                .ok_or_else(|| "Unknown resumable upload session".to_string())?;
+            let session = {
+                let mut sessions = self
+                    .resumable_sessions
+                    .lock()
+                    .map_err(|_| "Failed to lock resumable sessions".to_string())?;
+                sessions.remove(session_id)
+            }
+            .or(Self::load_provider_state(
+                storage.as_ref(),
+                GCS_RESUMABLE_SESSION_STATE,
+                session_id,
+            )?)
+            .ok_or_else(|| "Unknown resumable upload session".to_string())?;
             let stored = storage.as_ref();
             let stored = Self::put_blob_with_generation(
                 stored,
@@ -1550,6 +1656,9 @@ impl GcsAdapter {
                 session.content_type,
                 session.metadata,
             )?;
+            storage
+                .delete_provider_state(GCS_RESUMABLE_SESSION_STATE, session_id)
+                .map_err(|err| err.to_string())?;
             return Ok(Self::json_response(
                 StatusCode::OK,
                 &serde_json::json!({
@@ -1703,7 +1812,7 @@ impl GcsAdapter {
                     ));
                 }
 
-                let object = parts[5..].join("/");
+                let object = Self::decode_object_path(&parts[5..].join("/"))?;
                 if let Err(response) = Self::authorize(&req, &auth_config, &bucket, Some(&object)) {
                     return Ok(response);
                 }
@@ -1852,7 +1961,7 @@ impl GcsAdapter {
 
         if parts.starts_with(&["download", "storage", "v1", "b"]) && parts.get(5) == Some(&"o") {
             let bucket = parts.get(4).copied().unwrap_or_default().to_string();
-            let object = parts[6..].join("/");
+            let object = Self::decode_object_path(&parts[6..].join("/"))?;
             if let Err(response) = Self::authorize(&req, &auth_config, &bucket, Some(&object)) {
                 return Ok(response);
             }

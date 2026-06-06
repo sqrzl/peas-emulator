@@ -15,12 +15,14 @@ const ENV_LIFECYCLE_HOURS: &str = "LIFECYCLE_HOURS";
 const ENV_API_PORT: &str = "API_PORT";
 const ENV_UI_PORT: &str = "UI_PORT";
 const ENV_ADMIN_AUTH_DISABLED: &str = "ADMIN_AUTH_DISABLED";
+const ENV_MAX_REQUEST_BYTES: &str = "MAX_REQUEST_BYTES";
 
 // Default values
 const DEFAULT_BLOBS_PATH: &str = "./blobs";
 const DEFAULT_LIFECYCLE_HOURS: u64 = 1;
 const DEFAULT_API_PORT: u16 = 9000;
 const DEFAULT_UI_PORT: u16 = 9001;
+pub const DEFAULT_MAX_REQUEST_BYTES: usize = 128 * 1024 * 1024;
 
 /// Global application configuration loaded from environment variables.
 #[derive(Clone, Debug)]
@@ -41,6 +43,8 @@ pub struct Config {
     pub api_port: u16,
     /// Port for the UI server
     pub ui_port: u16,
+    /// Maximum accepted HTTP request body size before streaming support is added
+    pub max_request_bytes: usize,
 }
 
 impl Config {
@@ -65,6 +69,10 @@ impl Config {
             .as_deref()
             .map(parse_bool_env)
             .unwrap_or(false);
+        let max_request_bytes = lookup(ENV_MAX_REQUEST_BYTES)
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_REQUEST_BYTES);
 
         let enforce_auth = access_key_id.is_some() && secret_access_key.is_some();
 
@@ -77,6 +85,7 @@ impl Config {
             lifecycle_interval: Duration::from_secs(lifecycle_interval_hours * 3600),
             api_port,
             ui_port,
+            max_request_bytes,
         }
     }
 
@@ -88,6 +97,7 @@ impl Config {
     /// - `SECRET_ACCESS_KEY`: AWS secret access key (optional)
     /// - `BLOBS_PATH`: Path to storage directory (default: "./blobs")
     /// - `LIFECYCLE_HOURS`: Hours between lifecycle rule executions (default: 1)
+    /// - `MAX_REQUEST_BYTES`: Maximum request body bytes accepted before streaming is supported (default: 128 MiB)
     /// - `ADMIN_AUTH_DISABLED`: Disable `/admin/v1` session auth even when provider auth is enabled
     pub fn from_env() -> Self {
         Self::from_env_with(|name| env::var(name).ok())
@@ -153,6 +163,7 @@ mod tests {
         );
         assert_eq!(config.api_port, DEFAULT_API_PORT);
         assert_eq!(config.ui_port, DEFAULT_UI_PORT);
+        assert_eq!(config.max_request_bytes, DEFAULT_MAX_REQUEST_BYTES);
     }
 
     #[test]
@@ -166,6 +177,7 @@ mod tests {
             ENV_LIFECYCLE_HOURS => Some("2".to_string()),
             ENV_API_PORT => Some("9100".to_string()),
             ENV_UI_PORT => Some("9101".to_string()),
+            ENV_MAX_REQUEST_BYTES => Some("1024".to_string()),
             _ => None,
         });
 
@@ -178,6 +190,7 @@ mod tests {
         assert_eq!(config.lifecycle_interval, Duration::from_secs(7200));
         assert_eq!(config.api_port, 9100);
         assert_eq!(config.ui_port, 9101);
+        assert_eq!(config.max_request_bytes, 1024);
         assert!(config.validate_credentials("test-key", "test-secret"));
         assert!(!config.validate_credentials("wrong-key", "test-secret"));
     }
@@ -223,6 +236,7 @@ mod tests {
         );
         assert_eq!(config.api_port, DEFAULT_API_PORT);
         assert_eq!(config.ui_port, DEFAULT_UI_PORT);
+        assert_eq!(config.max_request_bytes, DEFAULT_MAX_REQUEST_BYTES);
     }
 
     #[test]
@@ -240,5 +254,18 @@ mod tests {
         assert!(config.enforce_auth);
         assert!(config.admin_auth_disabled);
         assert!(!config.admin_auth_enforced());
+    }
+
+    #[test]
+    fn should_fall_back_to_default_max_request_bytes_when_env_value_is_invalid() {
+        // Arrange
+        // Act
+        let config = Config::from_env_with(|name| match name {
+            ENV_MAX_REQUEST_BYTES => Some("0".to_string()),
+            _ => None,
+        });
+
+        // Assert
+        assert_eq!(config.max_request_bytes, DEFAULT_MAX_REQUEST_BYTES);
     }
 }

@@ -17,6 +17,8 @@ use hyper::Response;
 use quick_xml::escape::unescape;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -36,8 +38,10 @@ const AZURE_IMMUTABILITY_UNTIL_KEY: &str = "azure_immutability_until";
 const AZURE_IMMUTABILITY_MODE_KEY: &str = "azure_immutability_mode";
 const AZURE_LEGAL_HOLD_KEY: &str = "azure_legal_hold";
 const AZURE_SNAPSHOT_PREFIX: &str = "__peas_azure_snapshot__";
+const AZURE_BLOCK_SESSION_STATE: &str = "azure-block-session";
+const AZURE_COMMITTED_BLOCKS_STATE: &str = "azure-committed-blocks";
 
-#[derive(Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct AzureBlockSession {
     blocks: HashMap<String, Vec<u8>>,
     content_type: Option<String>,
@@ -72,6 +76,39 @@ impl AzureBlobAdapter {
 
     fn blob_state_key(account: &str, container: &str, blob: &str) -> String {
         format!("{}/{}/{}", account, container, blob)
+    }
+
+    fn load_provider_state<T>(
+        storage: &dyn Storage,
+        provider: &str,
+        key: &str,
+    ) -> Result<Option<T>, String>
+    where
+        T: DeserializeOwned,
+    {
+        match storage.get_provider_state(provider, key) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|err| format!("Failed to parse provider state: {err}")),
+            Err(crate::error::Error::KeyNotFound) => Ok(None),
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
+    fn save_provider_state<T>(
+        storage: &dyn Storage,
+        provider: &str,
+        key: &str,
+        value: &T,
+    ) -> Result<(), String>
+    where
+        T: Serialize,
+    {
+        let bytes = serde_json::to_vec(value)
+            .map_err(|err| format!("Failed to serialize provider state: {err}"))?;
+        storage
+            .put_provider_state(provider, key, bytes)
+            .map_err(|err| err.to_string())
     }
 
     fn parse_range_header(value: &str, size: u64) -> Option<(usize, usize)> {
@@ -252,13 +289,13 @@ impl AzureBlobAdapter {
 
     fn block_list_xml(block_ids: &[String]) -> String {
         let mut xml = String::with_capacity(64 + block_ids.len() * 32);
-        xml.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>");
+        xml.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList><CommittedBlocks>");
         for id in block_ids {
-            xml.push_str("<Committed>");
+            xml.push_str("<Block><Name>");
             push_escaped_xml(&mut xml, id);
-            xml.push_str("</Committed>");
+            xml.push_str("</Name><Size>0</Size></Block>");
         }
-        xml.push_str("</BlockList>");
+        xml.push_str("</CommittedBlocks><UncommittedBlocks /></BlockList>");
         xml
     }
 
@@ -1046,30 +1083,34 @@ impl AzureBlobAdapter {
                 .query_param("blockid")
                 .ok_or_else(|| "Missing blockid query parameter".to_string())?;
             let session_key = Self::blob_state_key(&resource.account, &container, &blob_key);
-            let mut sessions = self
+            let mut session = self
                 .block_sessions
                 .lock()
-                .map_err(|_| "Failed to lock Azure block session state".to_string())?;
-            sessions
-                .entry(session_key)
-                .and_modify(|session| {
-                    session.content_type = Some(Self::content_type(&req));
-                    session.metadata = Self::metadata_from_headers(&req);
-                    session
-                        .blocks
-                        .insert(block_id.to_string(), req.body.to_vec());
-                })
-                .or_insert_with(|| {
-                    let mut session = AzureBlockSession {
-                        blocks: HashMap::new(),
-                        content_type: Some(Self::content_type(&req)),
-                        metadata: Self::metadata_from_headers(&req),
-                    };
-                    session
-                        .blocks
-                        .insert(block_id.to_string(), req.body.to_vec());
-                    session
-                });
+                .map_err(|_| "Failed to lock Azure block session state".to_string())?
+                .get(&session_key)
+                .cloned()
+                .or(Self::load_provider_state(
+                    storage.as_ref(),
+                    AZURE_BLOCK_SESSION_STATE,
+                    &session_key,
+                )?)
+                .unwrap_or_default();
+
+            session.content_type = Some(Self::content_type(&req));
+            session.metadata = Self::metadata_from_headers(&req);
+            session
+                .blocks
+                .insert(block_id.to_string(), req.body.to_vec());
+            Self::save_provider_state(
+                storage.as_ref(),
+                AZURE_BLOCK_SESSION_STATE,
+                &session_key,
+                &session,
+            )?;
+            self.block_sessions
+                .lock()
+                .map_err(|_| "Failed to lock Azure block session state".to_string())?
+                .insert(session_key, session);
 
             return Ok(Self::response(StatusCode::CREATED).empty());
         }
@@ -1079,13 +1120,19 @@ impl AzureBlobAdapter {
                 &String::from_utf8(req.body.to_vec()).map_err(|err| err.to_string())?,
             )?;
             let session_key = Self::blob_state_key(&resource.account, &container, &blob_key);
-            let mut sessions = self
-                .block_sessions
-                .lock()
-                .map_err(|_| "Failed to lock Azure block session state".to_string())?;
-            let session = sessions
-                .remove(&session_key)
-                .ok_or_else(|| "No staged Azure blocks were found".to_string())?;
+            let session = {
+                let mut sessions = self
+                    .block_sessions
+                    .lock()
+                    .map_err(|_| "Failed to lock Azure block session state".to_string())?;
+                sessions.remove(&session_key)
+            }
+            .or(Self::load_provider_state(
+                storage.as_ref(),
+                AZURE_BLOCK_SESSION_STATE,
+                &session_key,
+            )?)
+            .ok_or_else(|| "No staged Azure blocks were found".to_string())?;
             let upload = storage
                 .as_ref()
                 .create_upload_session(CreateUploadSessionRequest {
@@ -1121,7 +1168,16 @@ impl AzureBlobAdapter {
             self.committed_blocks
                 .lock()
                 .map_err(|_| "Failed to lock Azure committed block state".to_string())?
-                .insert(session_key, block_ids);
+                .insert(session_key.clone(), block_ids.clone());
+            Self::save_provider_state(
+                storage.as_ref(),
+                AZURE_COMMITTED_BLOCKS_STATE,
+                &session_key,
+                &block_ids,
+            )?;
+            storage
+                .delete_provider_state(AZURE_BLOCK_SESSION_STATE, &session_key)
+                .map_err(|err| err.to_string())?;
 
             return Ok(Self::empty_response(StatusCode::CREATED));
         }
@@ -1153,6 +1209,11 @@ impl AzureBlobAdapter {
                 .map_err(|_| "Failed to lock Azure committed block state".to_string())?
                 .get(&session_key)
                 .cloned()
+                .or(Self::load_provider_state(
+                    storage.as_ref(),
+                    AZURE_COMMITTED_BLOCKS_STATE,
+                    &session_key,
+                )?)
                 .unwrap_or_default();
             return Ok(Self::xml_response(
                 StatusCode::OK,
@@ -1456,6 +1517,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
@@ -1469,6 +1531,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
@@ -1697,6 +1760,97 @@ mod tests {
             .expect("body should read")
             .to_bytes();
         assert_eq!(body.as_ref(), b"abcdef");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_commit_and_list_blocks_after_adapter_restart() {
+        let adapter = AzureBlobAdapter::new();
+        let storage = temp_storage();
+
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/restart?restype=container",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("container create should succeed");
+
+        let block_id = BASE64.encode("restart-block");
+        adapter
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    &format!(
+                        "http://localhost/devstoreaccount1/restart/report.txt?comp=block&blockid={}",
+                        urlencoding::encode(&block_id)
+                    ),
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"restart-safe",
+                )
+                .await,
+            )
+            .await
+            .expect("put block should succeed");
+
+        let restarted = AzureBlobAdapter::new();
+        let block_list = format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList><Latest>{}</Latest></BlockList>",
+            block_id
+        );
+        let commit = restarted
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "PUT",
+                    "http://localhost/devstoreaccount1/restart/report.txt?comp=blocklist",
+                    &[
+                        ("x-ms-version", AZURE_VERSION),
+                        ("content-type", "application/xml"),
+                    ],
+                    block_list.as_bytes(),
+                )
+                .await,
+            )
+            .await
+            .expect("put block list should succeed after restart");
+        assert_eq!(commit.status(), StatusCode::CREATED);
+
+        let block_list_response = AzureBlobAdapter::new()
+            .handle_request(
+                storage.clone(),
+                auth_disabled(),
+                parsed_request(
+                    "GET",
+                    "http://localhost/devstoreaccount1/restart/report.txt?comp=blocklist",
+                    &[("x-ms-version", AZURE_VERSION)],
+                    b"",
+                )
+                .await,
+            )
+            .await
+            .expect("get block list should succeed after restart");
+        let block_list_body = block_list_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body should read")
+            .to_bytes();
+        assert!(String::from_utf8(block_list_body.to_vec())
+            .expect("xml")
+            .contains(&block_id));
+
+        let object = storage.get_object("restart", "report.txt").unwrap();
+        assert_eq!(object.data, b"restart-safe".to_vec());
     }
 
     #[tokio::test(flavor = "multi_thread")]

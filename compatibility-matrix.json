@@ -6,6 +6,13 @@
         "verified_by": [
           "api::server::tests::bucket_crud_json",
           "interop_s3::should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_s3_sdk.py::test_s3_core_bucket_object_and_metadata_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "object_crud": {
@@ -13,12 +20,24 @@
         "verified_by": [
           "api::server::tests::object_upload_download",
           "interop_s3::should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_s3_sdk.py::test_s3_core_bucket_object_and_metadata_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "virtual_hosted_style": {
         "status": "pass",
         "verified_by": [
           "server::http::tests::should_route_virtual_hosted_style_bucket_requests"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Supported by PEAS routing tests, but SDK certification uses path-style addressing for deterministic localhost endpoints."
         ]
       },
       "sigv4": {
@@ -27,6 +46,13 @@
           "auth::sigv4::tests::should_verify_valid_sigv4_signature",
           "server::handlers::auth::tests::should_build_standard_sigv4_canonical_request_with_sorted_query",
           "interop_s3::should_round_trip_bucket_and_object_operations_given_basic_s3_requests_when_using_crud_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_s3_sdk.py::test_s3_core_bucket_object_and_metadata_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "multipart": {
@@ -34,6 +60,13 @@
         "verified_by": [
           "services::object::tests::should_roundtrip_object_through_service",
           "interop_s3::should_assemble_completed_object_given_uploaded_parts_when_finishing_s3_multipart_upload"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_s3_sdk.py::test_s3_multipart_and_versioning_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "versioning": {
@@ -42,42 +75,79 @@
           "services::object::tests::should_list_object_versions_through_service",
           "server::handlers::bucket::tests::should_list_version_history_when_versions_query_is_requested",
           "interop_s3::should_list_multiple_versions_given_versioning_enabled_when_object_is_overwritten"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_s3_sdk.py::test_s3_multipart_and_versioning_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "requester_pays": {
         "status": "pass",
         "verified_by": [
           "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Configuration round-trips are covered, but requester-pays billing semantics are not emulated."
         ]
       },
       "website_hosting": {
         "status": "pass",
         "verified_by": [
           "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Configuration round-trips are covered, but static website hosting behavior is not emulated."
         ]
       },
       "cors_admin": {
         "status": "pass",
         "verified_by": [
           "server::handlers::bucket::tests::should_round_trip_request_payment_website_and_cors_bucket_configs"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "CORS configuration round-trips are covered, but browser preflight behavior is not SDK-certified."
         ]
       },
       "object_lock_retention": {
         "status": "pass",
         "verified_by": [
           "server::handlers::object::s3_contract_tests::should_block_mutation_when_object_lock_headers_are_active"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Retention headers are enforced for local mutation safety, but governance/compliance legal-hold parity is not claimed."
         ]
       },
       "sse_request_contracts": {
         "status": "pass",
         "verified_by": [
           "server::handlers::object::s3_contract_tests::should_round_trip_sse_headers_and_require_matching_sse_c_reads"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "SSE request headers are validated and surfaced, but PEAS does not perform provider-equivalent encryption key management."
         ]
       },
       "bucket_post_ops": {
         "status": "pass",
         "verified_by": [
           "server::handlers::bucket::tests::should_accept_browser_post_uploads"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Browser-style POST uploads are covered by contract tests, but not part of the SDK certification gate."
         ]
       }
     },
@@ -87,6 +157,13 @@
         "verified_by": [
           "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
           "interop_azure::should_round_trip_block_blob_given_container_exists_when_using_basic_blob_operations"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "blob_crud": {
@@ -94,6 +171,13 @@
         "verified_by": [
           "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
           "interop_azure::should_round_trip_block_blob_given_container_exists_when_using_basic_blob_operations"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "metadata_headers": {
@@ -101,6 +185,13 @@
         "verified_by": [
           "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
           "interop_azure::should_return_custom_metadata_given_blob_metadata_headers_when_requesting_blob_head"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "range_reads": {
@@ -108,6 +199,13 @@
         "verified_by": [
           "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
           "interop_azure::should_return_requested_slice_given_range_header_when_reading_blob_content"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "list_containers": {
@@ -115,6 +213,13 @@
         "verified_by": [
           "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization",
           "interop_azure::should_list_containers_and_blobs_given_stored_objects_when_querying_azure_lists"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "list_blobs": {
@@ -122,6 +227,13 @@
         "verified_by": [
           "providers::azure::tests::should_create_list_and_fetch_azure_blobs",
           "interop_azure::should_list_containers_and_blobs_given_stored_objects_when_querying_azure_lists"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "shared_key_auth": {
@@ -129,12 +241,24 @@
         "verified_by": [
           "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization",
           "interop_azure::should_round_trip_block_blob_given_container_exists_when_using_basic_blob_operations"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_core_blob_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "sas_auth": {
         "status": "pass",
         "verified_by": [
           "providers::azure::tests::should_validate_azure_shared_key_and_sas_authorization"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "SAS authorization is covered by adapter contract tests, but not yet part of the SDK certification gate."
         ]
       },
       "block_blob_upload": {
@@ -142,7 +266,15 @@
         "verified_by": [
           "providers::azure::tests::should_commit_block_blob_from_put_block_list",
           "providers::azure::tests::should_update_metadata_return_block_list_and_support_ranges",
-          "interop_azure::should_round_trip_block_blob_given_container_exists_when_using_basic_blob_operations"
+          "interop_azure::should_round_trip_block_blob_given_container_exists_when_using_basic_blob_operations",
+          "providers::azure::tests::should_commit_and_list_blocks_after_adapter_restart"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_azure_sdk.py::test_azure_block_blob_workflow"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "append_blob": {
@@ -150,6 +282,11 @@
         "verified_by": [
           "providers::azure::tests::should_support_append_and_page_blob_writes",
           "interop_azure::should_persist_append_and_page_blob_writes_given_specialized_blob_types_when_uploading_content"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Append blob writes persist locally, but append-position and service-property edge cases are not SDK-certified."
         ]
       },
       "page_blob": {
@@ -157,6 +294,11 @@
         "verified_by": [
           "providers::azure::tests::should_support_append_and_page_blob_writes",
           "interop_azure::should_persist_append_and_page_blob_writes_given_specialized_blob_types_when_uploading_content"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Page blob writes persist locally, but sparse-page and sequence-number parity are not SDK-certified."
         ]
       },
       "lease_management": {
@@ -164,6 +306,11 @@
         "verified_by": [
           "providers::azure::tests::should_manage_leases_snapshots_and_immutability",
           "interop_azure::should_enforce_leases_and_retention_given_snapshot_and_immutability_operations_when_deleting_blob"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Lease enforcement is covered for core local flows, but provider timing and break/renew edge cases are simplified."
         ]
       },
       "snapshots": {
@@ -171,6 +318,11 @@
         "verified_by": [
           "providers::azure::tests::should_manage_leases_snapshots_and_immutability",
           "interop_azure::should_enforce_leases_and_retention_given_snapshot_and_immutability_operations_when_deleting_blob"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Snapshot reads and deletes are covered for local flows, but snapshot lifecycle parity is not fully certified."
         ]
       },
       "immutability_retention": {
@@ -178,6 +330,11 @@
         "verified_by": [
           "providers::azure::tests::should_manage_leases_snapshots_and_immutability",
           "interop_azure::should_enforce_leases_and_retention_given_snapshot_and_immutability_operations_when_deleting_blob"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Retention enforcement is local and simplified; production governance/compliance parity is not claimed."
         ]
       }
     },
@@ -187,6 +344,13 @@
         "verified_by": [
           "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
           "interop_gcs::should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "object_crud": {
@@ -194,6 +358,13 @@
         "verified_by": [
           "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
           "interop_gcs::should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "metadata_headers": {
@@ -201,6 +372,13 @@
         "verified_by": [
           "providers::gcs::tests::should_return_generation_headers_and_support_ranges",
           "interop_gcs::should_return_custom_metadata_given_gcs_metadata_headers_when_requesting_object_head"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "range_reads": {
@@ -208,6 +386,13 @@
         "verified_by": [
           "providers::gcs::tests::should_return_generation_headers_and_support_ranges",
           "interop_gcs::should_return_requested_slice_given_range_header_when_reading_gcs_object_content"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "list_objects": {
@@ -215,19 +400,39 @@
         "verified_by": [
           "providers::gcs::tests::should_handle_gcs_bucket_and_object_crud",
           "interop_gcs::should_list_matching_objects_given_existing_keys_when_querying_gcs_bucket_contents"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "signed_url_v2": {
         "status": "pass",
         "verified_by": [
           "providers::gcs::tests::should_support_gcs_resumable_uploads_and_signed_access"
+        ],
+        "support_tier": "partial",
+        "sdk_verified_by": [],
+        "limitations": [
+          "Signed URL V2 validation is covered by adapter tests, but official SDK signed URL generation is not in the certification gate."
         ]
       },
       "resumable_upload": {
         "status": "pass",
         "verified_by": [
           "providers::gcs::tests::should_support_gcs_resumable_uploads_and_signed_access",
-          "interop_gcs::should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api"
+          "interop_gcs::should_round_trip_bucket_and_object_operations_given_basic_gcs_requests_when_using_xml_api",
+          "providers::gcs::tests::should_complete_resumable_upload_after_adapter_restart"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_resumable_upload_workflow"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "json_api_breadth": {
@@ -237,6 +442,13 @@
           "providers::gcs::tests::should_increment_generation_on_overwrite_and_patch_metageneration",
           "providers::gcs::tests::should_enforce_gcs_generation_and_metageneration_preconditions",
           "interop_gcs::should_complete_resumable_upload_given_json_api_session_when_finalizing_media_object"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_gcs_sdk.py::test_gcs_core_json_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       }
     },
@@ -246,6 +458,13 @@
         "verified_by": [
           "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
           "interop_oci::should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "bucket_crud": {
@@ -253,6 +472,13 @@
         "verified_by": [
           "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
           "interop_oci::should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "object_crud": {
@@ -260,6 +486,13 @@
         "verified_by": [
           "providers::oci::tests::should_support_oci_namespace_bucket_and_object_flows",
           "interop_oci::should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "metadata_headers": {
@@ -267,6 +500,13 @@
         "verified_by": [
           "providers::oci::tests::should_round_trip_oci_metadata_and_prefix_listing",
           "interop_oci::should_return_custom_metadata_given_oci_metadata_headers_when_requesting_object_head"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "list_objects": {
@@ -274,6 +514,13 @@
         "verified_by": [
           "providers::oci::tests::should_round_trip_oci_metadata_and_prefix_listing",
           "interop_oci::should_list_prefixed_objects_given_nested_keys_when_querying_oci_bucket_contents"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "request_signing": {
@@ -281,6 +528,13 @@
         "verified_by": [
           "providers::oci::tests::should_validate_oci_signature_authorization",
           "interop_oci::should_round_trip_namespace_bucket_and_object_operations_given_basic_oci_requests_when_using_core_flows"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_core_object_workflows"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       },
       "multipart": {
@@ -288,6 +542,13 @@
         "verified_by": [
           "providers::oci::tests::should_support_oci_multipart_upload_lifecycle",
           "interop_oci::should_commit_multipart_object_given_uploaded_parts_when_finalizing_oci_upload"
+        ],
+        "support_tier": "certified",
+        "sdk_verified_by": [
+          "sdk-tests/test_oci_sdk.py::test_oci_multipart_workflow"
+        ],
+        "limitations": [
+          "Certified for documented local emulator workflows; full production cloud-provider control-plane parity remains out of scope."
         ]
       }
     }

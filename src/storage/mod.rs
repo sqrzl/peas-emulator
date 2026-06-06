@@ -129,4 +129,9 @@ pub trait Storage: Send + Sync {
         policy: crate::models::policy::BucketPolicyDocument,
     ) -> Result<()>;
     fn delete_bucket_policy(&self, bucket: &str) -> Result<()>;
+
+    // Provider session/state sidecars for restart-safe emulator workflows
+    fn put_provider_state(&self, provider: &str, key: &str, data: Vec<u8>) -> Result<()>;
+    fn get_provider_state(&self, provider: &str, key: &str) -> Result<Vec<u8>>;
+    fn delete_provider_state(&self, provider: &str, key: &str) -> Result<()>;
 }

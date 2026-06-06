@@ -133,6 +133,12 @@ impl OciAdapter {
         Some((start as usize, end as usize))
     }
 
+    fn decode_object_path(path: &str) -> Result<String, String> {
+        urlencoding::decode(path)
+            .map(|decoded| decoded.into_owned())
+            .map_err(|err| format!("Invalid encoded OCI object path: {err}"))
+    }
+
     fn object_response(status: StatusCode, blob: &crate::models::Object) -> ResponseBuilder {
         let mut builder = Self::response(status)
             .header("accept-ranges", "bytes")
@@ -377,7 +383,7 @@ impl OciAdapter {
                 };
             }
 
-            let object = parts[3..].join("/");
+            let object = Self::decode_object_path(&parts[3..].join("/"))?;
             let upload_id = req
                 .query_param("uploadId")
                 .ok_or_else(|| "Missing uploadId query parameter".to_string())?;
@@ -483,7 +489,7 @@ impl OciAdapter {
                 ));
             }
 
-            let object = parts[3..].join("/");
+            let object = Self::decode_object_path(&parts[3..].join("/"))?;
             return match *req.method() {
                 Method::PUT => {
                     let stored = storage
@@ -628,6 +634,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
@@ -641,6 +648,7 @@ mod tests {
             lifecycle_interval: std::time::Duration::from_secs(3600),
             api_port: 9000,
             ui_port: 9001,
+            max_request_bytes: crate::config::DEFAULT_MAX_REQUEST_BYTES,
         })
     }
 
