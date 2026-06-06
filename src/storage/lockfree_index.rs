@@ -179,14 +179,8 @@ mod tests {
             index.list_prefix_marker("bucket", Some("c"), Some("a"), Some(10));
 
         // Assert
-        assert_eq!(
-            result_from_marker,
-            vec!["cherry".to_string()]
-        );
-        assert_eq!(
-            result_from_prefix,
-            vec!["banana".to_string()]
-        );
+        assert_eq!(result_from_marker, vec!["cherry".to_string()]);
+        assert_eq!(result_from_prefix, vec!["banana".to_string()]);
         assert_eq!(
             result_from_prefix_and_earlier_marker,
             vec!["banana".to_string()]
@@ -210,9 +204,6 @@ mod tests {
         let result = index.list("bucket", Some("beta"));
 
         // Assert
-        assert_eq!(
-            result,
-            vec!["beta".to_string(), "beta2".to_string()]
-        );
+        assert_eq!(result, vec!["beta".to_string(), "beta2".to_string()]);
     }
 }

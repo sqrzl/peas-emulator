@@ -366,6 +366,38 @@ pub(super) fn check_object_conditionals(
     None
 }
 
+pub(super) fn check_put_conditionals(
+    req: &Request,
+    existing_obj: Option<&crate::models::Object>,
+    req_id: &str,
+) -> Option<Response<Body>> {
+    if let Some(existing_obj) = existing_obj {
+        if let Some(if_match) = req.header("if-match") {
+            if !etag_list_matches(if_match, &existing_obj.etag) {
+                return Some(precondition_failed_response(req_id));
+            }
+        }
+
+        if let Some(if_unmodified_since) = req.header("if-unmodified-since") {
+            if let Ok(since_dt) = chrono::DateTime::parse_from_rfc2822(if_unmodified_since) {
+                if existing_obj.last_modified > since_dt.with_timezone(&chrono::Utc) {
+                    return Some(precondition_failed_response(req_id));
+                }
+            }
+        }
+
+        if let Some(if_none_match) = req.header("if-none-match") {
+            if etag_list_matches(if_none_match, &existing_obj.etag) {
+                return Some(precondition_failed_response(req_id));
+            }
+        }
+    } else if req.header("if-match").is_some() {
+        return Some(precondition_failed_response(req_id));
+    }
+
+    None
+}
+
 pub(super) fn check_copy_conditionals(
     req: &Request,
     source_obj: &crate::models::Object,

@@ -267,14 +267,19 @@ pub async fn object_put(
         return Ok(response);
     }
 
-    if req.has_query_param("tagging") {
-        if let Ok(existing) = tokio::task::block_in_place(|| {
-            object_service::get_object(storage.as_ref(), bucket, key)
-        }) {
-            if object_is_locked(&existing) {
-                return Ok(locked_object_response(&req_id));
-            }
+    let existing =
+        tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+            .ok();
+    if let Some(existing) = existing.as_ref() {
+        if object_is_locked(existing) {
+            return Ok(locked_object_response(&req_id));
         }
+    }
+    if let Some(response) = check_put_conditionals(req, existing.as_ref(), &req_id) {
+        return Ok(response);
+    }
+
+    if req.has_query_param("tagging") {
         let body = String::from_utf8(req.body.to_vec())
             .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
         let tags = match xml_utils::parse_tagging_xml(&body) {
@@ -604,12 +609,7 @@ pub async fn object_put(
         content_type,
         metadata,
     );
-    if let Ok(existing) =
-        tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
-    {
-        if object_is_locked(&existing) {
-            return Ok(locked_object_response(&req_id));
-        }
+    if let Some(existing) = existing.as_ref() {
         obj.provider_metadata = existing.provider_metadata.clone();
     }
     if let Err(response) = apply_s3_request_contracts(req, &mut obj, &req_id) {
@@ -1410,8 +1410,10 @@ mod s3_contract_tests {
     use super::*;
     use crate::auth::AuthConfig;
     use crate::body::Body;
+    use crate::models::Object;
     use crate::services::bucket as bucket_service;
     use crate::storage::FilesystemStorage;
+    use chrono::TimeZone;
     use http_body_util::BodyExt;
     use hyper::Request as HyperRequest;
     use std::fs;
@@ -1632,6 +1634,103 @@ mod s3_contract_tests {
         .await
         .expect("overwrite should respond");
         assert_eq!(overwrite_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_match_does_not_match_on_put() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                Object::new(
+                    "notes.txt".to_string(),
+                    b"current payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let put = request("PUT", &[("If-Match", "not-the-etag")], b"replacement").await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put,
+            "req-put-if-match".to_string(),
+        )
+        .await
+        .expect("put should respond");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_none_match_matches_on_put() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let object = Object::new(
+            "notes.txt".to_string(),
+            b"current payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        let etag = object.etag.clone();
+        storage
+            .put_object("bucket", "notes.txt".to_string(), object)
+            .unwrap();
+
+        let put = request("PUT", &[("If-None-Match", &etag)], b"replacement").await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put,
+            "req-put-if-none-match".to_string(),
+        )
+        .await
+        .expect("put should respond");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_unmodified_since_is_stale_on_put() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+
+        let mut object = Object::new(
+            "notes.txt".to_string(),
+            b"current payload".to_vec(),
+            "text/plain".to_string(),
+        );
+        object.last_modified = chrono::Utc.with_ymd_and_hms(2024, 4, 10, 12, 0, 0).unwrap();
+        storage
+            .put_object("bucket", "notes.txt".to_string(), object)
+            .unwrap();
+
+        let put = request(
+            "PUT",
+            &[("If-Unmodified-Since", "Tue, 09 Apr 2024 12:00:00 +0000")],
+            b"replacement",
+        )
+        .await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put,
+            "req-put-if-unmodified-since".to_string(),
+        )
+        .await
+        .expect("put should respond");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2050,6 +2149,82 @@ mod s3_contract_tests {
                 .count(),
             2
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_match_does_not_match_on_object_acl_put() {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                Object::new(
+                    "notes.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let put_acl = request_with_uri(
+            "PUT",
+            "http://localhost/bucket/notes.txt?acl",
+            &[("If-Match", "not-the-etag")],
+            &[],
+        )
+        .await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put_acl,
+            "req-object-acl-precondition".to_string(),
+        )
+        .await
+        .expect("object acl put should complete");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_precondition_failed_when_if_match_does_not_match_on_object_tagging_put()
+    {
+        let storage = temp_storage();
+        storage.create_bucket("bucket".to_string()).unwrap();
+        storage
+            .put_object(
+                "bucket",
+                "notes.txt".to_string(),
+                Object::new(
+                    "notes.txt".to_string(),
+                    b"payload".to_vec(),
+                    "text/plain".to_string(),
+                ),
+            )
+            .unwrap();
+
+        let put_tagging = request_with_uri(
+            "PUT",
+            "http://localhost/bucket/notes.txt?tagging",
+            &[("If-Match", "not-the-etag")],
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag></TagSet></Tagging>"#,
+        )
+        .await;
+        let response = object_put(
+            storage,
+            auth_disabled_config(),
+            "bucket",
+            "notes.txt",
+            &put_tagging,
+            "req-object-tagging-precondition".to_string(),
+        )
+        .await
+        .expect("object tagging put should complete");
+
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test(flavor = "multi_thread")]
