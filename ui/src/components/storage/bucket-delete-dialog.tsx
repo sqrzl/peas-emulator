@@ -1,4 +1,4 @@
-import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
+import { Button, FieldError } from '@askrjs/themes/controls';
 import { Stack } from '@askrjs/themes/layouts';
 import {
   AlertDialog,
@@ -8,6 +8,8 @@ import {
 } from '@askrjs/ui';
 import { Show } from '@askrjs/askr/control';
 import type { DeleteTarget } from '../../features/storage/use-delete-target';
+import StorageDialogFooter from './storage-dialog-footer';
+import StorageDialogHeader from './storage-dialog-header';
 
 export type BucketDeleteTarget = DeleteTarget<{ bucketName: string }>;
 
@@ -33,8 +35,7 @@ export default function BucketDeleteDialog({
         <AlertDialogOverlay />
         <AlertDialogContent>
           <Stack gap="4">
-            <Stack gap="1">
-              <h2>Delete bucket</h2>
+            <StorageDialogHeader title="Delete bucket">
               <p>
                 {target?.pendingCount
                   ? 'Checking how many blobs are in this bucket.'
@@ -43,13 +44,22 @@ export default function BucketDeleteDialog({
                     : 'You are going to delete this bucket.'}
               </p>
               <p>This also removes the bucket itself.</p>
-            </Stack>
+            </StorageDialogHeader>
             <Show when={target?.error}>
               <FieldError role="alert">{target?.error}</FieldError>
             </Show>
-            <ButtonGroup>
+            <StorageDialogFooter>
               <Button
                 type="button"
+                variant="secondary"
+                disabled={target?.deleting}
+                onPress={onCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
                 disabled={target?.pendingCount || target?.deleting}
                 onPress={onConfirm}
               >
@@ -59,15 +69,7 @@ export default function BucketDeleteDialog({
                     ? `Delete bucket and ${target.count ?? 0} blobs`
                     : 'Delete bucket'}
               </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={target?.deleting}
-                onPress={onCancel}
-              >
-                Cancel
-              </Button>
-            </ButtonGroup>
+            </StorageDialogFooter>
           </Stack>
         </AlertDialogContent>
       </AlertDialogPortal>

@@ -1,12 +1,8 @@
 import { state } from '@askrjs/askr';
 import { Show } from '@askrjs/askr/control';
 import { createMutation } from '@askrjs/askr/data';
-import {
-  Button,
-  ButtonGroup,
-  Field,
-  FieldError,
-} from '@askrjs/themes/controls';
+import { UploadIcon } from '@askrjs/lucide';
+import { Button, Field, FieldError } from '@askrjs/themes/controls';
 import { Stack } from '@askrjs/themes/layouts';
 import {
   Dialog,
@@ -19,10 +15,27 @@ import {
 } from '@askrjs/ui';
 import { putObjectContent as putBlobContent } from '../../features/objects/objects.query';
 import { blobListKey } from '../../features/storage/keys';
+import {
+  normalizeStoragePathPrefix,
+  resolveUploadObjectKey,
+} from '../../features/storage/path';
+import StorageDialogFooter from './storage-dialog-footer';
+import StorageDialogForm from './storage-dialog-form';
+import StorageDialogHeader from './storage-dialog-header';
 
-export default function BlobModal({ bucketName }: { bucketName: string }) {
+export default function BlobModal({
+  bucketName,
+  pathPrefix = '',
+}: {
+  bucketName: string;
+  pathPrefix?: string;
+}) {
   const [isOpen, setOpen] = state(false);
   const [error, setError] = state('');
+  const normalizedPrefix = normalizeStoragePathPrefix(pathPrefix);
+  const uploadDescription = normalizedPrefix
+    ? `Without a key, the file name is placed in ${normalizedPrefix}.`
+    : 'Without a key, the file name is placed in the bucket root.';
 
   const upload = createMutation({
     action: (
@@ -55,7 +68,11 @@ export default function BlobModal({ bucketName }: { bucketName: string }) {
 
     const typedKey =
       keyInput instanceof HTMLInputElement ? keyInput.value.trim() : '';
-    const objectKey = typedKey || selectedFile.name;
+    const objectKey = resolveUploadObjectKey({
+      fileName: selectedFile.name,
+      pathPrefix: normalizedPrefix,
+      typedKey,
+    });
 
     setError('');
 
@@ -78,50 +95,49 @@ export default function BlobModal({ bucketName }: { bucketName: string }) {
 
   return (
     <>
-      <Button onPress={() => setOpen(true)}>Add blob</Button>
+      <Button onPress={() => setOpen(true)}>
+        <UploadIcon aria-hidden="true" /> Add blob
+      </Button>
       <Dialog open={isOpen()} onOpenChange={setOpen}>
         <DialogPortal>
           <DialogOverlay />
           <DialogContent>
             <Stack gap="4">
-              <Stack gap="1">
-                <h2>Add blob</h2>
-                <p>Upload a file into {bucketName}.</p>
-              </Stack>
-              <form onSubmit={(event: Event) => void submit(event)}>
-                <Stack gap="4">
-                  <Field>
-                    <Label for="blob-key">Blob key</Label>
-                    <Input
-                      id="blob-key"
-                      name="blob-key"
-                      disabled={upload.pending}
-                    />
-                  </Field>
-                  <Field>
-                    <Label for="blob-file">File</Label>
-                    <Input
-                      id="blob-file"
-                      name="blob-file"
-                      type="file"
-                      disabled={upload.pending}
-                    />
-                  </Field>
-                  <Show when={error()}>
-                    <FieldError role="alert">{error()}</FieldError>
-                  </Show>
-                  <ButtonGroup>
-                    <Button type="submit" disabled={upload.pending}>
-                      {upload.pending ? 'Uploading...' : 'Upload blob'}
+              <StorageDialogHeader title="Add blob">
+                <p>{uploadDescription}</p>
+              </StorageDialogHeader>
+              <StorageDialogForm onSubmit={(event) => void submit(event)}>
+                <Field>
+                  <Label for="blob-key">Blob key</Label>
+                  <Input
+                    id="blob-key"
+                    name="blob-key"
+                    disabled={upload.pending}
+                  />
+                </Field>
+                <Field>
+                  <Label for="blob-file">File</Label>
+                  <Input
+                    id="blob-file"
+                    name="blob-file"
+                    type="file"
+                    disabled={upload.pending}
+                  />
+                </Field>
+                <Show when={error()}>
+                  <FieldError role="alert">{error()}</FieldError>
+                </Show>
+                <StorageDialogFooter>
+                  <DialogClose asChild onPress={() => setError('')}>
+                    <Button variant="secondary" disabled={upload.pending}>
+                      Cancel
                     </Button>
-                    <DialogClose asChild onPress={() => setError('')}>
-                      <Button variant="secondary" disabled={upload.pending}>
-                        Cancel
-                      </Button>
-                    </DialogClose>
-                  </ButtonGroup>
-                </Stack>
-              </form>
+                  </DialogClose>
+                  <Button type="submit" disabled={upload.pending}>
+                    {upload.pending ? 'Uploading...' : 'Upload blob'}
+                  </Button>
+                </StorageDialogFooter>
+              </StorageDialogForm>
             </Stack>
           </DialogContent>
         </DialogPortal>

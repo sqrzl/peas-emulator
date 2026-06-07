@@ -8,7 +8,7 @@ describe('SPA structure', () => {
       'src/pages/_layout.tsx',
       'src/pages/app/_routes.tsx',
       'src/pages/app/_layout.tsx',
-      'src/pages/app/home.tsx',
+      'src/pages/app/buckets.tsx',
       'src/pages/app/bucket.tsx',
       'src/pages/app/blob.tsx',
       'src/pages/auth/login.tsx',
@@ -20,7 +20,7 @@ describe('SPA structure', () => {
     ];
 
     expect(structure).toContain('src/pages/_routes.tsx');
-    expect(structure).toContain('src/pages/app/home.tsx');
+    expect(structure).toContain('src/pages/app/buckets.tsx');
     expect(structure).toContain('src/pages/app/blob.tsx');
     expect(structure).toContain('src/shared/routes.ts');
   });

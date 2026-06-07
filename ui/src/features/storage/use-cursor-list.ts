@@ -19,6 +19,25 @@ export type CursorListController<T> = {
   previous: () => void;
 };
 
+type CursorListFetch<T> = (opts: {
+  signal: AbortSignal;
+}) => Promise<CursorPage<T>>;
+
+const fetchByQueryKey = new Map<string, CursorListFetch<unknown>>();
+
+function canonicalFetch<T>(
+  key: string,
+  fetch: CursorListFetch<T>
+): CursorListFetch<T> {
+  const cached = fetchByQueryKey.get(key) as CursorListFetch<T> | undefined;
+  if (cached) {
+    return cached;
+  }
+
+  fetchByQueryKey.set(key, fetch as CursorListFetch<unknown>);
+  return fetch;
+}
+
 function readQueryParam(name: string): string {
   if (typeof window === 'undefined') {
     return '';
@@ -62,15 +81,19 @@ export function useCursorList<T>(
   const [search, setSearchValue] = state(readQueryParam(queryParam));
   const [cursor, setCursor] = state<string | undefined>(undefined);
   const [history, setHistory] = state<Array<string | undefined>>([]);
+  const currentSearch = search();
+  const currentCursor = cursor();
+  const queryKey = `${keyPrefix}:search=${currentSearch}:cursor=${currentCursor ?? ''}`;
 
   const query = createQuery<CursorPage<T>>({
-    key: `${keyPrefix}:search=${search()}:cursor=${cursor() ?? ''}`,
-    fetch: ({ signal }) =>
+    key: queryKey,
+    fetch: canonicalFetch(queryKey, ({ signal }) =>
       fetchPage({
-        next: cursor(),
-        search: search() || undefined,
+        next: currentCursor,
+        search: currentSearch || undefined,
         signal,
-      }),
+      })
+    ),
   });
 
   function setSearch(value: string) {

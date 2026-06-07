@@ -24,3 +24,7 @@ export function formatBytes(size: number): string {
   const mib = kib / 1024;
   return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`;
 }
+
+export function formatByteCount(size: number): string {
+  return `${formatBytes(size)} (${size.toLocaleString()} bytes)`;
+}

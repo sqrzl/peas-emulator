@@ -1,8 +1,7 @@
+import { SearchIcon } from '@askrjs/lucide';
 import { Button, ButtonGroup, Field } from '@askrjs/themes/controls';
-import { Inline } from '@askrjs/themes/layouts';
+import { Box, Flex } from '@askrjs/themes/layouts';
 import { Input, Label } from '@askrjs/ui';
-
-const debounceMs = 250;
 
 export default function StorageSearchForm({
   inputId,
@@ -16,7 +15,6 @@ export default function StorageSearchForm({
   onSearch: (value: string) => void;
 }) {
   let inputRef: HTMLInputElement | null = null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
 
   function inputElement(): HTMLInputElement | null {
     return inputRef;
@@ -34,25 +32,12 @@ export default function StorageSearchForm({
     }
   }
 
-  function handleInput(event: Event) {
-    const value =
-      event.target instanceof HTMLInputElement ? event.target.value.trim() : '';
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (value !== (defaultValue?.trim() ?? '')) {
-        onSearch(value);
-      }
-    }, debounceMs);
-  }
-
   function searchNow(event?: Event) {
     event?.preventDefault();
-    clearTimeout(timer);
     onSearch(inputElement()?.value.trim() ?? '');
   }
 
   function clearSearch() {
-    clearTimeout(timer);
     const input = inputElement();
     if (input) {
       input.value = '';
@@ -62,24 +47,28 @@ export default function StorageSearchForm({
   }
 
   return (
-    <form onSubmit={searchNow}>
-      <Inline align="end" gap="3" wrap="wrap">
-        <Field>
-          <Label for={inputId}>{label}</Label>
-          <Input
-            id={inputId}
-            name={inputId}
-            ref={initializeInput}
-            onInput={handleInput}
-          />
-        </Field>
-        <ButtonGroup>
-          <Button type="submit">Search</Button>
+    <form data-peas-slot="storage-search-form" onSubmit={searchNow}>
+      <Flex align={{ initial: 'end' }} gap="3" wrap={{ initial: 'wrap' }}>
+        <Box
+          data-peas-slot="storage-search-field"
+          flexGrow="1"
+          minWidth={{ initial: '100%', sm: '18rem' }}
+          maxWidth={{ initial: '100%', md: '28rem' }}
+        >
+          <Field>
+            <Label for={inputId}>{label}</Label>
+            <Input id={inputId} name={inputId} ref={initializeInput} />
+          </Field>
+        </Box>
+        <ButtonGroup attached={false}>
+          <Button type="submit">
+            <SearchIcon aria-hidden="true" /> Search
+          </Button>
           <Button type="button" variant="secondary" onPress={clearSearch}>
             Clear
           </Button>
         </ButtonGroup>
-      </Inline>
+      </Flex>
     </form>
   );
 }

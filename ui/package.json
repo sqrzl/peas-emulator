@@ -14,7 +14,7 @@
     "gen": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/api.g.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.40",
+    "@askrjs/askr": "^0.0.41",
     "@askrjs/charts": ">=0.0.1 <0.1.0",
     "@askrjs/lucide": "^0.0.2",
     "@askrjs/themes": "^0.0.6",
@@ -22,8 +22,8 @@
     "@fgrzl/fetch": "^2.0.0"
   },
   "devDependencies": {
-    "@askrjs/vite": ">=0.0.2 <0.1.0",
-    "@types/node": "^25.9.1",
+    "@askrjs/vite": "^0.0.3",
+    "@types/node": "^25.9.2",
     "jiti": "^2.7.0",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",

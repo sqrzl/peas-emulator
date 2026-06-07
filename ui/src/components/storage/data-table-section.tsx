@@ -1,7 +1,7 @@
 import { Show } from '@askrjs/askr/control';
 import { Button } from '@askrjs/themes/controls';
 import { EmptyState, Spinner } from '@askrjs/themes/feedback';
-import { Inline, Stack } from '@askrjs/themes/layouts';
+import { Box, Flex, Stack } from '@askrjs/themes/layouts';
 import CursorPagination from './cursor-pagination';
 import StorageSearchForm from './storage-search-form';
 
@@ -23,6 +23,7 @@ export default function DataTableSection({
   hasPrevious,
   onNext,
   onPrevious,
+  tableWidth = 'default',
   children,
 }: {
   title?: string;
@@ -42,6 +43,7 @@ export default function DataTableSection({
   hasPrevious: boolean;
   onNext: () => void;
   onPrevious: () => void;
+  tableWidth?: 'default' | 'wide';
   children?: unknown;
 }) {
   const titleId = title ? `${searchInputId}-title` : undefined;
@@ -51,7 +53,9 @@ export default function DataTableSection({
       <Stack gap="4">
         <Stack gap="3">
           <Show when={title}>
-            <h2 id={titleId}>{title}</h2>
+            <h2 id={titleId} data-peas-slot="storage-section-title">
+              {title}
+            </h2>
           </Show>
           <StorageSearchForm
             inputId={searchInputId}
@@ -70,9 +74,9 @@ export default function DataTableSection({
         </Show>
 
         <Show when={!errored && loading}>
-          <Inline justify="center" align="center">
+          <Flex justify={{ initial: 'center' }} align={{ initial: 'center' }}>
             <Spinner />
-          </Inline>
+          </Flex>
         </Show>
 
         <Show when={!errored && !loading && empty}>
@@ -81,7 +85,13 @@ export default function DataTableSection({
 
         <Show when={!errored && !loading && !empty}>
           <Stack gap="3">
-            {children}
+            <Box
+              data-peas-slot="storage-table-scroll"
+              data-peas-table-width={tableWidth}
+              overflowX="auto"
+            >
+              {children}
+            </Box>
             <CursorPagination
               hasNext={hasNext}
               hasPrevious={hasPrevious}

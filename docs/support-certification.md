@@ -1,28 +1,34 @@
 # PEAS Support Certification
 
-PEAS is certified as a local emulator for documented object-storage workflows across
-S3-family providers, Azure Blob Storage, Google Cloud Storage, and OCI Object Storage.
-Certification does not mean full production cloud-provider parity. It means the
-listed SDK workflows are expected to be reliable, repeatable, and supportable for
-local development and CI use.
+PEAS support certification defines which local object-storage workflows are
+expected to be reliable, repeatable, and supportable for development and CI.
 
-## Certified Vendors
+Certification does not mean full production cloud parity. PEAS focuses on
+documented bucket/container and object/blob workflows across S3-compatible APIs,
+Azure Blob Storage, Google Cloud Storage, and OCI Object Storage.
+
+## Support Matrix
 
 The source of truth is `compatibility-matrix.json`.
 
 Allowed support tiers:
 
 - `certified`: covered by official SDK smoke tests and PEAS contract/interop tests.
-- `partial`: implemented or contract-tested, but not part of the SDK certification gate.
+- `partial`: implemented or contract-tested, but not part of the SDK
+  certification gate.
 - `unsupported`: intentionally not implemented.
 - `deferred`: planned or under evaluation, but not supportable yet.
 
-Certified workflow families:
+Certified workflow families include:
 
-- S3-family: bucket CRUD, object put/get/head/delete/list/range, metadata, SigV4 SDK requests, multipart upload, and versioning.
-- Azure Blob: container CRUD, blob upload/download/properties/delete/list/range, metadata, Shared Key-shaped SDK requests, and block blob staging/commit.
-- GCS: JSON API bucket/object CRUD, object metadata/list/range/media download, and resumable uploads.
-- OCI Object Storage: namespace discovery, bucket CRUD, object put/get/head/delete/list/range, metadata, request signing-shaped SDK requests, and multipart upload.
+- S3-compatible APIs: bucket CRUD, object put/get/head/delete/list/range,
+  metadata, SigV4 SDK requests, multipart upload, and versioning.
+- Azure Blob Storage: container CRUD, blob upload/download/properties/delete/list/range,
+  metadata, Shared Key-shaped SDK requests, and block blob staging/commit.
+- Google Cloud Storage: JSON API bucket/object CRUD, object metadata/list/range/media
+  download, and resumable uploads.
+- OCI Object Storage: namespace discovery, bucket CRUD, object put/get/head/delete/list/range,
+  metadata, request signing-shaped SDK requests, and multipart upload.
 
 ## Health And Diagnostics
 
@@ -68,8 +74,9 @@ Run PEAS through the pytest harness:
 python -m pytest
 ```
 
-By default the harness builds and starts `target/debug/peas-emulator` with temporary
-storage and authentication disabled. To target an existing PEAS process:
+By default the harness builds and starts `target/debug/peas-emulator` with
+temporary storage and authentication disabled. To target an existing PEAS
+process:
 
 ```bash
 PEAS_API_URL=http://127.0.0.1:9000 python -m pytest
@@ -94,8 +101,8 @@ MAX_REQUEST_BYTES=134217728
 ```
 
 Requests above the configured limit are rejected before provider handling with
-stable provider-shaped `413 Payload Too Large` responses. Streaming uploads can be
-certified later, but oversized buffered uploads are not accepted by design.
+stable provider-compatible `413 Payload Too Large` responses. Streaming uploads
+can be certified later, but oversized buffered uploads are not accepted by design.
 
 ## Restart And Durability Expectations
 
@@ -104,7 +111,8 @@ the same filesystem path.
 
 Durability hardening covers:
 
-- Atomic temp-file-then-rename writes for object data, object metadata, bucket metadata, upload records, and provider sidecars.
+- Atomic temp-file-then-rename writes for object data, object metadata, bucket
+  metadata, upload records, and provider sidecars.
 - Per-object write coordination for same-object mutations.
 - Persisted Azure staged block state and committed block lists.
 - Persisted GCS resumable upload sessions.
@@ -115,11 +123,14 @@ Durability hardening covers:
 These are support boundaries, not bugs unless `compatibility-matrix.json` marks the
 operation as `certified`.
 
-- Lifecycle configuration can be stored and returned, but production lifecycle execution parity is not certified.
+- Lifecycle configuration can be stored and returned, but production lifecycle
+  execution parity is not certified.
 - ACL and policy behavior is simplified for common local workflows.
-- S3 requester-pays billing, static website hosting behavior, advanced SSE key management, and full object-lock governance/compliance parity are not certified.
+- S3 requester-pays billing, static website hosting behavior, advanced SSE key
+  management, and full object-lock governance/compliance parity are not certified.
 - Azure append blob, page blob, lease, snapshot, and immutability edge cases are partial.
-- GCS signed URL V2 validation is contract-tested, but official SDK signed URL generation is not in the certification gate.
+- GCS signed URL V2 validation is contract-tested, but official SDK signed URL
+  generation is not in the certification gate.
 - Provider control-plane behavior outside object/blob storage workflows is out of scope.
 
 ## Reproducible Issue Template

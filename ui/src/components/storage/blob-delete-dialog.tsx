@@ -1,5 +1,5 @@
 import { Show } from '@askrjs/askr/control';
-import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
+import { Button, FieldError } from '@askrjs/themes/controls';
 import { Stack } from '@askrjs/themes/layouts';
 import {
   AlertDialog,
@@ -8,6 +8,8 @@ import {
   AlertDialogPortal,
 } from '@askrjs/ui';
 import type { DeleteTarget } from '../../features/storage/use-delete-target';
+import StorageDialogFooter from './storage-dialog-footer';
+import StorageDialogHeader from './storage-dialog-header';
 
 export type BlobDeleteTarget = DeleteTarget<{ blobKey: string }>;
 
@@ -35,25 +37,17 @@ export default function BlobDeleteDialog({
         <AlertDialogOverlay />
         <AlertDialogContent>
           <Stack gap="4">
-            <Stack gap="1">
-              <h2>Delete blob</h2>
+            <StorageDialogHeader title="Delete blob">
               <p>
                 {target
                   ? `Delete ${target.blobKey} from ${bucketName}.`
                   : 'Delete this blob.'}
               </p>
-            </Stack>
+            </StorageDialogHeader>
             <Show when={target?.error}>
               <FieldError role="alert">{target?.error}</FieldError>
             </Show>
-            <ButtonGroup>
-              <Button
-                type="button"
-                disabled={target?.deleting}
-                onPress={onConfirm}
-              >
-                {target?.deleting ? 'Deleting...' : 'Delete blob'}
-              </Button>
+            <StorageDialogFooter>
               <Button
                 type="button"
                 variant="secondary"
@@ -62,7 +56,15 @@ export default function BlobDeleteDialog({
               >
                 Cancel
               </Button>
-            </ButtonGroup>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={target?.deleting}
+                onPress={onConfirm}
+              >
+                {target?.deleting ? 'Deleting...' : 'Delete blob'}
+              </Button>
+            </StorageDialogFooter>
           </Stack>
         </AlertDialogContent>
       </AlertDialogPortal>

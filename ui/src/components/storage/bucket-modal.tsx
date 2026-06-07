@@ -1,12 +1,8 @@
 import { state } from '@askrjs/askr';
 import { Show } from '@askrjs/askr/control';
 import { createMutation } from '@askrjs/askr/data';
-import {
-  Button,
-  ButtonGroup,
-  Field,
-  FieldError,
-} from '@askrjs/themes/controls';
+import { PlusIcon } from '@askrjs/lucide';
+import { Button, Field, FieldError } from '@askrjs/themes/controls';
 import { Stack } from '@askrjs/themes/layouts';
 import {
   Dialog,
@@ -19,6 +15,9 @@ import {
 } from '@askrjs/ui';
 import { createBucket } from '../../features/buckets/buckets.query';
 import { bucketListKey } from '../../features/storage/keys';
+import StorageDialogFooter from './storage-dialog-footer';
+import StorageDialogForm from './storage-dialog-form';
+import StorageDialogHeader from './storage-dialog-header';
 
 export default function BucketModal() {
   const [isOpen, setOpen] = state(false);
@@ -63,41 +62,40 @@ export default function BucketModal() {
 
   return (
     <>
-      <Button onPress={() => setOpen(true)}>Add bucket</Button>
+      <Button onPress={() => setOpen(true)}>
+        <PlusIcon aria-hidden="true" /> Add bucket
+      </Button>
       <Dialog open={isOpen()} onOpenChange={setOpen}>
         <DialogPortal>
           <DialogOverlay />
           <DialogContent>
             <Stack gap="4">
-              <Stack gap="1">
-                <h2>Add bucket</h2>
+              <StorageDialogHeader title="Add bucket">
                 <p>Create a bucket in the emulator.</p>
-              </Stack>
-              <form onSubmit={(event: Event) => void submit(event)}>
-                <Stack gap="4">
-                  <Field>
-                    <Label for="bucket-name">Bucket name</Label>
-                    <Input
-                      id="bucket-name"
-                      name="bucket-name"
-                      disabled={create.pending}
-                    />
-                  </Field>
-                  <Show when={error()}>
-                    <FieldError role="alert">{error()}</FieldError>
-                  </Show>
-                  <ButtonGroup>
-                    <Button type="submit" disabled={create.pending}>
-                      {create.pending ? 'Creating...' : 'Create bucket'}
+              </StorageDialogHeader>
+              <StorageDialogForm onSubmit={(event) => void submit(event)}>
+                <Field>
+                  <Label for="bucket-name">Bucket name</Label>
+                  <Input
+                    id="bucket-name"
+                    name="bucket-name"
+                    disabled={create.pending}
+                  />
+                </Field>
+                <Show when={error()}>
+                  <FieldError role="alert">{error()}</FieldError>
+                </Show>
+                <StorageDialogFooter>
+                  <DialogClose asChild onPress={() => setError('')}>
+                    <Button variant="secondary" disabled={create.pending}>
+                      Cancel
                     </Button>
-                    <DialogClose asChild onPress={() => setError('')}>
-                      <Button variant="secondary" disabled={create.pending}>
-                        Cancel
-                      </Button>
-                    </DialogClose>
-                  </ButtonGroup>
-                </Stack>
-              </form>
+                  </DialogClose>
+                  <Button type="submit" disabled={create.pending}>
+                    {create.pending ? 'Creating...' : 'Create bucket'}
+                  </Button>
+                </StorageDialogFooter>
+              </StorageDialogForm>
             </Stack>
           </DialogContent>
         </DialogPortal>

@@ -58,6 +58,12 @@ npm run gen        # Regenerate src/adapters/api.g.ts from public/openapi.yml
 - Do not introduce React-style hooks, effect-driven loading, JSX transform workarounds, or framework-agnostic patterns that bypass established Askr ownership.
 - Do not use temporary mock or demo data in product paths when a supported admin API operation exists.
 
+## Naming and docs policy
+
+- Use `Askr` in prose and UI copy when referencing the framework. Keep package names like `@askrjs/*` and file names like `askr-bug.md` unchanged.
+- Prefer single-surface truth in docs: describe behavior from the product and framework perspective, then list implementation notes separately.
+- Keep `AGENTS.md` as the policy source for approach-level decisions. If a policy conflicts with existing code, call it out before changing direction.
+
 ## File Structure
 
 ```

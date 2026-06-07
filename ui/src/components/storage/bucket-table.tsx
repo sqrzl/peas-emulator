@@ -1,7 +1,8 @@
 import { For } from '@askrjs/askr/control';
 import { Link } from '@askrjs/askr/router';
 import { Button } from '@askrjs/themes/controls';
-import { DeleteIcon } from '@askrjs/lucide';
+import { DatabaseIcon, TrashIcon } from '@askrjs/lucide';
+import { Flex } from '@askrjs/themes/layouts';
 import {
   Table,
   TableBody,
@@ -98,7 +99,14 @@ export default function BucketTable() {
               {(bucket) => (
                 <TableRow key={bucket.name}>
                   <TableCell>
-                    <Link href={bucketPath(bucket.name)}>{bucket.name}</Link>
+                    <Flex
+                      gap="2"
+                      align={{ initial: 'center' }}
+                      wrap={{ initial: 'wrap' }}
+                    >
+                      <DatabaseIcon aria-hidden="true" />
+                      <Link href={bucketPath(bucket.name)}>{bucket.name}</Link>
+                    </Flex>
                   </TableCell>
                   <TableCell>{formatRelativeTime(bucket.createdAt)}</TableCell>
                   <TableCell>
@@ -107,7 +115,7 @@ export default function BucketTable() {
                       aria-label={`Delete bucket ${bucket.name}`}
                       onPress={() => remover.open({ bucketName: bucket.name })}
                     >
-                      <DeleteIcon aria-hidden="true" /> Delete
+                      <TrashIcon aria-hidden="true" /> Delete
                     </Button>
                   </TableCell>
                 </TableRow>

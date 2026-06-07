@@ -1,10 +1,13 @@
 import { resource } from '@askrjs/askr/resources';
 import { Link } from '@askrjs/askr/router';
 import { Button } from '@askrjs/themes/controls';
-import { EmptyState } from '@askrjs/themes/feedback';
-import { Stack } from '@askrjs/themes/layouts';
+import { EmptyState, Spinner } from '@askrjs/themes/feedback';
+import { Flex, Stack } from '@askrjs/themes/layouts';
+import BlobBreadcrumbs from '../../components/storage/blob-breadcrumbs';
 import BlobDetails from '../../components/storage/blob-details';
+import StoragePageHeader from '../../components/storage/storage-page-header';
 import { loadAllObjectPages as loadAllBlobPages } from '../../features/objects/objects.query';
+import { blobFileName } from '../../features/storage/path';
 import { bucketPath, blobIdFromBlobKey } from '../../shared/routes';
 
 export default function Blob({
@@ -39,9 +42,9 @@ export default function Blob({
 
   if (blobs.pending && !blobs.value) {
     return (
-      <Stack gap="4">
-        <p>Resolving blob...</p>
-      </Stack>
+      <Flex justify={{ initial: 'center' }} align={{ initial: 'center' }}>
+        <Spinner />
+      </Flex>
     );
   }
 
@@ -61,10 +64,12 @@ export default function Blob({
 
   return (
     <Stack gap="4">
-      <Stack gap="1">
-        <h1>Blob</h1>
-        <p>{resolvedBlob.key}</p>
-      </Stack>
+      <BlobBreadcrumbs bucketName={bucketName} blobKey={resolvedBlob.key} />
+
+      <StoragePageHeader
+        title={blobFileName(resolvedBlob.key)}
+        description={resolvedBlob.key}
+      />
 
       <BlobDetails bucketName={bucketName} blobKey={resolvedBlob.key} />
     </Stack>

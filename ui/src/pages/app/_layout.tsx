@@ -27,8 +27,8 @@ export default function AppLayout({ children }: { children?: unknown }) {
                 lightIcon={<SunIcon aria-hidden="true" />}
               />
 
-              <NavLink href={logoutPath()} match="exact">
-                <LogOutIcon />
+              <NavLink href={logoutPath()} match="exact" aria-label="Log out">
+                <LogOutIcon aria-hidden="true" />
               </NavLink>
             </NavGroup>
           </Navbar>

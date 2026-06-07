@@ -48,6 +48,41 @@ function rowButton(
   return row?.querySelector('button') as HTMLButtonElement | undefined;
 }
 
+function storageDialogFooter(): HTMLElement {
+  const footer = document.querySelector(
+    '[data-peas-slot="storage-dialog-footer"]'
+  );
+  expect(footer).toBeTruthy();
+  return footer as HTMLElement;
+}
+
+function storageDialogFooterButtonLabels(): string[] {
+  return Array.from(storageDialogFooter().querySelectorAll('button')).map(
+    (button) => button.textContent?.trim() ?? ''
+  );
+}
+
+function storageDialogTitleText(): string {
+  const title = document.querySelector(
+    '[data-peas-slot="storage-dialog-title"]'
+  );
+  expect(title).toBeTruthy();
+  return title?.textContent?.trim() ?? '';
+}
+
+function storageDialogFormSequence(): string[] {
+  const form = document.querySelector('form');
+  expect(form).toBeTruthy();
+
+  return Array.from(
+    form!.querySelectorAll(
+      '[role="alert"], [data-peas-slot="storage-dialog-footer"]'
+    )
+  ).map((element) =>
+    element.getAttribute('role') === 'alert' ? 'error' : 'footer'
+  );
+}
+
 describe('simplified page flows', () => {
   it('renders the app header with nav links and theme toggle', async () => {
     const root = mount(() => (
@@ -171,6 +206,25 @@ describe('simplified page flows', () => {
       );
       click(addButton!);
       await flush();
+
+      expect(storageDialogTitleText()).toBe('Add bucket');
+      expect(storageDialogFooterButtonLabels()).toEqual([
+        'Cancel',
+        'Create bucket',
+      ]);
+      expect(
+        document.querySelector(
+          '[data-peas-slot="storage-dialog-footer"] [data-slot="button-group"]'
+        )
+      ).toBeNull();
+
+      const emptyForm = document.querySelector('form') as HTMLFormElement;
+      emptyForm.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+      await flush();
+      expect(document.body.textContent).toContain('Bucket name is required.');
+      expect(storageDialogFormSequence()).toEqual(['error', 'footer']);
 
       const input = document.querySelector('#bucket-name') as HTMLInputElement;
       const form = document.querySelector('form') as HTMLFormElement;
@@ -328,6 +382,16 @@ describe('simplified page flows', () => {
       expect(document.body.textContent).toContain(
         'You are going to delete 2 blobs from alpha.'
       );
+      expect(storageDialogTitleText()).toBe('Delete bucket');
+      expect(storageDialogFooterButtonLabels()).toEqual([
+        'Cancel',
+        'Delete bucket and 2 blobs',
+      ]);
+      expect(
+        document.querySelector(
+          '[data-peas-slot="storage-dialog-footer"] [data-slot="button-group"]'
+        )
+      ).toBeNull();
 
       const confirmDelete = Array.from(
         document.querySelectorAll('button')
@@ -415,6 +479,25 @@ describe('simplified page flows', () => {
       click(addButton!);
       await flush();
 
+      expect(storageDialogTitleText()).toBe('Add blob');
+      expect(storageDialogFooterButtonLabels()).toEqual([
+        'Cancel',
+        'Upload blob',
+      ]);
+      expect(
+        document.querySelector(
+          '[data-peas-slot="storage-dialog-footer"] [data-slot="button-group"]'
+        )
+      ).toBeNull();
+
+      const emptyForm = document.querySelector('form') as HTMLFormElement;
+      emptyForm.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+      await flush();
+      expect(document.body.textContent).toContain('Choose a file to upload.');
+      expect(storageDialogFormSequence()).toEqual(['error', 'footer']);
+
       const keyInput = document.querySelector('#blob-key') as HTMLInputElement;
       const fileInput = document.querySelector(
         '#blob-file'
@@ -437,6 +520,186 @@ describe('simplified page flows', () => {
       await flush();
       expect(uploaded).toBe(true);
       expect(document.body.textContent).toContain('Blobs');
+    } finally {
+      cleanupApp(root);
+      root.remove();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('renders slash-delimited blob keys as folders and current path blobs', async () => {
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+
+      if (
+        url.pathname === '/admin/v1/buckets/foldered/objects' &&
+        request.method === 'GET'
+      ) {
+        return jsonResponse({
+          items: [
+            {
+              key: 'docs/readme.txt',
+              size: 5,
+              etag: 'etag-readme',
+              last_modified: '2026-05-25T11:00:00.000Z',
+              content_type: 'text/plain',
+              storage_class: 'standard',
+            },
+            {
+              key: 'docs/api/openapi.json',
+              size: 17,
+              etag: 'etag-openapi',
+              last_modified: '2026-05-25T11:15:00.000Z',
+              content_type: 'application/json',
+              storage_class: 'standard',
+            },
+            {
+              key: 'image.png',
+              size: 12,
+              etag: 'etag-image',
+              last_modified: '2026-05-25T08:30:00.000Z',
+              content_type: 'image/png',
+              storage_class: 'standard',
+            },
+          ],
+          next: null,
+        });
+      }
+
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    };
+
+    const root = mount(() => <BucketPage bucketName="foldered" />);
+
+    try {
+      await flush();
+      expect(root.textContent).toContain('docs/');
+      expect(root.textContent).toContain('Folder');
+      expect(root.textContent).toContain('image.png');
+      expect(root.textContent).not.toContain('readme.txt');
+      expect(
+        root.querySelector('a[href="/admin/buckets/foldered/docs"]')
+      ).toBeTruthy();
+    } finally {
+      cleanupApp(root);
+      root.remove();
+    }
+
+    const nestedRoot = mount(() => (
+      <BucketPage bucketName="foldered" pathPrefix="docs" />
+    ));
+
+    try {
+      await flush();
+      expect(nestedRoot.textContent).toContain('readme.txt');
+      expect(nestedRoot.textContent).toContain('api/');
+      expect(nestedRoot.textContent).toContain('foldered');
+      expect(nestedRoot.textContent).toContain('docs');
+      expect(nestedRoot.textContent).not.toContain('image.png');
+      expect(nestedRoot.textContent).not.toContain('openapi.json');
+    } finally {
+      cleanupApp(nestedRoot);
+      nestedRoot.remove();
+    }
+
+    const deepRoot = mount(() => (
+      <BucketPage bucketName="foldered" pathPrefix="docs/api" />
+    ));
+
+    try {
+      await flush();
+      expect(deepRoot.textContent).toContain('openapi.json');
+      expect(deepRoot.textContent).toContain('foldered');
+      expect(deepRoot.textContent).toContain('docs');
+      expect(deepRoot.textContent).toContain('api');
+      expect(deepRoot.textContent).not.toContain('readme.txt');
+      expect(deepRoot.textContent).not.toContain('image.png');
+    } finally {
+      cleanupApp(deepRoot);
+      deepRoot.remove();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uploads new blobs into the current bucket path by default', async () => {
+    let uploadedKey = '';
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+
+      if (
+        url.pathname === '/admin/v1/buckets/nested/objects' &&
+        request.method === 'GET'
+      ) {
+        return jsonResponse({ items: [], next: null });
+      }
+
+      if (
+        url.pathname ===
+          '/admin/v1/buckets/nested/objects/docs%2Freadme.txt/content' &&
+        request.method === 'PUT'
+      ) {
+        uploadedKey = 'docs/readme.txt';
+        return jsonResponse(
+          {
+            key: uploadedKey,
+            size: 5,
+            etag: 'etag-uploaded',
+            last_modified: '2026-05-25T11:00:00.000Z',
+            content_type: 'text/plain',
+            metadata: {},
+            storage_class: 'standard',
+            version_id: null,
+          },
+          201
+        );
+      }
+
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    };
+
+    const root = mount(() => (
+      <BucketPage bucketName="nested" pathPrefix="docs" />
+    ));
+
+    try {
+      await flush();
+
+      const addButton = Array.from(root.querySelectorAll('button')).find(
+        (button) => button.textContent?.includes('Add blob')
+      );
+      click(addButton!);
+      await flush();
+      expect(document.body.textContent).toContain(
+        'Without a key, the file name is placed in docs/.'
+      );
+
+      const fileInput = document.querySelector(
+        '#blob-file'
+      ) as HTMLInputElement;
+      const form = document.querySelector('form') as HTMLFormElement;
+      const file = new File(['hello'], 'readme.txt', { type: 'text/plain' });
+
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: [file],
+      });
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      form.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+
+      await flush();
+      await flush();
+      expect(uploadedKey).toBe('docs/readme.txt');
     } finally {
       cleanupApp(root);
       root.remove();
@@ -537,6 +800,16 @@ describe('simplified page flows', () => {
       expect(document.body.textContent).toContain(
         'Delete image.png from alpha.'
       );
+      expect(storageDialogTitleText()).toBe('Delete blob');
+      expect(storageDialogFooterButtonLabels()).toEqual([
+        'Cancel',
+        'Delete blob',
+      ]);
+      expect(
+        document.querySelector(
+          '[data-peas-slot="storage-dialog-footer"] [data-slot="button-group"]'
+        )
+      ).toBeNull();
 
       const confirmDelete = Array.from(
         document.querySelectorAll('button')

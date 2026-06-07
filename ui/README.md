@@ -1,6 +1,10 @@
-# Peas Admin UI
+# PEAS Admin UI
 
-An Askr admin console for the Peas emulator storage administration API.
+An Askr admin console for the PEAS storage administration API.
+
+The UI stays intentionally small: sign in, search buckets, create/delete
+buckets, browse folder-like blob keys, upload/delete blobs, view blob metadata,
+and download blob content.
 
 ## Quick Start
 
@@ -17,24 +21,17 @@ npm test         # Run tests with Vitest
 
 ## Routes
 
-- `/auth` and `/auth/login` for sign-in
-- `/auth/logout` for sign-out
-- `/app` for the bucket table
-- `/app/buckets/{bucketName}` for the blob table in a bucket
-- `/app/buckets/{bucketName}/blobs/{blobKey}` for blob details
+- `/login` for sign-in
+- `/logout` for sign-out
+- `/admin/buckets` for the bucket table
+- `/admin/buckets/{bucketName}` for a bucket root
+- `/admin/buckets/{bucketName}/{path}` for folder-like bucket paths
+- `/admin/buckets/{bucketName}/blob/{blobId}` for blob details
 
 ## UI Scope
 
-The UI intentionally stays small:
-
-- login
-- logout
-- bucket list with add-bucket dialog
-- blob list with add-blob dialog
-- blob details
-
-Everything uses Askr theme and UI primitives only. There is no app-specific CSS
-layer in this version.
+Everything uses Askr theme and UI primitives as the base. Local CSS is limited
+to PEAS-owned `data-peas-slot` polish for layout and storage-specific sizing.
 
 ## Data Flow
 

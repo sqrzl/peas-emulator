@@ -2,15 +2,10 @@ import { state } from '@askrjs/askr';
 import { For, Show } from '@askrjs/askr/control';
 import { resource } from '@askrjs/askr/resources';
 import { Link } from '@askrjs/askr/router';
+import { ArrowLeftIcon, DownloadIcon } from '@askrjs/lucide';
 import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
 import { EmptyState } from '@askrjs/themes/feedback';
-import { Stack } from '@askrjs/themes/layouts';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@askrjs/themes/surfaces';
+import { Box, Stack } from '@askrjs/themes/layouts';
 import {
   Table,
   TableBody,
@@ -24,12 +19,8 @@ import {
   loadObjectMetadata as loadBlobMetadata,
 } from '../../features/objects/objects.query';
 import type { ObjectMetadata as BlobMetadata } from '../../adapters/api.g';
-import { formatBytes, formatRelativeTime } from '../../shared/format';
-import { bucketPath } from '../../shared/routes';
-
-function formatBlobSize(size: number): string {
-  return `${formatBytes(size)} (${size.toLocaleString()} bytes)`;
-}
+import { blobParentPath } from '../../features/storage/path';
+import { formatByteCount, formatRelativeTime } from '../../shared/format';
 
 export default function BlobDetails({
   bucketName,
@@ -98,12 +89,15 @@ export default function BlobDetails({
     <Stack gap="4">
       <ButtonGroup>
         <Button variant="secondary" asChild>
-          <Link href={bucketPath(bucketName)}>Back to bucket</Link>
+          <Link href={blobParentPath(bucketName, blobKey)}>
+            <ArrowLeftIcon aria-hidden="true" /> Back
+          </Link>
         </Button>
         <Button
           onPress={() => void handleDownload()}
           disabled={downloadPending()}
         >
+          <DownloadIcon aria-hidden="true" />
           {downloadPending() ? 'Downloading...' : 'Download blob'}
         </Button>
       </ButtonGroup>
@@ -119,84 +113,104 @@ export default function BlobDetails({
       <Show when={metadata.value}>
         {(blob: BlobMetadata) => (
           <Stack gap="4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Details</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableBody>
-                    <TableRow>
-                      <TableHeaderCell>Bucket</TableHeaderCell>
-                      <TableCell>{bucketName}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Key</TableHeaderCell>
-                      <TableCell>{blobKey}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Size</TableHeaderCell>
-                      <TableCell>{formatBlobSize(blob.size)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Content type</TableHeaderCell>
-                      <TableCell>
-                        {blob.content_type ?? 'application/octet-stream'}
-                      </TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>ETag</TableHeaderCell>
-                      <TableCell>{blob.etag}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Version ID</TableHeaderCell>
-                      <TableCell>{blob.version_id ?? 'unversioned'}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Storage class</TableHeaderCell>
-                      <TableCell>{blob.storage_class}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableHeaderCell>Last modified</TableHeaderCell>
-                      <TableCell>
-                        {formatRelativeTime(blob.last_modified)}
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <section aria-labelledby="blob-details-title">
+              <Stack gap="3">
+                <h2
+                  id="blob-details-title"
+                  data-peas-slot="storage-section-title"
+                >
+                  Details
+                </h2>
+                <Box
+                  data-peas-slot="storage-table-scroll"
+                  data-peas-table-width="detail"
+                  overflowX="auto"
+                >
+                  <Table>
+                    <TableBody>
+                      <TableRow>
+                        <TableHeaderCell>Bucket</TableHeaderCell>
+                        <TableCell>{bucketName}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Key</TableHeaderCell>
+                        <TableCell>{blobKey}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Size</TableHeaderCell>
+                        <TableCell>{formatByteCount(blob.size)}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Content type</TableHeaderCell>
+                        <TableCell>
+                          {blob.content_type ?? 'application/octet-stream'}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>ETag</TableHeaderCell>
+                        <TableCell>{blob.etag}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Version ID</TableHeaderCell>
+                        <TableCell>
+                          {blob.version_id ?? 'unversioned'}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Storage class</TableHeaderCell>
+                        <TableCell>{blob.storage_class}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableHeaderCell>Last modified</TableHeaderCell>
+                        <TableCell>
+                          {formatRelativeTime(blob.last_modified)}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </Box>
+              </Stack>
+            </section>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Custom metadata</CardTitle>
-              </CardHeader>
-              <CardContent>
+            <section aria-labelledby="blob-metadata-title">
+              <Stack gap="3">
+                <h2
+                  id="blob-metadata-title"
+                  data-peas-slot="storage-section-title"
+                >
+                  Custom metadata
+                </h2>
                 <Show
                   when={customMetadata.length > 0}
                   fallback={<p>No custom metadata recorded.</p>}
                 >
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Name</TableHeaderCell>
-                        <TableHeaderCell>Value</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <For each={customMetadata} by={([name]) => name}>
-                        {([name, value]) => (
-                          <TableRow key={name}>
-                            <TableCell>{name}</TableCell>
-                            <TableCell>{value}</TableCell>
-                          </TableRow>
-                        )}
-                      </For>
-                    </TableBody>
-                  </Table>
+                  <Box
+                    data-peas-slot="storage-table-scroll"
+                    data-peas-table-width="detail"
+                    overflowX="auto"
+                  >
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableHeaderCell>Name</TableHeaderCell>
+                          <TableHeaderCell>Value</TableHeaderCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <For each={customMetadata} by={([name]) => name}>
+                          {([name, value]) => (
+                            <TableRow key={name}>
+                              <TableCell>{name}</TableCell>
+                              <TableCell>{value}</TableCell>
+                            </TableRow>
+                          )}
+                        </For>
+                      </TableBody>
+                    </Table>
+                  </Box>
                 </Show>
-              </CardContent>
-            </Card>
+              </Stack>
+            </section>
           </Stack>
         )}
       </Show>
