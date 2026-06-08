@@ -227,12 +227,14 @@ describe('simplified page flows', () => {
       expect(storageDialogFormSequence()).toEqual(['error', 'footer']);
 
       const input = document.querySelector('#bucket-name') as HTMLInputElement;
-      const form = document.querySelector('form') as HTMLFormElement;
       input.value = 'alpha';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      form.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true })
-      );
+      const submitButton = Array.from(
+        document.querySelectorAll(
+          '[data-peas-slot="storage-dialog-footer"] button'
+        )
+      ).find((button) => button.textContent?.trim() === 'Create bucket');
+      click(submitButton!);
 
       await flush();
       await flush();
@@ -502,7 +504,6 @@ describe('simplified page flows', () => {
       const fileInput = document.querySelector(
         '#blob-file'
       ) as HTMLInputElement;
-      const form = document.querySelector('form') as HTMLFormElement;
       const file = new File(['hello'], 'readme.txt', { type: 'text/plain' });
 
       keyInput.value = 'docs/readme.txt';
@@ -512,9 +513,12 @@ describe('simplified page flows', () => {
         value: [file],
       });
       fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-      form.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true })
-      );
+      const submitButton = Array.from(
+        document.querySelectorAll(
+          '[data-peas-slot="storage-dialog-footer"] button'
+        )
+      ).find((button) => button.textContent?.trim() === 'Upload blob');
+      click(submitButton!);
 
       await flush();
       await flush();

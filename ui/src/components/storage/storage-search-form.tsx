@@ -1,4 +1,6 @@
 import { SearchIcon } from '@askrjs/lucide';
+import { state } from '@askrjs/askr';
+import { resource } from '@askrjs/askr/resources';
 import { Button, ButtonGroup, Field } from '@askrjs/themes/controls';
 import { Box, Flex } from '@askrjs/themes/layouts';
 import { Input, Label } from '@askrjs/ui';
@@ -14,35 +16,37 @@ export default function StorageSearchForm({
   defaultValue?: string;
   onSearch: (value: string) => void;
 }) {
-  let inputRef: HTMLInputElement | null = null;
+  const [searchValue, setSearchValue] = state(defaultValue ?? '');
+  let searchInput: HTMLInputElement | null = null;
 
-  function inputElement(): HTMLInputElement | null {
-    return inputRef;
-  }
-
-  function initializeInput(element: HTMLInputElement | null) {
-    inputRef = element;
-    if (!element) {
-      return;
+  resource(() => {
+    const next = defaultValue ?? '';
+    if (searchValue() !== next) {
+      setSearchValue(next);
     }
 
-    // Keep the field uncontrolled while still hydrating from URL-derived search state.
-    if ((element.value ?? '').trim() === '' && defaultValue) {
-      element.value = defaultValue;
-    }
+    return null;
+  }, [defaultValue]);
+
+  function updateSearch(event: Event) {
+    const value =
+      event.target instanceof HTMLInputElement ? event.target.value : '';
+    setSearchValue(value);
+    onSearch(value.trim());
   }
 
   function searchNow(event?: Event) {
     event?.preventDefault();
-    onSearch(inputElement()?.value.trim() ?? '');
+    onSearch(searchValue().trim());
   }
 
   function clearSearch() {
-    const input = inputElement();
-    if (input) {
-      input.value = '';
-      input.focus();
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
     }
+
+    setSearchValue('');
     onSearch('');
   }
 
@@ -57,7 +61,17 @@ export default function StorageSearchForm({
         >
           <Field>
             <Label for={inputId}>{label}</Label>
-            <Input id={inputId} name={inputId} ref={initializeInput} />
+            <Input
+              id={inputId}
+              name={inputId}
+              onInput={updateSearch}
+              ref={(node: HTMLInputElement | null) => {
+                searchInput = node;
+                if (node && node.value !== searchValue()) {
+                  node.value = searchValue();
+                }
+              }}
+            />
           </Field>
         </Box>
         <ButtonGroup attached={false}>

@@ -32,6 +32,8 @@ export default function BlobModal({
 }) {
   const [isOpen, setOpen] = state(false);
   const [error, setError] = state('');
+  const [blobKey, setBlobKey] = state('');
+  const currentBlobKey = blobKey();
   const normalizedPrefix = normalizeStoragePathPrefix(pathPrefix);
   const uploadDescription = normalizedPrefix
     ? `Without a key, the file name is placed in ${normalizedPrefix}.`
@@ -54,7 +56,6 @@ export default function BlobModal({
 
     const form =
       event.target instanceof Element ? event.target.closest('form') : null;
-    const keyInput = form?.querySelector('#blob-key');
     const fileInput = form?.querySelector('#blob-file');
     const selectedFile =
       fileInput instanceof HTMLInputElement
@@ -66,8 +67,7 @@ export default function BlobModal({
       return;
     }
 
-    const typedKey =
-      keyInput instanceof HTMLInputElement ? keyInput.value.trim() : '';
+    const typedKey = currentBlobKey.trim();
     const objectKey = resolveUploadObjectKey({
       fileName: selectedFile.name,
       pathPrefix: normalizedPrefix,
@@ -83,6 +83,7 @@ export default function BlobModal({
         contentType: selectedFile.type || undefined,
       });
       form?.reset();
+      setBlobKey('');
       setOpen(false);
     } catch (caughtError) {
       setError(
@@ -93,12 +94,32 @@ export default function BlobModal({
     }
   }
 
+  function onOpenChange(nextOpen: boolean): void {
+    if (!nextOpen) {
+      setBlobKey('');
+      setError('');
+    }
+    setOpen(nextOpen);
+  }
+
+  function onKeyInput(event: Event) {
+    const value =
+      event.target instanceof HTMLInputElement ? event.target.value : '';
+    setBlobKey(value);
+  }
+
+  function openDialog(): void {
+    setBlobKey('');
+    setError('');
+    setOpen(true);
+  }
+
   return (
     <>
-      <Button onPress={() => setOpen(true)}>
+      <Button onPress={openDialog}>
         <UploadIcon aria-hidden="true" /> Add blob
       </Button>
-      <Dialog open={isOpen()} onOpenChange={setOpen}>
+      <Dialog open={isOpen()} onOpenChange={onOpenChange}>
         <DialogPortal>
           <DialogOverlay />
           <DialogContent>
@@ -113,6 +134,7 @@ export default function BlobModal({
                     id="blob-key"
                     name="blob-key"
                     disabled={upload.pending}
+                    onInput={onKeyInput}
                   />
                 </Field>
                 <Field>

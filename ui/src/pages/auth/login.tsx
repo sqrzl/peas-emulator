@@ -1,5 +1,5 @@
 import { state } from '@askrjs/askr';
-import { navigate } from '@askrjs/askr/router';
+import { currentRoute, navigate } from '@askrjs/askr/router';
 import { Input } from '@askrjs/ui';
 import { Button, Field } from '@askrjs/themes/controls';
 import { Container, Section, Stack } from '@askrjs/themes/layouts';
@@ -13,11 +13,7 @@ import { loginAdminSession } from '../../features/auth/admin-session';
 import { adminBucketsPath } from '../../shared/routes';
 
 function returnPath(): string {
-  if (typeof window === 'undefined') {
-    return adminBucketsPath();
-  }
-
-  const candidate = new URLSearchParams(window.location.search).get('next');
+  const candidate = currentRoute().query.get('next');
   return candidate?.startsWith('/') && !candidate.startsWith('//')
     ? candidate
     : adminBucketsPath();
@@ -26,28 +22,21 @@ function returnPath(): string {
 export default function LoginPage() {
   const [error, setError] = state('');
   const [pending, setPending] = state(false);
+  const [username, setUsername] = state('');
+  const [password, setPassword] = state('');
 
   async function handleSubmit(event: Event) {
     if (pending()) {
       return;
     }
 
-    const target = event.target instanceof Element ? event.target : null;
-    const form = target?.closest('form');
-
-    if (!(form instanceof HTMLFormElement)) {
+    if (!(event.target instanceof Element)) {
       return;
     }
 
-    const usernameInput = form.querySelector('#username');
-    const passwordInput = form.querySelector('#password');
     const credentials = {
-      username:
-        usernameInput instanceof HTMLInputElement
-          ? usernameInput.value.trim()
-          : '',
-      password:
-        passwordInput instanceof HTMLInputElement ? passwordInput.value : '',
+      username: username().trim(),
+      password: password(),
     };
 
     setPending(true);
@@ -65,6 +54,18 @@ export default function LoginPage() {
     } finally {
       setPending(false);
     }
+  }
+
+  function onUsernameInput(event: Event) {
+    const value =
+      event.target instanceof HTMLInputElement ? event.target.value : '';
+    setUsername(value);
+  }
+
+  function onPasswordInput(event: Event) {
+    const value =
+      event.target instanceof HTMLInputElement ? event.target.value : '';
+    setPassword(value);
   }
 
   return (
@@ -91,6 +92,7 @@ export default function LoginPage() {
                     autoComplete="username"
                     disabled={pending()}
                     placeholder="username"
+                    onInput={onUsernameInput}
                   />
                 </Field>
                 <Field>
@@ -102,6 +104,7 @@ export default function LoginPage() {
                     autoComplete="current-password"
                     disabled={pending()}
                     placeholder="password"
+                    onInput={onPasswordInput}
                   />
                 </Field>
                 {error() ? <p role="alert">{error()}</p> : null}

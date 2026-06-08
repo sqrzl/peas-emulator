@@ -1,5 +1,7 @@
 import { state } from '@askrjs/askr';
 import { createQuery } from '@askrjs/askr/data';
+import { currentRoute, navigate } from '@askrjs/askr/router';
+import { resource } from '@askrjs/askr/resources';
 
 export type CursorPage<T> = {
   items: T[];
@@ -24,6 +26,53 @@ type CursorListFetch<T> = (opts: {
 }) => Promise<CursorPage<T>>;
 
 const fetchByQueryKey = new Map<string, CursorListFetch<unknown>>();
+function currentSearchFromRoute(queryParam: string): string {
+  return currentRoute().query.get(queryParam)?.trim() ?? '';
+}
+
+function serializeRouteQuery(
+  query: ReturnType<typeof currentRoute>['query']
+): string {
+  const nextSearch = new URLSearchParams();
+  const entries = query.toJSON();
+
+  for (const [key, value] of Object.entries(entries)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        nextSearch.append(key, item);
+      }
+      continue;
+    }
+
+    nextSearch.append(key, value);
+  }
+
+  return nextSearch.toString();
+}
+
+function writeSearchParam(queryParam: string, nextValue: string): void {
+  const route = currentRoute();
+  const trimmed = nextValue.trim();
+  const nextSearch = new URLSearchParams(serializeRouteQuery(route.query));
+
+  if (trimmed) {
+    nextSearch.set(queryParam, trimmed);
+  } else {
+    nextSearch.delete(queryParam);
+  }
+
+  const nextHref = `${route.path}${
+    nextSearch.toString() ? `?${nextSearch}` : ''
+  }${route.hash ? `#${route.hash}` : ''}`;
+  const currentQuery = serializeRouteQuery(route.query);
+  const currentHref = `${route.path}${
+    currentQuery ? `?${currentQuery}` : ''
+  }${route.hash ? `#${route.hash}` : ''}`;
+
+  if (nextHref !== currentHref) {
+    navigate(nextHref, { history: 'replace' });
+  }
+}
 
 function canonicalFetch<T>(
   key: string,
@@ -38,37 +87,6 @@ function canonicalFetch<T>(
   return fetch;
 }
 
-function readQueryParam(name: string): string {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  return window.location.search
-    ? (new URLSearchParams(window.location.search).get(name)?.trim() ?? '')
-    : '';
-}
-
-function writeQueryParam(name: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const url = new URL(window.location.href);
-  const nextValue = value.trim();
-
-  if (nextValue) {
-    url.searchParams.set(name, nextValue);
-  } else {
-    url.searchParams.delete(name);
-  }
-
-  const nextHref = `${url.pathname}${url.search}${url.hash}`;
-  const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (nextHref !== currentHref) {
-    window.history.pushState({}, '', nextHref);
-  }
-}
-
 export function useCursorList<T>(
   keyPrefix: string,
   queryParam: string,
@@ -78,11 +96,14 @@ export function useCursorList<T>(
     signal: AbortSignal;
   }) => Promise<CursorPage<T>>
 ): CursorListController<T> {
-  const [search, setSearchValue] = state(readQueryParam(queryParam));
+  const [search, setSearchValue] = state(currentSearchFromRoute(queryParam));
   const [cursor, setCursor] = state<string | undefined>(undefined);
   const [history, setHistory] = state<Array<string | undefined>>([]);
-  const currentSearch = search();
-  const currentCursor = cursor();
+  const routeSearch = currentSearchFromRoute(queryParam);
+  const activeSearch = search();
+  const routeSearchSynced = routeSearch === activeSearch;
+  const currentCursor = routeSearchSynced ? cursor() : undefined;
+  const currentSearch = routeSearch;
   const queryKey = `${keyPrefix}:search=${currentSearch}:cursor=${currentCursor ?? ''}`;
 
   const query = createQuery<CursorPage<T>>({
@@ -90,7 +111,7 @@ export function useCursorList<T>(
     fetch: canonicalFetch(queryKey, ({ signal }) =>
       fetchPage({
         next: currentCursor,
-        search: currentSearch || undefined,
+        search: routeSearch || undefined,
         signal,
       })
     ),
@@ -98,15 +119,26 @@ export function useCursorList<T>(
 
   function setSearch(value: string) {
     const nextValue = value.trim();
-    if (nextValue === search()) {
+    if (nextValue === routeSearch && nextValue === activeSearch) {
       return;
     }
 
-    writeQueryParam(queryParam, nextValue);
+    writeSearchParam(queryParam, nextValue);
     setSearchValue(nextValue);
     setCursor(undefined);
     setHistory([]);
   }
+
+  resource(() => {
+    if (routeSearch === search()) {
+      return null;
+    }
+
+    setSearchValue(routeSearch);
+    setCursor(undefined);
+    setHistory([]);
+    return null;
+  }, [routeSearch]);
 
   function next() {
     const token = query.data?.next;

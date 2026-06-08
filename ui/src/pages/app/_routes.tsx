@@ -4,7 +4,7 @@ import BucketPage from './bucket';
 import BlobPage from './blob';
 import { adminBucketsPath } from '../../shared/routes';
 
-export const bucketFolderRouteDepth = 12;
+export const bucketFolderRouteDepth = 64;
 
 type BucketFolderRouteParams = Record<string, string | undefined>;
 

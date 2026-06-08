@@ -22,6 +22,7 @@ import StorageDialogHeader from './storage-dialog-header';
 export default function BucketModal() {
   const [isOpen, setOpen] = state(false);
   const [error, setError] = state('');
+  const [bucketName, setBucketName] = state('');
 
   const create = createMutation({
     action: (name: string, { signal }) => createBucket({ name, signal }),
@@ -35,10 +36,7 @@ export default function BucketModal() {
       return;
     }
 
-    const form =
-      event.target instanceof Element ? event.target.closest('form') : null;
-    const input = form?.querySelector('#bucket-name');
-    const name = input instanceof HTMLInputElement ? input.value.trim() : '';
+    const name = bucketName().trim();
 
     if (!name) {
       setError('Bucket name is required.');
@@ -49,7 +47,7 @@ export default function BucketModal() {
 
     try {
       await create.execute(name);
-      form?.reset();
+      setBucketName('');
       setOpen(false);
     } catch (caughtError) {
       setError(
@@ -60,12 +58,32 @@ export default function BucketModal() {
     }
   }
 
+  function onOpenChange(nextOpen: boolean): void {
+    if (!nextOpen) {
+      setBucketName('');
+      setError('');
+    }
+    setOpen(nextOpen);
+  }
+
+  function onNameInput(event: Event) {
+    const value =
+      event.target instanceof HTMLInputElement ? event.target.value : '';
+    setBucketName(value);
+  }
+
+  function openDialog(): void {
+    setBucketName('');
+    setError('');
+    setOpen(true);
+  }
+
   return (
     <>
-      <Button onPress={() => setOpen(true)}>
+      <Button onPress={openDialog}>
         <PlusIcon aria-hidden="true" /> Add bucket
       </Button>
-      <Dialog open={isOpen()} onOpenChange={setOpen}>
+      <Dialog open={isOpen()} onOpenChange={onOpenChange}>
         <DialogPortal>
           <DialogOverlay />
           <DialogContent>
@@ -80,6 +98,7 @@ export default function BucketModal() {
                     id="bucket-name"
                     name="bucket-name"
                     disabled={create.pending}
+                    onInput={onNameInput}
                   />
                 </Field>
                 <Show when={error()}>
