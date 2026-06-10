@@ -6,6 +6,7 @@ import type {
   ObjectMetadata,
   TagsResponse,
 } from '../../adapters/api.g';
+import { blobIdFromBlobKey } from '../../shared/routes';
 import { unwrapProtectedResponse } from '../auth/admin-session';
 
 export type ObjectPage = {
@@ -23,17 +24,24 @@ export async function loadObjectPage({
   bucketName,
   next,
   search,
+  pathPrefix,
   signal,
 }: {
   bucketName: string;
   next?: string;
   search?: string;
+  pathPrefix?: string;
   signal: AbortSignal;
 }): Promise<ObjectPage> {
   return unwrapProtectedResponse(
     await adminApi.listObjects(
       bucketName,
-      { next, limit: 50, search: search?.trim() || undefined },
+      {
+        next,
+        limit: 50,
+        search: search?.trim() || undefined,
+        prefix: pathPrefix,
+      },
       { signal }
     )
   );
@@ -42,10 +50,12 @@ export async function loadObjectPage({
 export async function loadAllObjectPages({
   bucketName,
   search,
+  pathPrefix,
   signal,
 }: {
   bucketName: string;
   search?: string;
+  pathPrefix?: string;
   signal: AbortSignal;
 }): Promise<ObjectInfo[]> {
   const items: ObjectInfo[] = [];
@@ -56,6 +66,7 @@ export async function loadAllObjectPages({
       bucketName,
       next,
       search,
+      pathPrefix,
       signal,
     });
 
@@ -64,6 +75,40 @@ export async function loadAllObjectPages({
   } while (next);
 
   return items;
+}
+
+export async function findObjectByBlobId({
+  bucketName,
+  blobId,
+  pathPrefix,
+  signal,
+}: {
+  bucketName: string;
+  blobId: string;
+  pathPrefix?: string;
+  signal: AbortSignal;
+}): Promise<ObjectInfo | undefined> {
+  let next: string | undefined;
+
+  do {
+    const page = await loadObjectPage({
+      bucketName,
+      next,
+      pathPrefix,
+      signal,
+    });
+
+    const resolved = page.items.find(
+      (object) => blobIdFromBlobKey(object.key) === blobId
+    );
+    if (resolved) {
+      return resolved;
+    }
+
+    next = page.next ?? undefined;
+  } while (next);
+
+  return undefined;
 }
 
 export async function countBucketObjects({

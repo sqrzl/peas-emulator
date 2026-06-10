@@ -12,6 +12,7 @@ import {
   deleteAllBucketObjects,
   deleteObject,
   downloadObjectContent,
+  findObjectByBlobId,
   loadObjectMetadata,
   loadObjectPage,
   loadObjectTags,
@@ -19,6 +20,7 @@ import {
   putObjectContent,
   putObjectTags,
 } from '../src/features/objects/objects.query';
+import { blobIdFromBlobKey } from '../src/shared/routes';
 
 const originalFetch = globalThis.fetch;
 
@@ -455,6 +457,127 @@ describe('generated admin feature workflows', () => {
       expect(objectSearch.items[0]?.key).toBe('notes.txt');
     } finally {
       restoreFetch();
+    }
+  });
+
+  it('applies path prefix when loading objects and resolves blob ids through paged lookup', async () => {
+    const listCalls: Array<{
+      prefix: string | null;
+      search: string | null;
+      next: string | null;
+    }> = [];
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+      const method = request.method.toUpperCase();
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects' &&
+        method === 'GET'
+      ) {
+        const prefix = url.searchParams.get('prefix');
+        const search = url.searchParams.get('search');
+        const next = url.searchParams.get('next');
+        listCalls.push({ prefix, search, next });
+
+        if (prefix === 'docs/') {
+          return jsonResponse({
+            items: [
+              {
+                key: 'docs/readme.txt',
+                size: 5,
+                etag: 'etag-readme',
+                last_modified: '2026-05-25T10:00:00.000Z',
+                content_type: 'text/plain',
+                storage_class: 'standard',
+              },
+              {
+                key: 'docs/api/openapi.json',
+                size: 17,
+                etag: 'etag-openapi',
+                last_modified: '2026-05-25T11:15:00.000Z',
+                content_type: 'application/json',
+                storage_class: 'standard',
+              },
+            ],
+            next: null,
+          });
+        }
+
+        return jsonResponse({
+          items: [
+            {
+              key: 'notes.txt',
+              size: 18,
+              etag: 'etag-notes',
+              last_modified: '2026-05-25T11:20:00.000Z',
+              content_type: 'text/plain',
+              storage_class: 'standard',
+            },
+            {
+              key: 'readme.txt',
+              size: 12,
+              etag: 'etag-readme',
+              last_modified: '2026-05-25T11:25:00.000Z',
+              content_type: 'text/plain',
+              storage_class: 'standard',
+            },
+          ],
+          next: null,
+        });
+      }
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt' &&
+        method === 'GET'
+      ) {
+        return jsonResponse({
+          key: 'docs/readme.txt',
+          size: 5,
+          etag: 'etag-readme',
+          last_modified: '2026-05-25T10:00:00.000Z',
+          content_type: 'text/plain',
+          metadata: {},
+          storage_class: 'standard',
+          version_id: null,
+        });
+      }
+
+      throw new Error(
+        `Unexpected request: ${request.method} ${url.pathname}${url.search}`
+      );
+    };
+
+    const signal = new AbortController().signal;
+
+    try {
+      const folderPage = await loadObjectPage({
+        bucketName: 'alpha',
+        pathPrefix: 'docs/',
+        signal,
+      });
+      const resolved = await findObjectByBlobId({
+        bucketName: 'alpha',
+        blobId: blobIdFromBlobKey('docs/readme.txt'),
+        pathPrefix: 'docs/',
+        signal,
+      });
+
+      expect(folderPage.items).toHaveLength(2);
+      expect(folderPage.items[0]?.key).toBe('docs/readme.txt');
+      expect(listCalls[0]).toEqual({
+        prefix: 'docs/',
+        search: null,
+        next: null,
+      });
+      expect(listCalls).toHaveLength(2);
+      expect(resolved?.key).toBe('docs/readme.txt');
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 

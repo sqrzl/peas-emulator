@@ -1,14 +1,17 @@
 import { resource } from '@askrjs/askr/resources';
-import { Link } from '@askrjs/askr/router';
+import { currentRoute, Link } from '@askrjs/askr/router';
 import { Button } from '@askrjs/themes/controls';
 import { EmptyState, Spinner } from '@askrjs/themes/feedback';
 import { Flex, Stack } from '@askrjs/themes/layouts';
 import BlobBreadcrumbs from '../../components/storage/blob-breadcrumbs';
 import BlobDetails from '../../components/storage/blob-details';
 import StoragePageHeader from '../../components/storage/storage-page-header';
-import { loadAllObjectPages as loadAllBlobPages } from '../../features/objects/objects.query';
+import {
+  findObjectByBlobId,
+  loadObjectMetadata,
+} from '../../features/objects/objects.query';
 import { blobFileName } from '../../features/storage/path';
-import { bucketPath, blobIdFromBlobKey } from '../../shared/routes';
+import { bucketPath } from '../../shared/routes';
 
 export default function Blob({
   bucketName,
@@ -17,30 +20,41 @@ export default function Blob({
   bucketName: string;
   blobId: string;
 }) {
-  const blobs = resource(
-    ({ signal }) =>
-      loadAllBlobPages({
+  const blobKeyFromQuery = currentRoute().query.get('key');
+
+  const resolvedBlob = resource(
+    async ({ signal }) => {
+      if (blobKeyFromQuery) {
+        await loadObjectMetadata({
+          bucketName,
+          objectKey: blobKeyFromQuery,
+          signal,
+        });
+        return { key: blobKeyFromQuery };
+      }
+
+      return findObjectByBlobId({
         bucketName,
+        blobId,
         signal,
-      }),
-    [bucketName]
+      });
+    },
+    [bucketName, blobId, blobKeyFromQuery]
   );
 
-  const resolvedBlob = blobs.value?.find(
-    (blob) => blobIdFromBlobKey(blob.key) === blobId
-  );
+  const resolvedBlobKey = resolvedBlob.value?.key;
 
-  if (blobs.error && !blobs.value) {
+  if (resolvedBlob.error && !resolvedBlob.value) {
     return (
       <EmptyState
         title="Blob details could not load"
         description="Retry the admin API call to see the blob details."
-        actions={<Button onPress={() => blobs.refresh()}>Retry</Button>}
+        actions={<Button onPress={() => resolvedBlob.refresh()}>Retry</Button>}
       />
     );
   }
 
-  if (blobs.pending && !blobs.value) {
+  if (resolvedBlob.pending && !resolvedBlob.value) {
     return (
       <Flex justify={{ initial: 'center' }} align={{ initial: 'center' }}>
         <Spinner />
@@ -48,7 +62,7 @@ export default function Blob({
     );
   }
 
-  if (!resolvedBlob) {
+  if (!resolvedBlobKey) {
     return (
       <EmptyState
         title="Blob not found"
@@ -64,14 +78,14 @@ export default function Blob({
 
   return (
     <Stack gap="4">
-      <BlobBreadcrumbs bucketName={bucketName} blobKey={resolvedBlob.key} />
+      <BlobBreadcrumbs bucketName={bucketName} blobKey={resolvedBlobKey} />
 
       <StoragePageHeader
-        title={blobFileName(resolvedBlob.key)}
-        description={resolvedBlob.key}
+        title={blobFileName(resolvedBlobKey)}
+        description={resolvedBlobKey}
       />
 
-      <BlobDetails bucketName={bucketName} blobKey={resolvedBlob.key} />
+      <BlobDetails bucketName={bucketName} blobKey={resolvedBlobKey} />
     </Stack>
   );
 }

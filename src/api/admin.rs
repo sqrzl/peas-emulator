@@ -196,6 +196,14 @@ struct PageParams {
     search: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct ObjectPageParams {
+    next: Option<String>,
+    limit: usize,
+    prefix: Option<String>,
+    search: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum PageTokenKind {
     Buckets,
@@ -271,6 +279,61 @@ fn parse_page_params(query: &str, kind: PageTokenKind) -> Result<PageParams> {
     })
 }
 
+fn parse_object_next_token(token: &str, kind: PageTokenKind) -> Result<String> {
+    let decoded = URL_SAFE_NO_PAD
+        .decode(token)
+        .map_err(|_| Error::InvalidRequest("invalid next token".into()))?;
+    let decoded = String::from_utf8(decoded)
+        .map_err(|_| Error::InvalidRequest("invalid next token".into()))?;
+    let (token_kind, marker) = decoded
+        .split_once(':')
+        .ok_or_else(|| Error::InvalidRequest("invalid next token".into()))?;
+
+    if token_kind != kind.as_str() {
+        return Err(Error::InvalidRequest("invalid next token".into()));
+    }
+
+    Ok(marker.to_string())
+}
+
+fn parse_object_page_params(query: &str) -> Result<ObjectPageParams> {
+    let params = parse_query_map(query);
+
+    let next = params
+        .get("next")
+        .map(|value| parse_object_next_token(value, PageTokenKind::Objects))
+        .transpose()?;
+
+    let limit = params
+        .get("limit")
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .map_err(|_| Error::InvalidRequest("invalid limit".into()))
+        })
+        .transpose()?
+        .unwrap_or(50);
+
+    if !(1..=500).contains(&limit) {
+        return Err(Error::InvalidRequest(
+            "limit must be between 1 and 500".into(),
+        ));
+    }
+
+    let prefix = params.get("prefix").map(|value| value.to_string());
+    let search = params
+        .get("search")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+
+    Ok(ObjectPageParams {
+        next,
+        limit,
+        prefix,
+        search,
+    })
+}
+
 fn paginate<T>(items: Vec<T>, page: &PageParams) -> (Vec<T>, Option<usize>) {
     let start = page.next.min(items.len());
     let end = (start + page.limit).min(items.len());
@@ -281,6 +344,10 @@ fn paginate<T>(items: Vec<T>, page: &PageParams) -> (Vec<T>, Option<usize>) {
 
 fn encode_next(next: Option<usize>, kind: PageTokenKind) -> Option<String> {
     next.map(|offset| URL_SAFE_NO_PAD.encode(format!("{}:{}", kind.as_str(), offset)))
+}
+
+fn encode_object_next(next: Option<String>, kind: PageTokenKind) -> Option<String> {
+    next.map(|marker| URL_SAFE_NO_PAD.encode(format!("{}:{}", kind.as_str(), marker)))
 }
 
 fn contains_search(value: &str, search: Option<&str>) -> bool {
@@ -484,24 +551,73 @@ fn delete_bucket_lifecycle(storage: Arc<dyn Storage>, bucket: &str) -> Result<Re
 }
 
 fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<Response<Body>> {
-    let page = parse_page_params(query, PageTokenKind::Objects)?;
-    let mut objects = tokio::task::block_in_place(|| {
-        object_service::list_objects(storage.as_ref(), bucket, None, None, None, None)
-    })?
-    .objects;
-    objects.sort_by(|left, right| left.key.cmp(&right.key));
-    let objects = objects
-        .into_iter()
-        .filter(|object| contains_search(&object.key, page.search.as_deref()))
-        .map(object_to_info)
-        .collect();
-    let (items, next) = paginate(objects, &page);
+    let page = parse_object_page_params(query)?;
+    let mut items = Vec::with_capacity(page.limit);
+    let mut marker = page.next;
+    let mut next_marker: Option<String> = None;
+
+    while items.len() < page.limit {
+        let result = tokio::task::block_in_place(|| {
+            object_service::list_objects(
+                storage.as_ref(),
+                bucket,
+                page.prefix.as_deref(),
+                None,
+                marker.as_deref(),
+                Some(page.limit),
+            )
+        })?;
+
+        marker = result
+            .objects
+            .iter()
+            .map(|object| object.key.clone())
+            .next_back();
+
+        next_marker = marker.clone();
+        if marker.is_none() {
+            break;
+        }
+
+        let result_has_more = result.next_marker.is_some();
+
+        let page_items = result
+            .objects
+            .into_iter()
+            .filter(|object| contains_search(&object.key, page.search.as_deref()))
+            .map(object_to_info)
+            .collect::<Vec<_>>();
+
+        for item in page_items {
+            if items.len() >= page.limit {
+                break;
+            }
+            items.push(item);
+        }
+
+        if items.len() >= page.limit || !result_has_more {
+            if items.len() >= page.limit && result_has_more {
+                next_marker = marker.clone();
+            } else {
+                next_marker = None;
+            }
+            break;
+        }
+
+        next_marker = marker.clone();
+    }
+
+    let next = if items.len() >= page.limit {
+        next_marker
+    } else {
+        None
+    };
 
     Ok(json_response(
         StatusCode::OK,
         &crate::api::models::ListObjectsResponse {
             items,
-            next: encode_next(next, PageTokenKind::Objects),
+            next: encode_object_next(next, PageTokenKind::Objects),
         },
     ))
 }
@@ -1429,6 +1545,106 @@ mod tests {
         let versions: ListVersionsResponse = json_body(resp).await;
         assert!(versions.items.len() >= 2);
         assert!(versions.items.iter().any(|version| version.is_latest));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn admin_lists_support_prefix_filtering_and_search() {
+        let storage = temp_storage();
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/v1/buckets")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"name\":\"demo\"}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        for key in [
+            "docs/api/openapi.json",
+            "docs/readme.txt",
+            "docs/spec.txt",
+            "image.png",
+        ] {
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/admin/v1/buckets/demo/objects/{}/content", key))
+                .header("content-type", "text/plain")
+                .body(Body::from(key.to_string()))
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+            assert!(matches!(
+                resp.status(),
+                StatusCode::CREATED | StatusCode::OK
+            ));
+        }
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects?limit=2&prefix=docs/")
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let first_prefixed: ListObjectsResponse = json_body(resp).await;
+        assert_eq!(first_prefixed.items.len(), 2);
+        assert_eq!(first_prefixed.items[0].key, "docs/api/openapi.json");
+        assert_eq!(first_prefixed.items[1].key, "docs/readme.txt");
+        let next = first_prefixed
+            .next
+            .clone()
+            .expect("prefixed page should continue");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!(
+                "/admin/v1/buckets/demo/objects?limit=2&prefix=docs/&next={}",
+                next
+            ))
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let second_prefixed: ListObjectsResponse = json_body(resp).await;
+
+        assert_eq!(second_prefixed.items.len(), 1);
+        assert_eq!(second_prefixed.items[0].key, "docs/spec.txt");
+        assert!(second_prefixed.next.is_none());
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects?limit=1&prefix=docs/&search=.txt")
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let first_search: ListObjectsResponse = json_body(resp).await;
+        assert_eq!(first_search.items.len(), 1);
+        assert_eq!(first_search.items[0].key, "docs/readme.txt");
+        let next = first_search
+            .next
+            .clone()
+            .expect("search page should continue");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!(
+                "/admin/v1/buckets/demo/objects?limit=1&prefix=docs/&search=.txt&next={}",
+                next
+            ))
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let second_search: ListObjectsResponse = json_body(resp).await;
+
+        assert_eq!(second_search.items.len(), 1);
+        assert_eq!(second_search.items[0].key, "docs/spec.txt");
+        assert!(second_search.next.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]

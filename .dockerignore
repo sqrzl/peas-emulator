@@ -11,9 +11,15 @@ target/
 # Node/UI
 ui/node_modules/
 ui/dist/
-.npm
-npm-debug.log
-yarn-error.log
+ui/.npm/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # IDE
 .vscode/
@@ -35,10 +41,12 @@ tmp/
 temp/
 .tmp/
 
-# Docker
+# Non-build project files
+docs/
+tests/
+sdk-tests/
+askr-bug.md
 docker-compose.override.yml
-.dockerignore
-Dockerfile
 
 # Misc
 README.md

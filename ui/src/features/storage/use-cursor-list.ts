@@ -50,8 +50,11 @@ function serializeRouteQuery(
   return nextSearch.toString();
 }
 
-function writeSearchParam(queryParam: string, nextValue: string): void {
-  const route = currentRoute();
+function writeSearchParam(
+  route: ReturnType<typeof currentRoute>,
+  queryParam: string,
+  nextValue: string
+): void {
   const trimmed = nextValue.trim();
   const nextSearch = new URLSearchParams(serializeRouteQuery(route.query));
 
@@ -96,10 +99,11 @@ export function useCursorList<T>(
     signal: AbortSignal;
   }) => Promise<CursorPage<T>>
 ): CursorListController<T> {
+  const route = currentRoute();
   const [search, setSearchValue] = state(currentSearchFromRoute(queryParam));
   const [cursor, setCursor] = state<string | undefined>(undefined);
   const [history, setHistory] = state<Array<string | undefined>>([]);
-  const routeSearch = currentSearchFromRoute(queryParam);
+  const routeSearch = route.query.get(queryParam)?.trim() ?? '';
   const activeSearch = search();
   const routeSearchSynced = routeSearch === activeSearch;
   const currentCursor = routeSearchSynced ? cursor() : undefined;
@@ -123,7 +127,7 @@ export function useCursorList<T>(
       return;
     }
 
-    writeSearchParam(queryParam, nextValue);
+    writeSearchParam(route, queryParam, nextValue);
     setSearchValue(nextValue);
     setCursor(undefined);
     setHistory([]);

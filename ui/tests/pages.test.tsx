@@ -832,6 +832,8 @@ describe('simplified page flows', () => {
   });
 
   it('renders blob metadata', async () => {
+    const objectListRequests: string[] = [];
+
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const request =
         typeof input === 'string' || input instanceof URL
@@ -843,6 +845,7 @@ describe('simplified page flows', () => {
         url.pathname === '/admin/v1/buckets/alpha/objects' &&
         request.method === 'GET'
       ) {
+        objectListRequests.push(url.search);
         return jsonResponse({
           items: [
             {
@@ -889,9 +892,73 @@ describe('simplified page flows', () => {
       expect(root.textContent).toContain('docs/readme.txt');
       expect(root.textContent).toContain('owner');
       expect(root.textContent).toContain('alice');
+      expect(objectListRequests).toHaveLength(1);
     } finally {
       cleanupApp(root);
       root.remove();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('resolves blob detail directly from a key hint and avoids object listing', async () => {
+    const blobKey = 'docs/readme.txt';
+    const blobId = blobIdFromBlobKey(blobKey);
+    let objectsListed = false;
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects' &&
+        request.method === 'GET'
+      ) {
+        objectsListed = true;
+        throw new Error(
+          'Object collection should not be requested with key hint'
+        );
+      }
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects/docs%2Freadme.txt' &&
+        request.method === 'GET'
+      ) {
+        return jsonResponse({
+          key: blobKey,
+          size: 5,
+          etag: 'etag-uploaded',
+          last_modified: '2026-05-25T11:00:00.000Z',
+          content_type: 'text/plain',
+          metadata: { owner: 'alice' },
+          storage_class: 'standard',
+          version_id: 'v1',
+        });
+      }
+
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    };
+
+    const originalUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.pushState(
+      null,
+      '',
+      `/admin/buckets/alpha/blob/${blobId}?key=${encodeURIComponent(blobKey)}`
+    );
+
+    const root = mount(() => <BlobPage bucketName="alpha" blobId={blobId} />);
+
+    try {
+      await flush();
+      expect(objectsListed).toBe(false);
+      expect(root.textContent).toContain('docs/readme.txt');
+      expect(root.textContent).toContain('owner');
+    } finally {
+      cleanupApp(root);
+      root.remove();
+      window.history.pushState(null, '', originalUrl || '/');
       globalThis.fetch = originalFetch;
     }
   });

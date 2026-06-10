@@ -494,6 +494,7 @@ paths:
         - $ref: '#/components/parameters/BucketName'
         - $ref: '#/components/parameters/Next'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Prefix'
         - $ref: '#/components/parameters/Search'
       tags:
         - Objects
@@ -830,6 +831,13 @@ components:
       in: query
       required: false
       description: Case-insensitive text search over resource names or keys.
+      schema:
+        type: string
+    Prefix:
+      name: prefix
+      in: query
+      required: false
+      description: Restrict listing to keys that start with this prefix.
       schema:
         type: string
   responses:

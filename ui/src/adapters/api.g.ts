@@ -208,7 +208,7 @@ export function createAdapter(client: FetchClient): {
    */
   listObjects: (
     bucketName: string,
-    query?: { next?: string; limit?: number; search?: string },
+    query?: { next?: string; limit?: number; prefix?: string; search?: string },
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
   ) => Promise<FetchResponse<ListObjectsResponse>>;
   /**
@@ -621,7 +621,12 @@ export function createAdapter(client: FetchClient): {
     },
     listObjects: (
       bucketName: string,
-      query?: { next?: string; limit?: number; search?: string },
+      query?: {
+        next?: string;
+        limit?: number;
+        prefix?: string;
+        search?: string;
+      },
       options?: { signal?: AbortSignal; timeout?: number; operationId?: string }
     ): Promise<FetchResponse<ListObjectsResponse>> => {
       const finalOptions = {

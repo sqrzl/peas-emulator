@@ -16,7 +16,7 @@ import {
 import type { ObjectInfo as BlobInfo } from '../../adapters/api.g';
 import {
   deleteObject as deleteBlob,
-  loadAllObjectPages,
+  loadObjectPage,
 } from '../../features/objects/objects.query';
 import { collectBlobBrowserRows } from '../../features/storage/blob-browser';
 import { useCursorList } from '../../features/storage/use-cursor-list';
@@ -37,23 +37,18 @@ export default function BlobTable({
   const list = useCursorList<BlobInfo>(
     `${blobListKey(bucketName)}:path=${pathPrefix}`,
     'search',
-    async ({ search, signal }) => {
-      const all = await loadAllObjectPages({
+    async ({ search, next, signal }) => {
+      const page = await loadObjectPage({
         bucketName,
-        search: pathPrefix || undefined,
+        next,
+        search,
+        pathPrefix: pathPrefix || undefined,
         signal,
       });
 
-      const query = search?.trim().toLowerCase() ?? '';
-      const filtered = query
-        ? all.filter((blob) =>
-            blob.key.slice(pathPrefix.length).toLowerCase().includes(query)
-          )
-        : all;
-
       return {
-        items: filtered,
-        next: null,
+        items: page.items,
+        next: page.next,
       };
     }
   );
@@ -162,7 +157,7 @@ export default function BlobTable({
                       wrap={{ initial: 'wrap' }}
                     >
                       <FileIcon aria-hidden="true" />
-                      <Link href={blobPath(bucketName, blob.key)}>
+                      <Link href={blobPath(bucketName, blob.key, blob.key)}>
                         {blob.key.slice(pathPrefix.length)}
                       </Link>
                     </Flex>

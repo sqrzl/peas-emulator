@@ -147,6 +147,15 @@ export function blobIdFromBlobKey(blobKey: string): string {
   return blobId;
 }
 
-export function blobPath(bucketName: string, blobKey: string): string {
-  return `${bucketPath(bucketName)}/blob/${blobIdFromBlobKey(blobKey)}`;
+export function blobPath(
+  bucketName: string,
+  blobKey: string,
+  objectKey?: string
+): string {
+  const blobHref = `${bucketPath(bucketName)}/blob/${blobIdFromBlobKey(blobKey)}`;
+  if (!objectKey) {
+    return blobHref;
+  }
+
+  return `${blobHref}?key=${encodeURIComponent(objectKey)}`;
 }
