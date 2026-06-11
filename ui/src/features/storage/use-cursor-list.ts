@@ -28,7 +28,10 @@ type CursorListFetch<T> = (opts: {
 const fetchByQueryKey = new Map<string, CursorListFetch<unknown>>();
 const fetchByQueryKeyLimit = 256;
 
-function cacheFetchForQueryKey<T>(key: string, fetch: CursorListFetch<T>): CursorListFetch<T> {
+function cacheFetchForQueryKey<T>(
+  key: string,
+  fetch: CursorListFetch<T>
+): CursorListFetch<T> {
   const cached = fetchByQueryKey.get(key) as CursorListFetch<T> | undefined;
   if (cached) {
     return cached;

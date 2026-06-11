@@ -27,7 +27,8 @@ async function flush(): Promise<void> {
 }
 
 async function resolveRouteRequest(pathname: string) {
-  const router = await import('../node_modules/@askrjs/askr/dist/router/route.js');
+  const router =
+    await import('../node_modules/@askrjs/askr/dist/router/route.js');
   return (router as any).resolveRouteRequest(pathname, {
     manifest: getManifest(),
   });
@@ -75,8 +76,10 @@ describe('shared route helpers', () => {
   });
 
   it('resolves deep bucket folder routes through the wildcard bucket route', async () => {
-    const deepPrefix = Array.from({ length: 70 }, (_, index) => `dir${index}`)
-      .join('/');
+    const deepPrefix = Array.from(
+      { length: 70 },
+      (_, index) => `dir${index}`
+    ).join('/');
 
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const request =

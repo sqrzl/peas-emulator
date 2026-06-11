@@ -1,8 +1,5 @@
 import type { FetchResponse } from '@fgrzl/fetch';
-import {
-  navigate,
-  type RouteAuthState,
-} from '@askrjs/askr/router';
+import { navigate, type RouteAuthState } from '@askrjs/askr/router';
 import { adminApi } from '../../adapters';
 import type {
   AdminLoginRequest,

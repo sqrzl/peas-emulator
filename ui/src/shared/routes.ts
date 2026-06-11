@@ -2,7 +2,12 @@ const textEncoder = new TextEncoder();
 const blobIdCache = new Map<string, string>();
 const blobIdCacheLimit = 4096;
 
-function setWithEviction<K, V>(cache: Map<K, V>, key: K, value: V, limit: number): void {
+function setWithEviction<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  limit: number
+): void {
   if (!cache.has(key) && cache.size >= limit) {
     const oldestKey = cache.keys().next().value as K | undefined;
     if (oldestKey !== undefined) {
