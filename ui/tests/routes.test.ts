@@ -34,6 +34,19 @@ async function resolveRouteRequest(pathname: string) {
   });
 }
 
+function normalizeWildcardParam(value: string | undefined): string | undefined {
+  const stripped = value?.replace(/^\/+/, '');
+  if (!stripped) {
+    return stripped;
+  }
+
+  try {
+    return decodeURIComponent(stripped);
+  } catch {
+    return stripped;
+  }
+}
+
 describe('shared route helpers', () => {
   it('builds deterministic uuid-style blob ids from blob keys', () => {
     const blobKey = 'dir1/dir2/blobkey.png';
@@ -59,7 +72,7 @@ describe('shared route helpers', () => {
     expect(adminBucketsPath()).toBe('/admin/buckets');
     expect(bucketPath('demo bucket')).toBe('/admin/buckets/demo%20bucket');
     expect(bucketFolderPath('demo bucket', 'dir one/child/')).toBe(
-      '/admin/buckets/demo%20bucket/dir%20one/child'
+      '/admin/buckets/demo%20bucket/dir%20one%2Fchild'
     );
     expect(loginPath()).toBe('/login');
     expect(logoutPath()).toBe('/logout');
@@ -89,6 +102,16 @@ describe('shared route helpers', () => {
       const url = new URL(request.url, 'http://localhost');
 
       if (
+        url.pathname === '/admin/v1/auth/session' &&
+        request.method === 'GET'
+      ) {
+        return jsonResponse({
+          username: 'admin',
+          mode: 'password',
+        });
+      }
+
+      if (
         url.pathname === '/admin/v1/buckets/demo/objects' &&
         request.method === 'GET'
       ) {
@@ -116,11 +139,13 @@ describe('shared route helpers', () => {
 
     try {
       const resolved = await resolveRouteRequest(
-        `/admin/buckets/demo/${deepPrefix}`
+        bucketFolderPath('demo', deepPrefix)
       );
 
       expect(resolved?.kind).toBe('render');
-      expect(resolved?.params['*']).toBe(`${deepPrefix}`);
+      expect(normalizeWildcardParam(resolved?.params['*'])).toBe(
+        `${deepPrefix}`
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -230,6 +255,16 @@ describe('shared route helpers', () => {
       const url = new URL(request.url, 'http://localhost');
 
       if (
+        url.pathname === '/admin/v1/auth/session' &&
+        request.method === 'GET'
+      ) {
+        return jsonResponse({
+          username: 'admin',
+          mode: 'password',
+        });
+      }
+
+      if (
         url.pathname === '/admin/v1/buckets/demo/objects' &&
         request.method === 'GET'
       ) {
@@ -256,11 +291,11 @@ describe('shared route helpers', () => {
 
     try {
       const resolved = await resolveRouteRequest(
-        `/admin/buckets/demo/${folderPrefix}`
+        bucketFolderPath('demo', folderPrefix)
       );
 
       expect(resolved?.kind).toBe('render');
-      expect(resolved?.params['*']).toBe('blob/notes');
+      expect(normalizeWildcardParam(resolved?.params['*'])).toBe('blob/notes');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -269,10 +304,12 @@ describe('shared route helpers', () => {
   it('does not treat legacy blob-looking bucket keys as blob routes', async () => {
     const blobId = blobIdFromBlobKey('blob/notes.txt');
     const resolved = await resolveRouteRequest(
-      `/admin/buckets/demo/blob/${blobId}`
+      bucketFolderPath('demo', `blob/${blobId}`)
     );
 
     expect(resolved?.kind).toBe('render');
-    expect(resolved?.params['*']).toBe(`blob/${blobId}`);
+    expect(normalizeWildcardParam(resolved?.params['*'])).toBe(
+      `blob/${blobId}`
+    );
   });
 });

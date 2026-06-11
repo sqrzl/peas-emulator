@@ -141,11 +141,9 @@ export function bucketFolderPath(
     return bucketPath(bucketName);
   }
 
-  const encodedPath = normalized
-    .split('/')
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
+  const encodedPath = encodeURIComponent(
+    normalized.split('/').filter(Boolean).join('/')
+  );
 
   return `${bucketPath(bucketName)}/${encodedPath}`;
 }
