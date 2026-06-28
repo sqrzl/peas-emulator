@@ -1,4 +1,4 @@
-import { Stack } from '@askrjs/themes/layouts';
+import { Stack } from '@askrjs/themes/components';
 import { DialogDescription, DialogTitle } from '@askrjs/ui';
 import { Show } from '@askrjs/askr/control';
 
@@ -12,9 +12,9 @@ export default function StorageDialogHeader({
   return (
     <Stack
       data-peas-slot="storage-dialog-header"
-      align={{ initial: 'stretch' }}
+      align="stretch"
       gap="1"
-      width={{ initial: '100%' }}
+      width="full"
     >
       <DialogTitle asChild>
         <h2 data-peas-slot="storage-dialog-title">{title}</h2>

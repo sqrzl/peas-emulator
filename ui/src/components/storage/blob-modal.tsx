@@ -2,8 +2,7 @@ import { state } from '@askrjs/askr';
 import { Show } from '@askrjs/askr/control';
 import { createMutation } from '@askrjs/askr/data';
 import { UploadIcon } from '@askrjs/lucide';
-import { Button, Field, FieldError } from '@askrjs/themes/controls';
-import { Stack } from '@askrjs/themes/layouts';
+import { Button, Field, FieldError, Stack } from '@askrjs/themes/components';
 import {
   Dialog,
   DialogClose,
@@ -32,8 +31,7 @@ export default function BlobModal({
 }) {
   const [isOpen, setOpen] = state(false);
   const [error, setError] = state('');
-  const [blobKey, setBlobKey] = state('');
-  const currentBlobKey = blobKey();
+  let blobKeyInput: HTMLInputElement | null = null;
   const normalizedPrefix = normalizeStoragePathPrefix(pathPrefix);
   const uploadDescription = normalizedPrefix
     ? `Without a key, the file name is placed in ${normalizedPrefix}.`
@@ -67,7 +65,7 @@ export default function BlobModal({
       return;
     }
 
-    const typedKey = currentBlobKey.trim();
+    const typedKey = blobKeyInput?.value.trim() ?? '';
     const objectKey = resolveUploadObjectKey({
       fileName: selectedFile.name,
       pathPrefix: normalizedPrefix,
@@ -83,7 +81,6 @@ export default function BlobModal({
         contentType: selectedFile.type || undefined,
       });
       form?.reset();
-      setBlobKey('');
       setOpen(false);
     } catch (caughtError) {
       setError(
@@ -96,20 +93,18 @@ export default function BlobModal({
 
   function onOpenChange(nextOpen: boolean): void {
     if (!nextOpen) {
-      setBlobKey('');
+      if (blobKeyInput) {
+        blobKeyInput.value = '';
+      }
       setError('');
     }
     setOpen(nextOpen);
   }
 
-  function onKeyInput(event: Event) {
-    const value =
-      event.target instanceof HTMLInputElement ? event.target.value : '';
-    setBlobKey(value);
-  }
-
   function openDialog(): void {
-    setBlobKey('');
+    if (blobKeyInput) {
+      blobKeyInput.value = '';
+    }
     setError('');
     setOpen(true);
   }
@@ -134,7 +129,9 @@ export default function BlobModal({
                     id="blob-key"
                     name="blob-key"
                     disabled={upload.pending}
-                    onInput={onKeyInput}
+                    ref={(node: HTMLInputElement | null) => {
+                      blobKeyInput = node;
+                    }}
                   />
                 </Field>
                 <Field>

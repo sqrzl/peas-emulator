@@ -26,8 +26,8 @@ docker compose up --build
 Docker and Compose both default to readable text logs. Set `PEAS_LOG_FORMAT=json`
 only when you want structured tracing output.
 
-The Compose example uses `admin` / `admin` credentials so the admin UI starts
-authenticated. The bare `docker run` example below keeps auth disabled.
+The Compose example uses `admin` / `easy-peasy` credentials so the admin UI can
+authenticate. The bare `docker run` example below keeps auth disabled.
 
 If you want the bare container instead of Compose:
 
@@ -168,12 +168,18 @@ npm test
 npm run lint
 npm run lint:fix
 npm run fmt
+npm run seed:sample
 npm run build
 ```
 
 Node 24 or newer is required. The console supports login/logout, bucket search,
 bucket create/delete, folder-like bucket browsing, blob upload/delete, blob
 details, and blob download.
+
+Run `npm run seed:sample` after Peas is running to populate `peas-demo`,
+`peas-logs`, and `peas-archive` with synthetic local objects for UI review. The
+script uses the existing `/admin/v1` API, is safe to rerun, and accepts
+`PEAS_ADMIN_URL`, `PEAS_ADMIN_USERNAME`, and `PEAS_ADMIN_PASSWORD` overrides.
 
 ## Docker
 

@@ -1,4 +1,4 @@
-import { Flex, Stack } from '@askrjs/themes/layouts';
+import { PageHeader } from '@askrjs/themes/components';
 
 export default function StoragePageHeader({
   actions,
@@ -10,24 +10,11 @@ export default function StoragePageHeader({
   title: string;
 }) {
   return (
-    <Flex
+    <PageHeader
       data-peas-slot="storage-page-header"
-      justify={{ initial: 'between' }}
-      align={{ initial: 'start' }}
-      gap="3"
-      wrap={{ initial: 'wrap' }}
-    >
-      <Stack gap="1">
-        <h1 data-peas-slot="storage-page-title">{title}</h1>
-        {description ? (
-          <p data-peas-slot="storage-page-description">{description}</p>
-        ) : null}
-      </Stack>
-      {actions ? (
-        <Flex gap="2" align={{ initial: 'center' }} wrap={{ initial: 'wrap' }}>
-          {actions}
-        </Flex>
-      ) : null}
-    </Flex>
+      title={title}
+      description={description}
+      actions={actions}
+    />
   );
 }

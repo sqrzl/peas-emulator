@@ -1118,6 +1118,7 @@ pub async fn bucket_get_or_list_objects(
 
             let xml = xml_utils::list_objects_xml(
                 &result.objects,
+                &result.common_prefixes,
                 bucket,
                 prefix.unwrap_or(""),
                 delimiter,

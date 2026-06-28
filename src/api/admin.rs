@@ -189,6 +189,18 @@ fn object_to_info(o: crate::models::Object) -> crate::api::models::ObjectInfo {
     }
 }
 
+fn common_prefix_to_folder_info(
+    prefix: String,
+    path_prefix: &str,
+) -> crate::api::models::ObjectFolderInfo {
+    let name = prefix
+        .strip_prefix(path_prefix)
+        .unwrap_or(&prefix)
+        .to_string();
+
+    crate::api::models::ObjectFolderInfo { name, prefix }
+}
+
 #[derive(Clone, Debug)]
 struct PageParams {
     next: usize,
@@ -552,51 +564,51 @@ fn delete_bucket_lifecycle(storage: Arc<dyn Storage>, bucket: &str) -> Result<Re
 
 fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<Response<Body>> {
     let page = parse_object_page_params(query)?;
-    let mut items = Vec::with_capacity(page.limit);
+    let path_prefix = page.prefix.as_deref().unwrap_or("");
+    let mut folders = Vec::new();
+    let mut items = Vec::new();
     let mut marker = page.next;
     let mut next_marker: Option<String> = None;
 
-    while items.len() < page.limit {
+    while folders.len() + items.len() < page.limit {
+        let remaining = page.limit - folders.len() - items.len();
         let result = tokio::task::block_in_place(|| {
             object_service::list_objects(
                 storage.as_ref(),
                 bucket,
                 page.prefix.as_deref(),
-                None,
+                Some("/"),
                 marker.as_deref(),
-                Some(page.limit),
+                Some(remaining),
             )
         })?;
 
-        marker = result
-            .objects
-            .iter()
-            .map(|object| object.key.clone())
-            .next_back();
+        marker = result.next_marker.clone();
+        let result_has_more = result.is_truncated;
 
-        next_marker = marker.clone();
-        if marker.is_none() {
-            break;
-        }
-
-        let result_has_more = result.next_marker.is_some();
-
-        let page_items = result
-            .objects
-            .into_iter()
-            .filter(|object| contains_search(&object.key, page.search.as_deref()))
-            .map(object_to_info)
-            .collect::<Vec<_>>();
-
-        for item in page_items {
-            if items.len() >= page.limit {
+        for common_prefix in result.common_prefixes {
+            if folders.len() + items.len() >= page.limit {
                 break;
             }
-            items.push(item);
+            let folder = common_prefix_to_folder_info(common_prefix, path_prefix);
+            if contains_search(&folder.name, page.search.as_deref())
+                || contains_search(&folder.prefix, page.search.as_deref())
+            {
+                folders.push(folder);
+            }
         }
 
-        if items.len() >= page.limit || !result_has_more {
-            if items.len() >= page.limit && result_has_more {
+        for object in result.objects {
+            if folders.len() + items.len() >= page.limit {
+                break;
+            }
+            if contains_search(&object.key, page.search.as_deref()) {
+                items.push(object_to_info(object));
+            }
+        }
+
+        if folders.len() + items.len() >= page.limit || !result_has_more {
+            if folders.len() + items.len() >= page.limit && result_has_more {
                 next_marker = marker.clone();
             } else {
                 next_marker = None;
@@ -604,10 +616,14 @@ fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<
             break;
         }
 
+        if marker.is_none() {
+            break;
+        }
+
         next_marker = marker.clone();
     }
 
-    let next = if items.len() >= page.limit {
+    let next = if folders.len() + items.len() >= page.limit {
         next_marker
     } else {
         None
@@ -616,6 +632,7 @@ fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<
     Ok(json_response(
         StatusCode::OK,
         &crate::api::models::ListObjectsResponse {
+            folders,
             items,
             next: encode_object_next(next, PageTokenKind::Objects),
         },
@@ -870,7 +887,7 @@ fn list_object_versions(
             .ok()
             .and_then(|object| object.version_id);
     let mut versions = tokio::task::block_in_place(|| {
-        object_service::list_object_versions(storage.as_ref(), bucket, Some(key))
+        object_service::list_object_versions_for_key(storage.as_ref(), bucket, key)
     })?;
     versions.sort_by_key(|version| std::cmp::Reverse(version.last_modified));
     let versions = versions
@@ -1516,6 +1533,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_json_content_type(&resp);
         let objects: ListObjectsResponse = json_body(resp).await;
+        assert!(objects.folders.is_empty());
         assert_eq!(objects.items.len(), 1);
         let next = objects.next.clone().expect("objects page should continue");
 
@@ -1531,6 +1549,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         let next_page: ListObjectsResponse = json_body(resp).await;
+        assert!(next_page.folders.is_empty());
         assert_eq!(next_page.items.len(), 1);
 
         let req = Request::builder()
@@ -1589,9 +1608,11 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_json_content_type(&resp);
         let first_prefixed: ListObjectsResponse = json_body(resp).await;
-        assert_eq!(first_prefixed.items.len(), 2);
-        assert_eq!(first_prefixed.items[0].key, "docs/api/openapi.json");
-        assert_eq!(first_prefixed.items[1].key, "docs/readme.txt");
+        assert_eq!(first_prefixed.folders.len(), 1);
+        assert_eq!(first_prefixed.folders[0].name, "api/");
+        assert_eq!(first_prefixed.folders[0].prefix, "docs/api/");
+        assert_eq!(first_prefixed.items.len(), 1);
+        assert_eq!(first_prefixed.items[0].key, "docs/readme.txt");
         let next = first_prefixed
             .next
             .clone()
@@ -1611,6 +1632,7 @@ mod tests {
 
         assert_eq!(second_prefixed.items.len(), 1);
         assert_eq!(second_prefixed.items[0].key, "docs/spec.txt");
+        assert!(second_prefixed.folders.is_empty());
         assert!(second_prefixed.next.is_none());
 
         let req = Request::builder()
@@ -1622,6 +1644,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_json_content_type(&resp);
         let first_search: ListObjectsResponse = json_body(resp).await;
+        assert!(first_search.folders.is_empty());
         assert_eq!(first_search.items.len(), 1);
         assert_eq!(first_search.items[0].key, "docs/readme.txt");
         let next = first_search
@@ -1642,9 +1665,70 @@ mod tests {
         assert_json_content_type(&resp);
         let second_search: ListObjectsResponse = json_body(resp).await;
 
+        assert!(second_search.folders.is_empty());
         assert_eq!(second_search.items.len(), 1);
         assert_eq!(second_search.items[0].key, "docs/spec.txt");
         assert!(second_search.next.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn admin_lists_indexed_directories_without_scanning_first_blob_page() {
+        let storage = temp_storage();
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/v1/buckets")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"name\":\"demo\"}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        for index in 0..75 {
+            let key = format!("a/blob-{index:03}.txt");
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/admin/v1/buckets/demo/objects/{}/content", key))
+                .header("content-type", "text/plain")
+                .body(Body::from(key))
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+            assert!(matches!(
+                resp.status(),
+                StatusCode::CREATED | StatusCode::OK
+            ));
+        }
+
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/buckets/demo/objects/z/blob.txt/content")
+            .header("content-type", "text/plain")
+            .body(Body::from("z"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert!(matches!(
+            resp.status(),
+            StatusCode::CREATED | StatusCode::OK
+        ));
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects?limit=2")
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let listing: ListObjectsResponse = json_body(resp).await;
+        let folders = listing
+            .folders
+            .iter()
+            .map(|folder| folder.prefix.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(folders, vec!["a/", "z/"]);
+        assert!(listing.items.is_empty());
+        assert!(listing.next.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]

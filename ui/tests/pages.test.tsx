@@ -227,8 +227,12 @@ describe('simplified page flows', () => {
       expect(storageDialogFormSequence()).toEqual(['error', 'footer']);
 
       const input = document.querySelector('#bucket-name') as HTMLInputElement;
+      input.focus();
+      expect(document.activeElement).toBe(input);
       input.value = 'alpha';
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      await flush();
+      expect(document.activeElement).toBe(input);
       const submitButton = Array.from(
         document.querySelectorAll(
           '[data-peas-slot="storage-dialog-footer"] button'
@@ -543,24 +547,44 @@ describe('simplified page flows', () => {
         url.pathname === '/admin/v1/buckets/foldered/objects' &&
         request.method === 'GET'
       ) {
+        const prefix = url.searchParams.get('prefix');
+        if (prefix === 'docs/') {
+          return jsonResponse({
+            folders: [{ name: 'api/', prefix: 'docs/api/' }],
+            items: [
+              {
+                key: 'docs/readme.txt',
+                size: 5,
+                etag: 'etag-readme',
+                last_modified: '2026-05-25T11:00:00.000Z',
+                content_type: 'text/plain',
+                storage_class: 'standard',
+              },
+            ],
+            next: null,
+          });
+        }
+
+        if (prefix === 'docs/api/') {
+          return jsonResponse({
+            folders: [],
+            items: [
+              {
+                key: 'docs/api/openapi.json',
+                size: 17,
+                etag: 'etag-openapi',
+                last_modified: '2026-05-25T11:15:00.000Z',
+                content_type: 'application/json',
+                storage_class: 'standard',
+              },
+            ],
+            next: null,
+          });
+        }
+
         return jsonResponse({
+          folders: [{ name: 'docs/', prefix: 'docs/' }],
           items: [
-            {
-              key: 'docs/readme.txt',
-              size: 5,
-              etag: 'etag-readme',
-              last_modified: '2026-05-25T11:00:00.000Z',
-              content_type: 'text/plain',
-              storage_class: 'standard',
-            },
-            {
-              key: 'docs/api/openapi.json',
-              size: 17,
-              etag: 'etag-openapi',
-              last_modified: '2026-05-25T11:15:00.000Z',
-              content_type: 'application/json',
-              storage_class: 'standard',
-            },
             {
               key: 'image.png',
               size: 12,

@@ -1,15 +1,21 @@
 import { state } from '@askrjs/askr';
 import { navigate } from '@askrjs/askr/router';
 import { Input } from '@askrjs/ui';
-import { Button, Field } from '@askrjs/themes/controls';
-import { Container, Section, Stack } from '@askrjs/themes/layouts';
 import {
+  Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-} from '@askrjs/themes/surfaces';
-import { loginAdminSession } from '../../features/auth/admin-session';
+  Container,
+  Field,
+  Section,
+  Stack,
+} from '@askrjs/themes/components';
+import {
+  isDevAuthBypassed,
+  loginAdminSession,
+} from '../../features/auth/admin-session';
 import { adminBucketsPath } from '../../shared/routes';
 
 function returnPath(): string {
@@ -26,8 +32,31 @@ function returnPath(): string {
 export default function LoginPage() {
   const [error, setError] = state('');
   const [pending, setPending] = state(false);
-  const [username, setUsername] = state('');
-  const [password, setPassword] = state('');
+  const devAuthBypassed = isDevAuthBypassed();
+  let usernameInput: HTMLInputElement | null = null;
+  let passwordInput: HTMLInputElement | null = null;
+
+  if (devAuthBypassed) {
+    return (
+      <Section size="4">
+        <Container size="sm">
+          <Card variant="raised">
+            <CardHeader>
+              <CardTitle>Local development mode</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Stack gap="4">
+                <p>Admin sign-in is bypassed while running the local dev UI.</p>
+                <Button onPress={() => navigate(returnPath())}>
+                  Open buckets
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
+        </Container>
+      </Section>
+    );
+  }
 
   async function handleSubmit(event: Event) {
     if (pending()) {
@@ -39,8 +68,8 @@ export default function LoginPage() {
     }
 
     const credentials = {
-      username: username().trim(),
-      password: password(),
+      username: usernameInput?.value.trim() ?? '',
+      password: passwordInput?.value ?? '',
     };
 
     setPending(true);
@@ -58,18 +87,6 @@ export default function LoginPage() {
     } finally {
       setPending(false);
     }
-  }
-
-  function onUsernameInput(event: Event) {
-    const value =
-      event.target instanceof HTMLInputElement ? event.target.value : '';
-    setUsername(value);
-  }
-
-  function onPasswordInput(event: Event) {
-    const value =
-      event.target instanceof HTMLInputElement ? event.target.value : '';
-    setPassword(value);
   }
 
   return (
@@ -96,7 +113,9 @@ export default function LoginPage() {
                     autoComplete="username"
                     disabled={pending()}
                     placeholder="username"
-                    onInput={onUsernameInput}
+                    ref={(node: HTMLInputElement | null) => {
+                      usernameInput = node;
+                    }}
                   />
                 </Field>
                 <Field>
@@ -108,7 +127,9 @@ export default function LoginPage() {
                     autoComplete="current-password"
                     disabled={pending()}
                     placeholder="password"
-                    onInput={onPasswordInput}
+                    ref={(node: HTMLInputElement | null) => {
+                      passwordInput = node;
+                    }}
                   />
                 </Field>
                 {error() ? <p role="alert">{error()}</p> : null}

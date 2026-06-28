@@ -2,6 +2,7 @@ import { adminApi } from '../../adapters';
 import type {
   Acl,
   ListVersionsResponse,
+  ObjectFolderInfo,
   ObjectInfo,
   ObjectMetadata,
   TagsResponse,
@@ -10,6 +11,7 @@ import { blobIdFromBlobKey } from '../../shared/routes';
 import { unwrapProtectedResponse } from '../auth/admin-session';
 
 export type ObjectPage = {
+  folders: ObjectFolderInfo[];
   items: ObjectInfo[];
   next: string | null;
 };
@@ -33,7 +35,7 @@ export async function loadObjectPage({
   pathPrefix?: string;
   signal: AbortSignal;
 }): Promise<ObjectPage> {
-  return unwrapProtectedResponse(
+  const page = unwrapProtectedResponse(
     await adminApi.listObjects(
       bucketName,
       {
@@ -45,6 +47,12 @@ export async function loadObjectPage({
       { signal }
     )
   );
+
+  return {
+    folders: page.folders ?? [],
+    items: page.items,
+    next: page.next,
+  };
 }
 
 export async function loadAllObjectPages({
@@ -59,20 +67,28 @@ export async function loadAllObjectPages({
   signal: AbortSignal;
 }): Promise<ObjectInfo[]> {
   const items: ObjectInfo[] = [];
-  let next: string | undefined;
+  const prefixes = [pathPrefix];
 
-  do {
-    const page = await loadObjectPage({
-      bucketName,
-      next,
-      search,
-      pathPrefix,
-      signal,
-    });
+  for (let index = 0; index < prefixes.length; index += 1) {
+    let next: string | undefined;
+    const currentPrefix = prefixes[index];
 
-    items.push(...page.items);
-    next = page.next ?? undefined;
-  } while (next);
+    do {
+      const page = await loadObjectPage({
+        bucketName,
+        next,
+        search,
+        pathPrefix: currentPrefix,
+        signal,
+      });
+
+      items.push(...page.items);
+      if (!search?.trim()) {
+        prefixes.push(...page.folders.map((folder) => folder.prefix));
+      }
+      next = page.next ?? undefined;
+    } while (next);
+  }
 
   return items;
 }
@@ -88,25 +104,31 @@ export async function findObjectByBlobId({
   pathPrefix?: string;
   signal: AbortSignal;
 }): Promise<ObjectInfo | undefined> {
-  let next: string | undefined;
+  const prefixes = [pathPrefix];
 
-  do {
-    const page = await loadObjectPage({
-      bucketName,
-      next,
-      pathPrefix,
-      signal,
-    });
+  for (let index = 0; index < prefixes.length; index += 1) {
+    let next: string | undefined;
+    const currentPrefix = prefixes[index];
 
-    const resolved = page.items.find(
-      (object) => blobIdFromBlobKey(object.key) === blobId
-    );
-    if (resolved) {
-      return resolved;
-    }
+    do {
+      const page = await loadObjectPage({
+        bucketName,
+        next,
+        pathPrefix: currentPrefix,
+        signal,
+      });
 
-    next = page.next ?? undefined;
-  } while (next);
+      const resolved = page.items.find(
+        (object) => blobIdFromBlobKey(object.key) === blobId
+      );
+      if (resolved) {
+        return resolved;
+      }
+
+      prefixes.push(...page.folders.map((folder) => folder.prefix));
+      next = page.next ?? undefined;
+    } while (next);
+  }
 
   return undefined;
 }
@@ -118,18 +140,12 @@ export async function countBucketObjects({
   bucketName: string;
   signal: AbortSignal;
 }): Promise<number> {
-  let count = 0;
-  let next: string | undefined;
-
-  do {
-    const page = unwrapProtectedResponse(
-      await adminApi.listObjects(bucketName, { next, limit: 500 }, { signal })
-    );
-    count += page.items.length;
-    next = page.next ?? undefined;
-  } while (next);
-
-  return count;
+  return (
+    await loadAllObjectPages({
+      bucketName,
+      signal,
+    })
+  ).length;
 }
 
 export async function loadObjectMetadata({
@@ -303,28 +319,16 @@ export async function deleteAllBucketObjects({
   bucketName: string;
   signal?: AbortSignal;
 }): Promise<number> {
-  let deleted = 0;
-  let keepDeleting = true;
+  const objects = await loadAllObjectPages({
+    bucketName,
+    signal: signal ?? new AbortController().signal,
+  });
 
-  while (keepDeleting) {
-    const page = await loadObjectPage({
-      bucketName,
-      next: undefined,
-      signal: signal ?? new AbortController().signal,
-    });
-
-    if (page.items.length === 0) {
-      keepDeleting = false;
-      continue;
-    }
-
-    for (const object of page.items) {
-      await deleteObject({ bucketName, objectKey: object.key, signal });
-      deleted += 1;
-    }
+  for (const object of objects) {
+    await deleteObject({ bucketName, objectKey: object.key, signal });
   }
 
-  return deleted;
+  return objects.length;
 }
 
 export async function deleteObjectVersion({

@@ -1,12 +1,12 @@
 import { Link } from '@askrjs/askr/router';
 import {
   Breadcrumb,
-  BreadcrumbCurrent,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
+  BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@askrjs/themes/navs';
+} from '@askrjs/themes/components';
 import { blobParentPrefix } from '../../features/storage/path';
 import { bucketFolderPath, bucketPath } from '../../shared/routes';
 
@@ -36,7 +36,7 @@ export default function BlobBreadcrumbs({
               </Link>
             </BreadcrumbLink>
           ) : (
-            <BreadcrumbCurrent>root</BreadcrumbCurrent>
+            <BreadcrumbPage>root</BreadcrumbPage>
           )}
         </BreadcrumbItem>
       </BreadcrumbList>

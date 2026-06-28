@@ -10,7 +10,7 @@ services:
       BLOBS_PATH: /app/blobs
       PEAS_LOG_FORMAT: text
       ACCESS_KEY_ID: admin
-      SECRET_ACCESS_KEY: admin
+      SECRET_ACCESS_KEY: easy-peasy
     volumes:
       - peas-blobs:/app/blobs
 

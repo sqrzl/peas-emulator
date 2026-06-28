@@ -3,9 +3,15 @@ import { For, Show } from '@askrjs/askr/control';
 import { resource } from '@askrjs/askr/resources';
 import { Link } from '@askrjs/askr/router';
 import { ArrowLeftIcon, DownloadIcon } from '@askrjs/lucide';
-import { Button, ButtonGroup, FieldError } from '@askrjs/themes/controls';
-import { EmptyState } from '@askrjs/themes/feedback';
-import { Box, Stack } from '@askrjs/themes/layouts';
+import {
+  Button,
+  DataTable,
+  Inline,
+  EmptyState,
+  FieldError,
+  Stack,
+  Toolbar,
+} from '@askrjs/themes/components';
 import {
   Table,
   TableBody,
@@ -87,7 +93,12 @@ export default function BlobDetails({
 
   return (
     <Stack gap="4">
-      <ButtonGroup>
+      <Inline
+        data-peas-slot="storage-detail-actions"
+        align="center"
+        gap="2"
+        wrap
+      >
         <Button variant="secondary" asChild>
           <Link href={blobParentPath(bucketName, blobKey)}>
             <ArrowLeftIcon aria-hidden="true" /> Back
@@ -100,7 +111,7 @@ export default function BlobDetails({
           <DownloadIcon aria-hidden="true" />
           {downloadPending() ? 'Downloading...' : 'Download blob'}
         </Button>
-      </ButtonGroup>
+      </Inline>
 
       <Show when={downloadError()}>
         <FieldError role="alert">{downloadError()}</FieldError>
@@ -115,16 +126,10 @@ export default function BlobDetails({
           <Stack gap="4">
             <section aria-labelledby="blob-details-title">
               <Stack gap="3">
-                <h2
-                  id="blob-details-title"
-                  data-peas-slot="storage-section-title"
-                >
-                  Details
-                </h2>
-                <Box
+                <Toolbar title={<span id="blob-details-title">Details</span>} />
+                <DataTable
                   data-peas-slot="storage-table-scroll"
                   data-peas-table-width="detail"
-                  overflowX="auto"
                 >
                   <Table>
                     <TableBody>
@@ -168,26 +173,24 @@ export default function BlobDetails({
                       </TableRow>
                     </TableBody>
                   </Table>
-                </Box>
+                </DataTable>
               </Stack>
             </section>
 
             <section aria-labelledby="blob-metadata-title">
               <Stack gap="3">
-                <h2
-                  id="blob-metadata-title"
-                  data-peas-slot="storage-section-title"
-                >
-                  Custom metadata
-                </h2>
+                <Toolbar
+                  title={
+                    <span id="blob-metadata-title">Custom metadata</span>
+                  }
+                />
                 <Show
                   when={customMetadata.length > 0}
                   fallback={<p>No custom metadata recorded.</p>}
                 >
-                  <Box
+                  <DataTable
                     data-peas-slot="storage-table-scroll"
                     data-peas-table-width="detail"
-                    overflowX="auto"
                   >
                     <Table>
                       <TableHead>
@@ -207,7 +210,7 @@ export default function BlobDetails({
                         </For>
                       </TableBody>
                     </Table>
-                  </Box>
+                  </DataTable>
                 </Show>
               </Stack>
             </section>

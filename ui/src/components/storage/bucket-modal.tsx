@@ -2,8 +2,7 @@ import { state } from '@askrjs/askr';
 import { Show } from '@askrjs/askr/control';
 import { createMutation } from '@askrjs/askr/data';
 import { PlusIcon } from '@askrjs/lucide';
-import { Button, Field, FieldError } from '@askrjs/themes/controls';
-import { Stack } from '@askrjs/themes/layouts';
+import { Button, Field, FieldError, Stack } from '@askrjs/themes/components';
 import {
   Dialog,
   DialogClose,
@@ -22,7 +21,7 @@ import StorageDialogHeader from './storage-dialog-header';
 export default function BucketModal() {
   const [isOpen, setOpen] = state(false);
   const [error, setError] = state('');
-  const [bucketName, setBucketName] = state('');
+  let bucketInput: HTMLInputElement | null = null;
 
   const create = createMutation({
     action: (name: string, { signal }) => createBucket({ name, signal }),
@@ -36,7 +35,7 @@ export default function BucketModal() {
       return;
     }
 
-    const name = bucketName().trim();
+    const name = bucketInput?.value.trim() ?? '';
 
     if (!name) {
       setError('Bucket name is required.');
@@ -47,7 +46,9 @@ export default function BucketModal() {
 
     try {
       await create.execute(name);
-      setBucketName('');
+      if (bucketInput) {
+        bucketInput.value = '';
+      }
       setOpen(false);
     } catch (caughtError) {
       setError(
@@ -60,20 +61,18 @@ export default function BucketModal() {
 
   function onOpenChange(nextOpen: boolean): void {
     if (!nextOpen) {
-      setBucketName('');
+      if (bucketInput) {
+        bucketInput.value = '';
+      }
       setError('');
     }
     setOpen(nextOpen);
   }
 
-  function onNameInput(event: Event) {
-    const value =
-      event.target instanceof HTMLInputElement ? event.target.value : '';
-    setBucketName(value);
-  }
-
   function openDialog(): void {
-    setBucketName('');
+    if (bucketInput) {
+      bucketInput.value = '';
+    }
     setError('');
     setOpen(true);
   }
@@ -98,7 +97,9 @@ export default function BucketModal() {
                     id="bucket-name"
                     name="bucket-name"
                     disabled={create.pending}
-                    onInput={onNameInput}
+                    ref={(node: HTMLInputElement | null) => {
+                      bucketInput = node;
+                    }}
                   />
                 </Field>
                 <Show when={error()}>

@@ -995,6 +995,17 @@ components:
             - 'null'
         storage_class:
           type: string
+    ObjectFolderInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - prefix
+      properties:
+        name:
+          type: string
+        prefix:
+          type: string
     ObjectMetadata:
       type: object
       additionalProperties: false
@@ -1037,9 +1048,14 @@ components:
       type: object
       additionalProperties: false
       required:
+        - folders
         - items
         - next
       properties:
+        folders:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectFolderInfo'
         items:
           type: array
           items:

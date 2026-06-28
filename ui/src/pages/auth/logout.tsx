@@ -1,13 +1,39 @@
 import { resource } from '@askrjs/askr/resources';
 import { Link } from '@askrjs/askr/router';
 import { LogOutIcon } from '@askrjs/lucide';
-import { Button } from '@askrjs/themes/controls';
-import { Container, Section, Stack } from '@askrjs/themes/layouts';
-import { EmptyState } from '@askrjs/themes/feedback';
-import { logoutAdminSession } from '../../features/auth/admin-session';
-import { loginPath } from '../../shared/routes';
+import {
+  Button,
+  Container,
+  EmptyState,
+  Section,
+  Stack,
+} from '@askrjs/themes/components';
+import {
+  isDevAuthBypassed,
+  logoutAdminSession,
+} from '../../features/auth/admin-session';
+import { adminBucketsPath, loginPath } from '../../shared/routes';
 
 export default function LogoutPage() {
+  if (isDevAuthBypassed()) {
+    return (
+      <Section size="4">
+        <Container size="sm">
+          <EmptyState
+            icon={<LogOutIcon size={24} aria-hidden="true" />}
+            title="Local development mode"
+            description="Sign out is disabled while admin auth bypass is active."
+            actions={
+              <Button asChild>
+                <Link href={adminBucketsPath()}>Return to buckets</Link>
+              </Button>
+            }
+          />
+        </Container>
+      </Section>
+    );
+  }
+
   const logout = resource(({ signal }) => logoutAdminSession({ signal }), []);
 
   const isSigningOut = logout.pending;

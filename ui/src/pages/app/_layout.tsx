@@ -1,17 +1,22 @@
 import { Link } from '@askrjs/askr/router';
 import { LogOutIcon, MoonIcon, SunIcon } from '@askrjs/lucide';
-import { Container, Section, Stack } from '@askrjs/themes/layouts';
 import {
+  Container,
   Header,
   NavBrand,
   NavGroup,
   NavLink,
   Navbar,
-} from '@askrjs/themes/shells';
+  Section,
+  Stack,
+} from '@askrjs/themes/components';
 import { ThemeToggle } from '@askrjs/themes/theme';
+import { isDevAuthBypassed } from '../../features/auth/admin-session';
 import { adminBucketsPath, logoutPath } from '../../shared/routes';
 
 export default function AppLayout({ children }: { children?: unknown }) {
+  const showLogout = !isDevAuthBypassed();
+
   return (
     <>
       <Header>
@@ -27,9 +32,11 @@ export default function AppLayout({ children }: { children?: unknown }) {
                 lightIcon={<SunIcon aria-hidden="true" />}
               />
 
-              <NavLink href={logoutPath()} match="exact" aria-label="Log out">
-                <LogOutIcon aria-hidden="true" />
-              </NavLink>
+              {showLogout ? (
+                <NavLink href={logoutPath()} match="exact" aria-label="Log out">
+                  <LogOutIcon aria-hidden="true" />
+                </NavLink>
+              ) : null}
             </NavGroup>
           </Navbar>
         </Container>

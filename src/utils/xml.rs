@@ -75,6 +75,7 @@ pub fn tagging_xml(tags: &HashMap<String, String>) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn list_objects_xml(
     objects: &[Object],
+    common_prefixes: &[String],
     bucket: &str,
     prefix: &str,
     delimiter: Option<&str>,
@@ -122,6 +123,16 @@ pub fn list_objects_xml(
             modified,
             escape_xml(&obj.etag),
             obj.size
+        ));
+    }
+
+    for common_prefix in common_prefixes {
+        xml.push_str(&format!(
+            r#"
+  <CommonPrefixes>
+    <Prefix>{}</Prefix>
+  </CommonPrefixes>"#,
+            escape_xml(common_prefix)
         ));
     }
 

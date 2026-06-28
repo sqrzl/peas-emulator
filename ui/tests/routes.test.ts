@@ -151,7 +151,7 @@ describe('shared route helpers', () => {
     }
   });
 
-  it('sends blob search terms through the routed bucket page', async () => {
+  it('pushes blob search keystrokes through the routed bucket page', async () => {
     const searchRequests: string[] = [];
 
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -221,16 +221,21 @@ describe('shared route helpers', () => {
       const searchInput = root.querySelector(
         '#blob-search'
       ) as HTMLInputElement;
+      searchInput.focus();
+      expect(document.activeElement).toBe(searchInput);
       searchInput.value = 'notes';
-      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-      const submitButton = Array.from(root.querySelectorAll('button')).find(
-        (button) => button.textContent?.trim() === 'Search'
+      searchInput.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'notes',
+          inputType: 'insertText',
+        })
       );
-      submitButton?.dispatchEvent(
-        new MouseEvent('click', { bubbles: true, cancelable: true })
-      );
+      await flush();
+      expect(document.activeElement).toBe(searchInput);
 
       await flush();
+      expect(window.location.search).toContain('search=notes');
       expect(
         searchRequests.some((entry) => entry.includes('search=notes'))
       ).toBe(true);

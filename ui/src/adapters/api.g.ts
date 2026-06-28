@@ -980,6 +980,7 @@ export type ListMultipartUploadsResponse = {
 
 /** ListObjectsResponse schema */
 export type ListObjectsResponse = {
+  folders: Array<ObjectFolderInfo>;
   items: Array<ObjectInfo>;
   next: string | null;
 };
@@ -1020,6 +1021,12 @@ export type ObjectInfo = {
   last_modified: string;
   size: number;
   storage_class: string;
+};
+
+/** ObjectFolderInfo schema */
+export type ObjectFolderInfo = {
+  name: string;
+  prefix: string;
 };
 
 /** ObjectMetadata schema */

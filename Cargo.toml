@@ -59,6 +59,10 @@ name = "tier3_system"
 harness = false
 
 [[bench]]
+name = "tier3_admin_api"
+harness = false
+
+[[bench]]
 name = "tier4_integration_s3"
 harness = false
 

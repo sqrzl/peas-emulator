@@ -1,76 +1,12 @@
 @import '@askrjs/themes/default';
 
-:where([data-peas-slot='storage-page-header']) {
+:where([data-peas-slot='storage-page-header'])
+  :where([data-slot='page-header-title'], [data-slot='page-header-description']) {
+  overflow-wrap: anywhere;
+}
+
+:where([data-peas-slot='storage-search-field']) {
   min-inline-size: 0;
-}
-
-:where([data-peas-slot='storage-page-title']) {
-  margin: 0;
-  color: var(--ak-color-text);
-  font-size: var(--ak-font-size-2xl);
-  font-weight: var(--ak-font-weight-bold);
-  letter-spacing: 0;
-  line-height: var(--ak-line-height-tight);
-  overflow-wrap: anywhere;
-}
-
-@media (min-width: 48rem) {
-  :where([data-peas-slot='storage-page-title']) {
-    font-size: var(--ak-font-size-3xl);
-  }
-}
-
-:where([data-peas-slot='storage-page-description']) {
-  margin: 0;
-  color: var(--ak-color-text-muted);
-  font-size: var(--ak-font-size-sm);
-  line-height: var(--ak-line-height-normal);
-  overflow-wrap: anywhere;
-}
-
-:where([data-peas-slot='storage-section-title']) {
-  margin: 0;
-  color: var(--ak-color-text);
-  font-size: var(--ak-font-size-xl);
-  font-weight: var(--ak-font-weight-bold);
-  letter-spacing: 0;
-  line-height: var(--ak-line-height-tight);
-}
-
-:where([data-peas-slot='storage-dialog-header']) {
-  min-inline-size: 0;
-  text-align: start;
-}
-
-:where([data-peas-slot='storage-dialog-title']) {
-  margin: 0;
-  color: var(--ak-color-text);
-  font-size: var(--ak-font-size-xl);
-  font-weight: var(--ak-font-weight-bold);
-  letter-spacing: 0;
-  line-height: var(--ak-line-height-tight);
-  overflow-wrap: anywhere;
-  text-align: start;
-}
-
-:where([data-peas-slot='storage-dialog-description']) {
-  color: var(--ak-color-text-muted);
-  font-size: var(--ak-font-size-sm);
-  line-height: var(--ak-line-height-normal);
-  text-align: start;
-}
-
-:where([data-peas-slot='storage-dialog-description']) :where(p) {
-  margin: 0;
-  color: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  overflow-wrap: anywhere;
-  text-align: inherit;
-}
-
-:where([data-peas-slot='storage-search-form']) {
-  max-inline-size: 48rem;
 }
 
 :where([data-peas-slot='storage-table-scroll']) {
@@ -100,4 +36,14 @@
 
 :where([data-peas-slot='storage-table-scroll']) :where([data-slot='button']) {
   white-space: nowrap;
+}
+
+@media (max-width: 39.999rem) {
+  :where([data-peas-slot='storage-detail-actions']) {
+    inline-size: 100%;
+  }
+
+  :where([data-peas-slot='storage-detail-actions']) :where([data-slot='button']) {
+    flex: 1 1 10rem;
+  }
 }

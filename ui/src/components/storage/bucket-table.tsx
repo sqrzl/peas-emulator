@@ -1,8 +1,7 @@
 import { For } from '@askrjs/askr/control';
 import { Link } from '@askrjs/askr/router';
-import { Button } from '@askrjs/themes/controls';
 import { DatabaseIcon, TrashIcon } from '@askrjs/lucide';
-import { Flex } from '@askrjs/themes/layouts';
+import { Button, Inline } from '@askrjs/themes/components';
 import {
   Table,
   TableBody,
@@ -91,7 +90,9 @@ export default function BucketTable() {
             <TableRow>
               <TableHeaderCell>Bucket</TableHeaderCell>
               <TableHeaderCell>Created</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>
+                <Inline justify="end">Actions</Inline>
+              </TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -99,24 +100,25 @@ export default function BucketTable() {
               {(bucket) => (
                 <TableRow key={bucket.name}>
                   <TableCell>
-                    <Flex
-                      gap="2"
-                      align={{ initial: 'center' }}
-                      wrap={{ initial: 'wrap' }}
-                    >
+                    <Inline gap="2" align="center" wrap>
                       <DatabaseIcon aria-hidden="true" />
                       <Link href={bucketPath(bucket.name)}>{bucket.name}</Link>
-                    </Flex>
+                    </Inline>
                   </TableCell>
                   <TableCell>{formatRelativeTime(bucket.createdAt)}</TableCell>
                   <TableCell>
-                    <Button
-                      variant="secondary"
-                      aria-label={`Delete bucket ${bucket.name}`}
-                      onPress={() => remover.open({ bucketName: bucket.name })}
-                    >
-                      <TrashIcon aria-hidden="true" /> Delete
-                    </Button>
+                    <Inline justify="end" align="center">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Delete bucket ${bucket.name}`}
+                        onPress={() =>
+                          remover.open({ bucketName: bucket.name })
+                        }
+                      >
+                        <TrashIcon aria-hidden="true" />
+                      </Button>
+                    </Inline>
                   </TableCell>
                 </TableRow>
               )}

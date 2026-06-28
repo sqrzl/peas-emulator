@@ -195,6 +195,7 @@ impl Storage for IndexedStorage {
         }
 
         Ok(crate::models::ListObjectsResult {
+            common_prefixes: Vec::new(),
             objects,
             is_truncated,
             next_marker,
@@ -275,6 +276,14 @@ impl Storage for IndexedStorage {
         prefix: Option<&str>,
     ) -> Result<Vec<crate::models::Object>> {
         self.inner.list_object_versions(bucket, prefix)
+    }
+
+    fn list_object_versions_for_key(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Vec<crate::models::Object>> {
+        self.inner.list_object_versions_for_key(bucket, key)
     }
 
     fn delete_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<()> {

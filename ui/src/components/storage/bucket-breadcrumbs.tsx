@@ -2,12 +2,12 @@ import { For } from '@askrjs/askr/control';
 import { Link } from '@askrjs/askr/router';
 import {
   Breadcrumb,
-  BreadcrumbCurrent,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
+  BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@askrjs/themes/navs';
+} from '@askrjs/themes/components';
 import { storagePathCrumbs } from '../../features/storage/path';
 import { adminBucketsPath, bucketFolderPath } from '../../shared/routes';
 
@@ -35,7 +35,7 @@ export default function BucketBreadcrumbs({
               <Link href={bucketFolderPath(bucketName, '')}>{bucketName}</Link>
             </BreadcrumbLink>
           ) : (
-            <BreadcrumbCurrent>{bucketName}</BreadcrumbCurrent>
+            <BreadcrumbPage>{bucketName}</BreadcrumbPage>
           )}
         </BreadcrumbItem>
         <For each={crumbs} by={(crumb) => crumb.prefix}>
@@ -43,7 +43,7 @@ export default function BucketBreadcrumbs({
             <BreadcrumbItem>
               <BreadcrumbSeparator />
               {crumb.current ? (
-                <BreadcrumbCurrent>{crumb.label}</BreadcrumbCurrent>
+                <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
                   <Link href={bucketFolderPath(bucketName, crumb.prefix)}>

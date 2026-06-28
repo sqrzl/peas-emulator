@@ -1,4 +1,4 @@
-import { Stack } from '@askrjs/themes/layouts';
+import { Stack } from '@askrjs/themes/components';
 
 export default function StorageDialogForm({
   children,
@@ -11,9 +11,9 @@ export default function StorageDialogForm({
     <Stack
       asChild
       data-peas-slot="storage-dialog-form"
-      align={{ initial: 'stretch' }}
+      align="stretch"
       gap="4"
-      width={{ initial: '100%' }}
+      width="full"
     >
       <form onSubmit={onSubmit}>{children}</form>
     </Stack>

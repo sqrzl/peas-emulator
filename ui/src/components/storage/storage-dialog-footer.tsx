@@ -1,4 +1,4 @@
-import { Flex } from '@askrjs/themes/layouts';
+import { Inline } from '@askrjs/themes/components';
 
 export default function StorageDialogFooter({
   children,
@@ -6,15 +6,15 @@ export default function StorageDialogFooter({
   children?: unknown;
 }) {
   return (
-    <Flex
+    <Inline
       data-peas-slot="storage-dialog-footer"
-      justify={{ initial: 'end' }}
-      align={{ initial: 'center' }}
+      justify="end"
+      align="center"
       gap="2"
-      wrap={{ initial: 'wrap' }}
-      width={{ initial: '100%' }}
+      wrap
+      width="full"
     >
       {children}
-    </Flex>
+    </Inline>
   );
 }

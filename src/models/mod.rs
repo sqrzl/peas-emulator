@@ -20,6 +20,8 @@ pub use policy::{Acl, BucketPolicy, CannedAcl, Owner};
 /// Paginated list results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListObjectsResult {
+    #[serde(default)]
+    pub common_prefixes: Vec<String>,
     pub objects: Vec<Object>,
     pub is_truncated: bool,
     pub next_marker: Option<String>,

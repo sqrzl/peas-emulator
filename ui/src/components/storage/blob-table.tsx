@@ -2,9 +2,7 @@ import { For } from '@askrjs/askr/control';
 import { createMutation } from '@askrjs/askr/data';
 import { Link } from '@askrjs/askr/router';
 import { FileIcon, FolderIcon, TrashIcon } from '@askrjs/lucide';
-import { Button } from '@askrjs/themes/controls';
-import { Flex } from '@askrjs/themes/layouts';
-import { Badge } from '@askrjs/themes/surfaces';
+import { Badge, Button, Inline } from '@askrjs/themes/components';
 import {
   Table,
   TableBody,
@@ -13,12 +11,14 @@ import {
   TableHeaderCell,
   TableRow,
 } from '@askrjs/ui';
-import type { ObjectInfo as BlobInfo } from '../../adapters/api.g';
 import {
   deleteObject as deleteBlob,
   loadObjectPage,
 } from '../../features/objects/objects.query';
-import { collectBlobBrowserRows } from '../../features/storage/blob-browser';
+import {
+  type BlobBrowserRow,
+  splitBlobBrowserRows,
+} from '../../features/storage/blob-browser';
 import { useCursorList } from '../../features/storage/use-cursor-list';
 import { useDeleteTarget } from '../../features/storage/use-delete-target';
 import { blobListKey } from '../../features/storage/keys';
@@ -34,7 +34,7 @@ export default function BlobTable({
   bucketName: string;
   pathPrefix: string;
 }) {
-  const list = useCursorList<BlobInfo>(
+  const list = useCursorList<BlobBrowserRow>(
     `${blobListKey(bucketName)}:path=${pathPrefix}`,
     'search',
     async ({ search, next, signal }) => {
@@ -47,7 +47,12 @@ export default function BlobTable({
       });
 
       return {
-        items: page.items,
+        items: [
+          ...page.folders.map(
+            (folder): BlobBrowserRow => ({ type: 'folder', folder })
+          ),
+          ...page.items.map((blob): BlobBrowserRow => ({ type: 'blob', blob })),
+        ],
         next: page.next,
       };
     }
@@ -66,7 +71,7 @@ export default function BlobTable({
     removeError: 'Blob could not be deleted.',
   });
 
-  const rows = collectBlobBrowserRows(list.items(), pathPrefix);
+  const rows = splitBlobBrowserRows(list.items());
   const hasRows = rows.folders.length > 0 || rows.blobs.length > 0;
   const hasSearch = list.search().length > 0;
 
@@ -112,7 +117,9 @@ export default function BlobTable({
               <TableHeaderCell>Content type</TableHeaderCell>
               <TableHeaderCell>Size</TableHeaderCell>
               <TableHeaderCell>Last modified</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>
+                <Inline justify="end">Actions</Inline>
+              </TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -120,16 +127,12 @@ export default function BlobTable({
               {(folder) => (
                 <TableRow key={folder.prefix}>
                   <TableCell>
-                    <Flex
-                      gap="2"
-                      align={{ initial: 'center' }}
-                      wrap={{ initial: 'wrap' }}
-                    >
+                    <Inline gap="2" align="center" wrap>
                       <FolderIcon aria-hidden="true" />
                       <Link href={bucketFolderPath(bucketName, folder.prefix)}>
                         {folder.name}
                       </Link>
-                    </Flex>
+                    </Inline>
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">Folder</Badge>
@@ -137,13 +140,7 @@ export default function BlobTable({
                   <TableCell>-</TableCell>
                   <TableCell>-</TableCell>
                   <TableCell>-</TableCell>
-                  <TableCell>
-                    <Button variant="secondary" asChild>
-                      <Link href={bucketFolderPath(bucketName, folder.prefix)}>
-                        <FolderIcon aria-hidden="true" /> Open
-                      </Link>
-                    </Button>
-                  </TableCell>
+                  <TableCell />
                 </TableRow>
               )}
             </For>
@@ -151,16 +148,12 @@ export default function BlobTable({
               {(blob) => (
                 <TableRow key={blob.key}>
                   <TableCell>
-                    <Flex
-                      gap="2"
-                      align={{ initial: 'center' }}
-                      wrap={{ initial: 'wrap' }}
-                    >
+                    <Inline gap="2" align="center" wrap>
                       <FileIcon aria-hidden="true" />
                       <Link href={blobPath(bucketName, blob.key, blob.key)}>
                         {blob.key.slice(pathPrefix.length)}
                       </Link>
-                    </Flex>
+                    </Inline>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">Blob</Badge>
@@ -173,12 +166,16 @@ export default function BlobTable({
                     {formatRelativeTime(blob.last_modified)}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="secondary"
-                      onPress={() => remover.open({ blobKey: blob.key })}
-                    >
-                      <TrashIcon aria-hidden="true" /> Delete
-                    </Button>
+                    <Inline justify="end" align="center">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Delete blob ${blob.key}`}
+                        onPress={() => remover.open({ blobKey: blob.key })}
+                      >
+                        <TrashIcon aria-hidden="true" />
+                      </Button>
+                    </Inline>
                   </TableCell>
                 </TableRow>
               )}

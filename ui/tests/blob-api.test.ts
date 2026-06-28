@@ -486,6 +486,7 @@ describe('generated admin feature workflows', () => {
 
         if (prefix === 'docs/') {
           return jsonResponse({
+            folders: [{ name: 'api/', prefix: 'docs/api/' }],
             items: [
               {
                 key: 'docs/readme.txt',
@@ -495,20 +496,13 @@ describe('generated admin feature workflows', () => {
                 content_type: 'text/plain',
                 storage_class: 'standard',
               },
-              {
-                key: 'docs/api/openapi.json',
-                size: 17,
-                etag: 'etag-openapi',
-                last_modified: '2026-05-25T11:15:00.000Z',
-                content_type: 'application/json',
-                storage_class: 'standard',
-              },
             ],
             next: null,
           });
         }
 
         return jsonResponse({
+          folders: [],
           items: [
             {
               key: 'notes.txt',
@@ -567,7 +561,10 @@ describe('generated admin feature workflows', () => {
         signal,
       });
 
-      expect(folderPage.items).toHaveLength(2);
+      expect(folderPage.folders).toEqual([
+        { name: 'api/', prefix: 'docs/api/' },
+      ]);
+      expect(folderPage.items).toHaveLength(1);
       expect(folderPage.items[0]?.key).toBe('docs/readme.txt');
       expect(listCalls[0]).toEqual({
         prefix: 'docs/',

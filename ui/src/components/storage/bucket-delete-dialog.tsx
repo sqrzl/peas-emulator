@@ -1,5 +1,4 @@
-import { Button, FieldError } from '@askrjs/themes/controls';
-import { Stack } from '@askrjs/themes/layouts';
+import { Button, FieldError, Stack } from '@askrjs/themes/components';
 import {
   AlertDialog,
   AlertDialogContent,

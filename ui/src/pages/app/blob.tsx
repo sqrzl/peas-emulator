@@ -1,8 +1,12 @@
 import { resource } from '@askrjs/askr/resources';
 import { currentRoute, Link } from '@askrjs/askr/router';
-import { Button } from '@askrjs/themes/controls';
-import { EmptyState, Spinner } from '@askrjs/themes/feedback';
-import { Flex, Stack } from '@askrjs/themes/layouts';
+import {
+  Button,
+  EmptyState,
+  Inline,
+  Spinner,
+  Stack,
+} from '@askrjs/themes/components';
 import BlobBreadcrumbs from '../../components/storage/blob-breadcrumbs';
 import BlobDetails from '../../components/storage/blob-details';
 import StoragePageHeader from '../../components/storage/storage-page-header';
@@ -56,9 +60,9 @@ export default function Blob({
 
   if (resolvedBlob.pending && !resolvedBlob.value) {
     return (
-      <Flex justify={{ initial: 'center' }} align={{ initial: 'center' }}>
+      <Inline justify="center" align="center">
         <Spinner />
-      </Flex>
+      </Inline>
     );
   }
 

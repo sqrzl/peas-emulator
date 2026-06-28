@@ -47,6 +47,12 @@ pub struct ObjectInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ObjectFolderInfo {
+    pub name: String,
+    pub prefix: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ObjectMetadata {
     pub key: String,
     pub size: u64,
@@ -60,6 +66,7 @@ pub struct ObjectMetadata {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListObjectsResponse {
+    pub folders: Vec<ObjectFolderInfo>,
     pub items: Vec<ObjectInfo>,
     pub next: Option<String>,
 }

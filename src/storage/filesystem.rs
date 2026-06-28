@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use crate::models::{policy::Acl, Bucket, MultipartUpload, Object};
-use crate::storage::{LockFreeIndex, Storage};
+use crate::storage::{DirectoryEntryKind, LockFreeIndex, Storage};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -555,7 +555,7 @@ impl Storage for FilesystemStorage {
         &self,
         bucket: &str,
         prefix: Option<&str>,
-        _delimiter: Option<&str>,
+        delimiter: Option<&str>,
         marker: Option<&str>,
         max_keys: Option<usize>,
     ) -> Result<crate::models::ListObjectsResult> {
@@ -565,6 +565,49 @@ impl Storage for FilesystemStorage {
         }
 
         let max_keys = max_keys.unwrap_or(1000);
+
+        if delimiter.is_some_and(|value| !value.is_empty()) {
+            let entries = self.index.list_child_entries(
+                bucket,
+                prefix.unwrap_or(""),
+                marker,
+                Some(max_keys + 1),
+            );
+            let is_truncated = entries.len() > max_keys;
+            let page_entries = entries.iter().take(max_keys).collect::<Vec<_>>();
+            let next_marker = if is_truncated {
+                if max_keys == 0 {
+                    entries.first().map(|entry| entry.path.clone())
+                } else {
+                    page_entries.last().map(|entry| entry.path.clone())
+                }
+            } else {
+                None
+            };
+
+            let mut common_prefixes = Vec::new();
+            let mut objects = Vec::with_capacity(page_entries.len());
+            for entry in page_entries {
+                match entry.kind {
+                    DirectoryEntryKind::CommonPrefix => common_prefixes.push(entry.path.clone()),
+                    DirectoryEntryKind::Object => {
+                        let object_id = Self::compute_object_id(bucket, &entry.path);
+                        let metadata_path = self.object_metadata_path(bucket, &object_id);
+                        if let Ok(obj) = self.read_object_metadata(&metadata_path) {
+                            objects.push(obj);
+                        }
+                    }
+                }
+            }
+
+            return Ok(crate::models::ListObjectsResult {
+                common_prefixes,
+                objects,
+                is_truncated,
+                next_marker,
+            });
+        }
+
         let keys = self
             .index
             .list_prefix_marker(bucket, prefix, marker, Some(max_keys + 1));
@@ -586,6 +629,7 @@ impl Storage for FilesystemStorage {
         };
 
         Ok(crate::models::ListObjectsResult {
+            common_prefixes: Vec::new(),
             objects,
             is_truncated,
             next_marker,
@@ -940,6 +984,50 @@ impl Storage for FilesystemStorage {
         Ok(versions)
     }
 
+    fn list_object_versions_for_key(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Vec<crate::models::Object>> {
+        if !self.bucket_exists(bucket)? {
+            return Err(Error::BucketNotFound);
+        }
+
+        let object_id = Self::compute_object_id(bucket, key);
+        let object_id_dir = self.object_id_dir(bucket, &object_id);
+        if !object_id_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut versions = Vec::new();
+        let metadata_path = self.object_metadata_path(bucket, &object_id);
+        if let Ok(obj) = self.read_object_metadata(&metadata_path) {
+            if obj.key == key && obj.version_id.is_some() {
+                versions.push(obj);
+            }
+        }
+
+        let versions_dir = self.versions_dir(bucket, &object_id);
+        if let Ok(version_entries) = fs::read_dir(&versions_dir) {
+            for version_entry in version_entries.flatten() {
+                let version_path = version_entry.path();
+                if !version_path.is_dir() {
+                    continue;
+                }
+
+                let metadata_path = version_path.join("object.meta.json");
+                if let Ok(obj) = self.read_object_metadata(&metadata_path) {
+                    if obj.key == key {
+                        versions.push(obj);
+                    }
+                }
+            }
+        }
+
+        versions.sort_unstable_by(|a, b| a.version_id.cmp(&b.version_id));
+        Ok(versions)
+    }
+
     fn delete_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<()> {
         let object_lock = self.object_lock(bucket, key)?;
         let _guard = object_lock.lock().map_err(|_| {
@@ -1093,6 +1181,86 @@ mod tests {
 
         let fetched = storage.get_object(bucket, key).unwrap();
         assert_eq!(fetched.metadata.get("role"), Some(&"cache".to_string()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_rebuild_directory_index_with_metadata_present() {
+        // Arrange
+        let base = temp_path();
+        let bucket = "dir-rebuild";
+
+        {
+            let storage = FilesystemStorage::new(&base);
+            storage.create_bucket(bucket.to_string()).unwrap();
+            for key in ["docs/api/openapi.json", "docs/readme.txt", "image.png"] {
+                storage
+                    .put_object(
+                        bucket,
+                        key.to_string(),
+                        Object::new(key.to_string(), b"payload".to_vec(), "text/plain".into()),
+                    )
+                    .unwrap();
+            }
+        }
+
+        // Act
+        let storage = FilesystemStorage::new(&base);
+        let root = storage
+            .list_objects(bucket, Some(""), Some("/"), None, Some(10))
+            .unwrap();
+        let docs = storage
+            .list_objects(bucket, Some("docs/"), Some("/"), None, Some(10))
+            .unwrap();
+
+        // Assert
+        assert_eq!(root.common_prefixes, vec!["docs/".to_string()]);
+        assert_eq!(root.objects.len(), 1);
+        assert_eq!(root.objects[0].key, "image.png");
+        assert_eq!(docs.common_prefixes, vec!["docs/api/".to_string()]);
+        assert_eq!(docs.objects.len(), 1);
+        assert_eq!(docs.objects[0].key, "docs/readme.txt");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_prune_directory_prefix_after_last_child_delete() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let bucket = "dir-prune";
+        storage.create_bucket(bucket.to_string()).unwrap();
+
+        for key in ["docs/api/openapi.json", "docs/readme.txt"] {
+            storage
+                .put_object(
+                    bucket,
+                    key.to_string(),
+                    Object::new(key.to_string(), b"payload".to_vec(), "text/plain".into()),
+                )
+                .unwrap();
+        }
+
+        // Act
+        storage
+            .delete_object(bucket, "docs/api/openapi.json")
+            .unwrap();
+        let docs_after_nested_delete = storage
+            .list_objects(bucket, Some("docs/"), Some("/"), None, Some(10))
+            .unwrap();
+        storage.delete_object(bucket, "docs/readme.txt").unwrap();
+        let root_after_all_deletes = storage
+            .list_objects(bucket, Some(""), Some("/"), None, Some(10))
+            .unwrap();
+
+        // Assert
+        assert!(docs_after_nested_delete.common_prefixes.is_empty());
+        assert_eq!(docs_after_nested_delete.objects.len(), 1);
+        assert_eq!(docs_after_nested_delete.objects[0].key, "docs/readme.txt");
+        assert!(root_after_all_deletes.common_prefixes.is_empty());
+        assert!(root_after_all_deletes.objects.is_empty());
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1339,6 +1507,60 @@ mod tests {
             .collect();
         assert_eq!(version_ids.len(), 1);
         assert!(version_ids.contains(&first_version_id));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_list_versions_for_exact_key_without_unrelated_prefix_matches() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+
+        let bucket = "version-exact-bucket";
+        let key = "doc.txt";
+        storage.create_bucket(bucket.to_string()).unwrap();
+        storage.enable_versioning(bucket).unwrap();
+
+        for body in ["v1", "v2", "v3"] {
+            storage
+                .put_object(
+                    bucket,
+                    key.to_string(),
+                    Object::new(
+                        key.to_string(),
+                        body.as_bytes().to_vec(),
+                        "text/plain".into(),
+                    ),
+                )
+                .unwrap();
+        }
+
+        for body in ["other-v1", "other-v2"] {
+            storage
+                .put_object(
+                    bucket,
+                    "doc.txt-extra".to_string(),
+                    Object::new(
+                        "doc.txt-extra".to_string(),
+                        body.as_bytes().to_vec(),
+                        "text/plain".into(),
+                    ),
+                )
+                .unwrap();
+        }
+
+        // Act
+        let versions = storage.list_object_versions_for_key(bucket, key).unwrap();
+
+        // Assert
+        assert_eq!(versions.len(), 3);
+        assert!(versions.iter().all(|version| version.key == key));
+
+        storage.delete_object(bucket, key).unwrap();
+        let historical_versions = storage.list_object_versions_for_key(bucket, key).unwrap();
+        assert_eq!(historical_versions.len(), 2);
+        assert!(historical_versions.iter().all(|version| version.key == key));
 
         let _ = std::fs::remove_dir_all(&base);
     }

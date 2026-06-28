@@ -1,6 +1,6 @@
 import { navigate } from '@askrjs/askr/router';
-import { Button } from '@askrjs/themes/controls';
-import { Stack } from '@askrjs/themes/layouts';
+import { ArrowLeftIcon, ArrowUpIcon } from '@askrjs/lucide';
+import { Button, Stack } from '@askrjs/themes/components';
 import BucketBreadcrumbs from '../../components/storage/bucket-breadcrumbs';
 import BlobModal from '../../components/storage/blob-modal';
 import BlobTable from '../../components/storage/blob-table';
@@ -42,6 +42,7 @@ export default function Bucket({
               variant="secondary"
               onPress={() => navigate(adminBucketsPath())}
             >
+              <ArrowLeftIcon aria-hidden="true" />
               Back to buckets
             </Button>
             {normalizedPrefix ? (
@@ -56,6 +57,7 @@ export default function Bucket({
                   )
                 }
               >
+                <ArrowUpIcon aria-hidden="true" />
                 Up one level
               </Button>
             ) : null}

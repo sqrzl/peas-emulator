@@ -66,6 +66,14 @@ pub fn list_object_versions(
     storage.list_object_versions(bucket, prefix)
 }
 
+pub fn list_object_versions_for_key(
+    storage: &dyn Storage,
+    bucket: &str,
+    key: &str,
+) -> Result<Vec<Object>> {
+    storage.list_object_versions_for_key(bucket, key)
+}
+
 pub fn get_object_tags(
     storage: &dyn Storage,
     bucket: &str,

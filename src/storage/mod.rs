@@ -7,7 +7,7 @@ pub mod lockfree_index;
 
 pub use filesystem::FilesystemStorage;
 pub use indexed::IndexedStorage;
-pub use lockfree_index::LockFreeIndex;
+pub use lockfree_index::{DirectoryEntry, DirectoryEntryKind, LockFreeIndex};
 
 /// Storage backend trait - synchronous operations
 /// HTTP layer handles async/await by calling these on thread pool
@@ -79,6 +79,9 @@ pub trait Storage: Send + Sync {
     fn suspend_versioning(&self, bucket: &str) -> Result<()>;
     fn get_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<Object>;
     fn list_object_versions(&self, bucket: &str, prefix: Option<&str>) -> Result<Vec<Object>>;
+    fn list_object_versions_for_key(&self, bucket: &str, key: &str) -> Result<Vec<Object>> {
+        self.list_object_versions(bucket, Some(key))
+    }
     fn delete_object_version(&self, bucket: &str, key: &str, version_id: &str) -> Result<()>;
 
     // Tagging operations
