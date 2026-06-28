@@ -12,7 +12,7 @@
     "lint:fix": "vp lint . --fix",
     "fmt": "vp fmt .",
     "gen": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/api.g.ts",
-    "seed:sample": "node ./scripts/seed-sample-data.mjs"
+    "seed:sample": "node ./scripts/seed-sample-data.js"
   },
   "dependencies": {
     "@askrjs/askr": "^0.0.48",

@@ -578,6 +578,167 @@ describe('generated admin feature workflows', () => {
     }
   });
 
+  it('deletes every object from mixed paged folder trees', async () => {
+    const listCalls: Array<{
+      prefix: string | null;
+      next: string | null;
+    }> = [];
+    const deleted: string[] = [];
+
+    function objectRow(key: string) {
+      return {
+        key,
+        size: 1,
+        etag: `etag-${key}`,
+        last_modified: '2026-05-25T10:00:00.000Z',
+        content_type: 'application/octet-stream',
+        storage_class: 'standard',
+      };
+    }
+
+    const pages = new Map([
+      [
+        ':',
+        {
+          folders: [
+            { name: 'docs/', prefix: 'docs/' },
+            { name: 'media/', prefix: 'media/' },
+          ],
+          items: [objectRow('root.txt')],
+          next: 'root-page-2',
+        },
+      ],
+      [
+        ':root-page-2',
+        {
+          folders: [{ name: 'logs/', prefix: 'logs/' }],
+          items: [objectRow('root-2.bin')],
+          next: null,
+        },
+      ],
+      [
+        'docs/:',
+        {
+          folders: [{ name: 'api/', prefix: 'docs/api/' }],
+          items: [objectRow('docs/readme.txt')],
+          next: null,
+        },
+      ],
+      [
+        'docs/api/:',
+        {
+          folders: [],
+          items: [objectRow('docs/api/openapi.json')],
+          next: null,
+        },
+      ],
+      [
+        'media/:',
+        {
+          folders: [],
+          items: [objectRow('media/image.png')],
+          next: null,
+        },
+      ],
+      [
+        'logs/:',
+        {
+          folders: [{ name: '2026/', prefix: 'logs/2026/' }],
+          items: [],
+          next: null,
+        },
+      ],
+      [
+        'logs/2026/:',
+        {
+          folders: [],
+          items: [objectRow('logs/2026/a.log')],
+          next: 'logs-page-2',
+        },
+      ],
+      [
+        'logs/2026/:logs-page-2',
+        {
+          folders: [],
+          items: [objectRow('logs/2026/b.log')],
+          next: null,
+        },
+      ],
+    ]);
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+      const method = request.method.toUpperCase();
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects' &&
+        method === 'GET'
+      ) {
+        const prefix = url.searchParams.get('prefix');
+        const next = url.searchParams.get('next');
+        listCalls.push({ prefix, next });
+        const page = pages.get(`${prefix ?? ''}:${next ?? ''}`);
+        if (!page) {
+          throw new Error(`Unexpected page request: ${url.search}`);
+        }
+
+        return jsonResponse(page);
+      }
+
+      if (
+        url.pathname.startsWith('/admin/v1/buckets/alpha/objects/') &&
+        method === 'DELETE'
+      ) {
+        deleted.push(
+          decodeURIComponent(
+            url.pathname.replace('/admin/v1/buckets/alpha/objects/', '')
+          )
+        );
+        return new Response(null, { status: 204 });
+      }
+
+      throw new Error(
+        `Unexpected request: ${request.method} ${url.pathname}${url.search}`
+      );
+    };
+
+    try {
+      const count = await deleteAllBucketObjects({
+        bucketName: 'alpha',
+        signal: new AbortController().signal,
+      });
+
+      expect(count).toBe(7);
+      expect(listCalls).toEqual([
+        { prefix: null, next: null },
+        { prefix: null, next: 'root-page-2' },
+        { prefix: 'docs/', next: null },
+        { prefix: 'media/', next: null },
+        { prefix: 'logs/', next: null },
+        { prefix: 'docs/api/', next: null },
+        { prefix: 'logs/2026/', next: null },
+        { prefix: 'logs/2026/', next: 'logs-page-2' },
+      ]);
+      expect(deleted.sort()).toEqual(
+        [
+          'docs/api/openapi.json',
+          'docs/readme.txt',
+          'logs/2026/a.log',
+          'logs/2026/b.log',
+          'media/image.png',
+          'root-2.bin',
+          'root.txt',
+        ].sort()
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('uploads, downloads, and deletes object content through fgrzl/fetch', async () => {
     installBlobApiFetchMock();
 

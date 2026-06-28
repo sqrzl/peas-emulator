@@ -180,9 +180,7 @@ export default function BlobDetails({
             <section aria-labelledby="blob-metadata-title">
               <Stack gap="3">
                 <Toolbar
-                  title={
-                    <span id="blob-metadata-title">Custom metadata</span>
-                  }
+                  title={<span id="blob-metadata-title">Custom metadata</span>}
                 />
                 <Show
                   when={customMetadata.length > 0}

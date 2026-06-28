@@ -564,6 +564,18 @@ fn delete_bucket_lifecycle(storage: Arc<dyn Storage>, bucket: &str) -> Result<Re
 
 fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<Response<Body>> {
     let page = parse_object_page_params(query)?;
+    if page.search.is_some() {
+        let (items, next) = list_matching_objects(&storage, bucket, &page)?;
+        return Ok(json_response(
+            StatusCode::OK,
+            &crate::api::models::ListObjectsResponse {
+                folders: Vec::new(),
+                items,
+                next: encode_object_next(next, PageTokenKind::Objects),
+            },
+        ));
+    }
+
     let path_prefix = page.prefix.as_deref().unwrap_or("");
     let mut folders = Vec::new();
     let mut items = Vec::new();
@@ -637,6 +649,50 @@ fn list_objects(storage: Arc<dyn Storage>, bucket: &str, query: &str) -> Result<
             next: encode_object_next(next, PageTokenKind::Objects),
         },
     ))
+}
+
+fn list_matching_objects(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    page: &ObjectPageParams,
+) -> Result<(Vec<crate::api::models::ObjectInfo>, Option<String>)> {
+    let mut items = Vec::new();
+    let mut marker = page.next.clone();
+    let mut last_included_key: Option<String> = None;
+
+    loop {
+        let result = tokio::task::block_in_place(|| {
+            object_service::list_objects(
+                storage.as_ref(),
+                bucket,
+                page.prefix.as_deref(),
+                None,
+                marker.as_deref(),
+                Some(page.limit + 1),
+            )
+        })?;
+
+        marker = result.next_marker.clone();
+
+        for object in result.objects {
+            if !contains_search(&object.key, page.search.as_deref()) {
+                continue;
+            }
+
+            if items.len() >= page.limit {
+                return Ok((items, last_included_key));
+            }
+
+            last_included_key = Some(object.key.clone());
+            items.push(object_to_info(object));
+        }
+
+        if !result.is_truncated || marker.is_none() {
+            break;
+        }
+    }
+
+    Ok((items, None))
 }
 
 fn list_multipart_uploads(
@@ -1669,6 +1725,53 @@ mod tests {
         assert_eq!(second_search.items.len(), 1);
         assert_eq!(second_search.items[0].key, "docs/spec.txt");
         assert!(second_search.next.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn admin_object_search_finds_nested_matches_from_bucket_root() {
+        let storage = temp_storage();
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/v1/buckets")
+            .header("content-type", "application/json")
+            .body(Body::from("{\"name\":\"demo\"}"))
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        for key in [
+            "archive/2025/notes.md",
+            "archive/2026/report.txt",
+            "root.txt",
+        ] {
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/admin/v1/buckets/demo/objects/{}/content", key))
+                .header("content-type", "text/plain")
+                .body(Body::from(key.to_string()))
+                .unwrap();
+            let resp = call(req, storage.clone()).await;
+            assert!(matches!(
+                resp.status(),
+                StatusCode::CREATED | StatusCode::OK
+            ));
+        }
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/v1/buckets/demo/objects?limit=1&search=report")
+            .body(Body::default())
+            .unwrap();
+        let resp = call(req, storage.clone()).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_json_content_type(&resp);
+        let search: ListObjectsResponse = json_body(resp).await;
+        assert!(search.folders.is_empty());
+        assert_eq!(search.items.len(), 1);
+        assert_eq!(search.items[0].key, "archive/2026/report.txt");
+        assert!(search.next.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]

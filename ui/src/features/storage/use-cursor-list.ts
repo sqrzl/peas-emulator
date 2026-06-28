@@ -1,6 +1,6 @@
 import { state } from '@askrjs/askr';
 import { createQuery } from '@askrjs/askr/data';
-import { currentRoute, navigate } from '@askrjs/askr/router';
+import { currentRoute, updateRouteQuery } from '@askrjs/askr/router';
 import { resource } from '@askrjs/askr/resources';
 
 export type CursorPage<T> = {
@@ -51,51 +51,9 @@ function currentSearchFromRoute(queryParam: string): string {
   return currentRoute().query.get(queryParam)?.trim() ?? '';
 }
 
-function serializeRouteQuery(
-  query: ReturnType<typeof currentRoute>['query']
-): string {
-  const nextSearch = new URLSearchParams();
-  const entries = query.toJSON();
-
-  for (const [key, value] of Object.entries(entries)) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        nextSearch.append(key, item);
-      }
-      continue;
-    }
-
-    nextSearch.append(key, value);
-  }
-
-  return nextSearch.toString();
-}
-
-function writeSearchParam(
-  route: ReturnType<typeof currentRoute>,
-  queryParam: string,
-  nextValue: string
-): void {
+function writeSearchParam(queryParam: string, nextValue: string): void {
   const trimmed = nextValue.trim();
-  const nextSearch = new URLSearchParams(serializeRouteQuery(route.query));
-
-  if (trimmed) {
-    nextSearch.set(queryParam, trimmed);
-  } else {
-    nextSearch.delete(queryParam);
-  }
-
-  const nextHref = `${route.path}${
-    nextSearch.toString() ? `?${nextSearch}` : ''
-  }${route.hash ? `#${route.hash}` : ''}`;
-  const currentQuery = serializeRouteQuery(route.query);
-  const currentHref = `${route.path}${
-    currentQuery ? `?${currentQuery}` : ''
-  }${route.hash ? `#${route.hash}` : ''}`;
-
-  if (nextHref !== currentHref) {
-    navigate(nextHref, { history: 'replace' });
-  }
+  updateRouteQuery({ [queryParam]: trimmed || null }, { history: 'replace' });
 }
 
 export function useCursorList<T>(
@@ -113,9 +71,8 @@ export function useCursorList<T>(
   const [history, setHistory] = state<Array<string | undefined>>([]);
   const routeSearch = route.query.get(queryParam)?.trim() ?? '';
   const activeSearch = search();
-  const routeSearchSynced = routeSearch === activeSearch;
-  const currentCursor = routeSearchSynced ? cursor() : undefined;
-  const currentSearch = routeSearch;
+  const currentCursor = cursor();
+  const currentSearch = activeSearch;
   const queryKey = `${keyPrefix}:search=${currentSearch}:cursor=${currentCursor ?? ''}`;
 
   const query = createQuery<CursorPage<T>>({
@@ -123,7 +80,7 @@ export function useCursorList<T>(
     fetch: cacheFetchForQueryKey(queryKey, ({ signal }) =>
       fetchPage({
         next: currentCursor,
-        search: routeSearch || undefined,
+        search: currentSearch || undefined,
         signal,
       })
     ),
@@ -135,7 +92,7 @@ export function useCursorList<T>(
       return;
     }
 
-    writeSearchParam(route, queryParam, nextValue);
+    writeSearchParam(queryParam, nextValue);
     setSearchValue(nextValue);
     setCursor(undefined);
     setHistory([]);

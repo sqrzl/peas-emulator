@@ -612,8 +612,9 @@ impl Storage for FilesystemStorage {
             .index
             .list_prefix_marker(bucket, prefix, marker, Some(max_keys + 1));
 
-        let mut objects = Vec::with_capacity(keys.len().min(max_keys));
-        for obj_key in keys.iter().take(max_keys) {
+        let page_keys = keys.iter().take(max_keys).collect::<Vec<_>>();
+        let mut objects = Vec::with_capacity(page_keys.len());
+        for obj_key in &page_keys {
             let object_id = Self::compute_object_id(bucket, obj_key);
             let metadata_path = self.object_metadata_path(bucket, &object_id);
             if let Ok(obj) = self.read_object_metadata(&metadata_path) {
@@ -623,7 +624,11 @@ impl Storage for FilesystemStorage {
 
         let is_truncated = keys.len() > max_keys;
         let next_marker = if is_truncated {
-            keys.get(max_keys).cloned()
+            if max_keys == 0 {
+                keys.first().cloned()
+            } else {
+                page_keys.last().map(|key| (*key).clone())
+            }
         } else {
             None
         };
@@ -1221,6 +1226,49 @@ mod tests {
         assert_eq!(docs.common_prefixes, vec!["docs/api/".to_string()]);
         assert_eq!(docs.objects.len(), 1);
         assert_eq!(docs.objects[0].key, "docs/readme.txt");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn should_page_flat_object_listing_without_skipping_marker_boundary() {
+        // Arrange
+        let base = temp_path();
+        let storage = FilesystemStorage::new(&base);
+        let bucket = "flat-page";
+        storage.create_bucket(bucket.to_string()).unwrap();
+
+        for key in ["a.txt", "b.txt", "c.txt"] {
+            storage
+                .put_object(
+                    bucket,
+                    key.to_string(),
+                    Object::new(key.to_string(), b"payload".to_vec(), "text/plain".into()),
+                )
+                .unwrap();
+        }
+
+        // Act
+        let first = storage
+            .list_objects(bucket, None, None, None, Some(1))
+            .unwrap();
+        let second = storage
+            .list_objects(bucket, None, None, first.next_marker.as_deref(), Some(1))
+            .unwrap();
+        let third = storage
+            .list_objects(bucket, None, None, second.next_marker.as_deref(), Some(1))
+            .unwrap();
+
+        // Assert
+        assert_eq!(first.objects.len(), 1);
+        assert_eq!(first.objects[0].key, "a.txt");
+        assert_eq!(first.next_marker.as_deref(), Some("a.txt"));
+        assert_eq!(second.objects.len(), 1);
+        assert_eq!(second.objects[0].key, "b.txt");
+        assert_eq!(second.next_marker.as_deref(), Some("b.txt"));
+        assert_eq!(third.objects.len(), 1);
+        assert_eq!(third.objects[0].key, "c.txt");
+        assert!(third.next_marker.is_none());
 
         let _ = std::fs::remove_dir_all(&base);
     }

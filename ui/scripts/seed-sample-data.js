@@ -313,7 +313,9 @@ async function ensureAdminSession() {
   sessionCookie = cookieFromHeaders(login.headers);
 
   if (!sessionCookie) {
-    throw new Error('Admin login succeeded but no session cookie was returned.');
+    throw new Error(
+      'Admin login succeeded but no session cookie was returned.'
+    );
   }
 
   console.log(`Admin session: authenticated as ${credentials.username}`);
@@ -357,10 +359,11 @@ async function putObject(object) {
     }
   );
 
-  await expectStatus(response, `Upload ${object.bucket}/${object.key}`, [
-    200,
-    201,
-  ]);
+  await expectStatus(
+    response,
+    `Upload ${object.bucket}/${object.key}`,
+    [200, 201]
+  );
 
   console.log(
     `${response.status === 201 ? '+' : '='} object ${object.bucket}/${object.key}`

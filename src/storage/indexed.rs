@@ -179,7 +179,11 @@ impl Storage for IndexedStorage {
         let is_truncated = keys.len() > max_keys;
 
         let next_marker = if is_truncated && keys.len() > max_keys {
-            let next_key = keys[max_keys].clone();
+            let next_key = if max_keys == 0 {
+                keys[0].clone()
+            } else {
+                keys[max_keys - 1].clone()
+            };
             keys.truncate(max_keys);
             Some(next_key)
         } else {

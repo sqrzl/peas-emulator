@@ -1,7 +1,10 @@
 @import '@askrjs/themes/default';
 
 :where([data-peas-slot='storage-page-header'])
-  :where([data-slot='page-header-title'], [data-slot='page-header-description']) {
+  :where(
+    [data-slot='page-header-title'],
+    [data-slot='page-header-description']
+  ) {
   overflow-wrap: anywhere;
 }
 
@@ -43,7 +46,8 @@
     inline-size: 100%;
   }
 
-  :where([data-peas-slot='storage-detail-actions']) :where([data-slot='button']) {
+  :where([data-peas-slot='storage-detail-actions'])
+    :where([data-slot='button']) {
     flex: 1 1 10rem;
   }
 }

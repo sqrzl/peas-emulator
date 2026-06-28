@@ -855,6 +855,88 @@ describe('simplified page flows', () => {
     }
   });
 
+  it('keeps blob search focused while syncing keystrokes to the url', async () => {
+    const originalUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const objectListRequests: string[] = [];
+
+    window.history.pushState(null, '', '/admin/buckets/alpha');
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request =
+        typeof input === 'string' || input instanceof URL
+          ? new Request(input, init)
+          : input;
+      const url = new URL(request.url, 'http://localhost');
+      const search = url.searchParams.get('search');
+
+      if (
+        url.pathname === '/admin/v1/buckets/alpha/objects' &&
+        request.method === 'GET'
+      ) {
+        objectListRequests.push(url.search);
+        return jsonResponse({
+          folders: [],
+          items:
+            search === 'notes'
+              ? [
+                  {
+                    key: 'notes.txt',
+                    size: 18,
+                    etag: 'etag-notes',
+                    last_modified: '2026-05-25T08:35:00.000Z',
+                    content_type: 'text/plain',
+                    storage_class: 'standard',
+                  },
+                ]
+              : [
+                  {
+                    key: 'image.png',
+                    size: 12,
+                    etag: 'etag-image',
+                    last_modified: '2026-05-25T08:30:00.000Z',
+                    content_type: 'image/png',
+                    storage_class: 'standard',
+                  },
+                ],
+          next: null,
+        });
+      }
+
+      throw new Error(
+        `Unexpected request: ${request.method} ${url.pathname}${url.search}`
+      );
+    };
+
+    const root = mount(() => <BucketPage bucketName="alpha" />);
+
+    try {
+      await flush();
+      const searchInput = root.querySelector(
+        '#blob-search'
+      ) as HTMLInputElement;
+      expect(searchInput).toBeTruthy();
+
+      searchInput.focus();
+      searchInput.value = 'notes';
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      await flush();
+      await flush();
+
+      expect(document.activeElement).toBe(searchInput);
+      expect(searchInput.value).toBe('notes');
+      expect(window.location.search).toBe('?search=notes');
+      expect(
+        objectListRequests.some((request) => request.includes('search=notes'))
+      ).toBe(true);
+      expect(root.textContent).toContain('notes.txt');
+    } finally {
+      cleanupApp(root);
+      root.remove();
+      window.history.pushState(null, '', originalUrl || '/');
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('renders blob metadata', async () => {
     const objectListRequests: string[] = [];
 
