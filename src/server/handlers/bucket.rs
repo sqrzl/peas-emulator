@@ -14,9 +14,13 @@ use http::StatusCode;
 use hyper::Response;
 use std::sync::Arc;
 
+mod get;
 mod helpers;
+mod put;
 
 use self::helpers::*;
+pub use get::bucket_get_or_list_objects;
+pub use put::bucket_put;
 
 pub async fn list_buckets(
     storage: Arc<dyn Storage>,
@@ -102,73 +106,57 @@ pub async fn bucket_delete(
     }
 
     if req.has_query_param("website") {
-        match tokio::task::block_in_place(|| {
+        let result = tokio::task::block_in_place(|| {
             with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
                 metadata.remove(S3_WEBSITE_XML_KEY);
             })
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::NO_CONTENT)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(e) => Ok(storage_error_response(&e, &req_id)),
-        }
+        });
+        Ok(bucket_delete_response(
+            result,
+            storage.as_ref(),
+            bucket,
+            req,
+            &req_id,
+            None,
+        ))
     } else if req.has_query_param("cors") {
-        match tokio::task::block_in_place(|| {
+        let result = tokio::task::block_in_place(|| {
             with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
                 metadata.remove(S3_CORS_XML_KEY);
             })
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::NO_CONTENT)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                cors_snapshot.as_deref(),
-            )
-            .empty()),
-            Err(e) => Ok(storage_error_response(&e, &req_id)),
-        }
+        });
+        Ok(bucket_delete_response(
+            result,
+            storage.as_ref(),
+            bucket,
+            req,
+            &req_id,
+            cors_snapshot.as_deref(),
+        ))
     } else if req.has_query_param("lifecycle") {
-        match tokio::task::block_in_place(|| {
+        let result = tokio::task::block_in_place(|| {
             bucket_service::delete_bucket_lifecycle(storage.as_ref(), bucket)
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::NO_CONTENT)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(e) => Ok(storage_error_response(&e, &req_id)),
-        }
+        });
+        Ok(bucket_delete_response(
+            result,
+            storage.as_ref(),
+            bucket,
+            req,
+            &req_id,
+            None,
+        ))
     } else if req.has_query_param("policy") {
-        match tokio::task::block_in_place(|| {
+        let result = tokio::task::block_in_place(|| {
             bucket_service::delete_bucket_policy(storage.as_ref(), bucket)
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::NO_CONTENT)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(e) => Ok(storage_error_response(&e, &req_id)),
-        }
+        });
+        Ok(bucket_delete_response(
+            result,
+            storage.as_ref(),
+            bucket,
+            req,
+            &req_id,
+            None,
+        ))
     } else if req.has_query_param("versioning") || req.has_query_param("acl") {
         Ok(xml_error_response(
             StatusCode::BAD_REQUEST,
@@ -191,962 +179,26 @@ pub async fn bucket_delete(
     }
 }
 
-#[allow(clippy::needless_return)]
-pub async fn bucket_put(
-    storage: Arc<dyn Storage>,
-    auth_config: Arc<AuthConfig>,
+fn bucket_delete_response<T>(
+    result: crate::error::Result<T>,
+    storage: &dyn Storage,
     bucket: &str,
     req: &crate::server::http::Request,
-    req_id: String,
-) -> Result<Response<Body>, String> {
-    let action = if req.has_query_param("versioning") {
-        "s3:PutBucketVersioning"
-    } else if req.has_query_param("lifecycle") {
-        "s3:PutLifecycleConfiguration"
-    } else if req.has_query_param("requestPayment") {
-        "s3:PutBucketRequestPayment"
-    } else if req.has_query_param("website") {
-        "s3:PutBucketWebsite"
-    } else if req.has_query_param("cors") {
-        "s3:PutBucketCors"
-    } else if req.has_query_param("acl") {
-        "s3:PutBucketAcl"
-    } else if req.has_query_param("policy") {
-        "s3:PutBucketPolicy"
-    } else {
-        "s3:CreateBucket"
-    };
-
-    if let Err(response) = check_authorization(req, &auth_config, &storage, bucket, None, action) {
-        return Ok(response);
-    }
-
-    if let Err(e) = validation::validate_bucket_name(bucket) {
-        return Ok(xml_error_response(
-            StatusCode::BAD_REQUEST,
-            "InvalidBucketName",
-            &e,
-            &req_id,
-        ));
-    }
-
-    if req.has_query_param("lifecycle") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        let cfg = match xml_utils::parse_lifecycle_xml(&body) {
-            Ok(c) => c,
-            Err(msg) => {
-                return Ok(xml_error_response(
-                    StatusCode::BAD_REQUEST,
-                    "MalformedXML",
-                    &msg,
-                    &req_id,
-                ));
-            }
-        };
-
-        match tokio::task::block_in_place(|| {
-            bucket_service::put_bucket_lifecycle(storage.as_ref(), bucket, cfg)
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::OK)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
-                StatusCode::NOT_FOUND,
-                "NoSuchBucket",
-                "Bucket not found",
-                &req_id,
-            )),
-            Err(e) => Ok(xml_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &e.to_string(),
-                &req_id,
-            )),
-        }
-    } else if req.has_query_param("requestPayment") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        let payer = metadata_value(&body, b"Payer").unwrap_or_default();
-        if payer != "Requester" && payer != "BucketOwner" {
-            return Ok(xml_error_response(
-                StatusCode::BAD_REQUEST,
-                "MalformedXML",
-                "RequestPaymentConfiguration must contain a valid Payer value",
-                &req_id,
-            ));
-        }
-
-        match tokio::task::block_in_place(|| {
-            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
-                metadata.insert(S3_REQUEST_PAYMENT_KEY.to_string(), payer);
-            })
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::OK)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
-                StatusCode::NOT_FOUND,
-                "NoSuchBucket",
-                "Bucket not found",
-                &req_id,
-            )),
-            Err(e) => Ok(xml_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &e.to_string(),
-                &req_id,
-            )),
-        }
-    } else if req.has_query_param("website") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        match tokio::task::block_in_place(|| {
-            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
-                metadata.insert(S3_WEBSITE_XML_KEY.to_string(), body);
-            })
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::OK)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
-                StatusCode::NOT_FOUND,
-                "NoSuchBucket",
-                "Bucket not found",
-                &req_id,
-            )),
-            Err(e) => Ok(xml_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &e.to_string(),
-                &req_id,
-            )),
-        }
-    } else if req.has_query_param("cors") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        match tokio::task::block_in_place(|| {
-            with_bucket_metadata(storage.as_ref(), bucket, |metadata| {
-                metadata.insert(S3_CORS_XML_KEY.to_string(), body);
-            })
-        }) {
-            Ok(_) => Ok(apply_bucket_cors_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::OK)
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-                None,
-            )
-            .empty()),
-            Err(crate::error::Error::BucketNotFound) => Ok(xml_error_response(
-                StatusCode::NOT_FOUND,
-                "NoSuchBucket",
-                "Bucket not found",
-                &req_id,
-            )),
-            Err(e) => Ok(xml_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &e.to_string(),
-                &req_id,
-            )),
-        }
-    } else if req.has_query_param("versioning") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        let enabled = match xml_utils::parse_versioning_xml(&body) {
-            Ok(e) => e,
-            Err(msg) => {
-                return Ok(xml_error_response(
-                    StatusCode::BAD_REQUEST,
-                    "MalformedXML",
-                    &msg,
-                    &req_id,
-                ));
-            }
-        };
-        if enabled {
-            match tokio::task::block_in_place(|| {
-                bucket_service::set_versioning(storage.as_ref(), bucket, true)
-            }) {
-                Ok(_) => {
-                    return Ok(apply_bucket_cors_headers(
-                        storage.as_ref(),
-                        bucket,
-                        req,
-                        ResponseBuilder::new(StatusCode::OK)
-                            .header("x-amz-request-id", &req_id)
-                            .header("x-amz-id-2", &header_utils::generate_request_id()),
-                        None,
-                    )
-                    .empty())
-                }
-                Err(crate::error::Error::BucketNotFound) => {
-                    return Ok(xml_error_response(
-                        StatusCode::NOT_FOUND,
-                        "NoSuchBucket",
-                        "Bucket not found",
-                        &req_id,
-                    ));
-                }
-                Err(e) => {
-                    return Ok(xml_error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                        &req_id,
-                    ));
-                }
-            }
-        } else {
-            match tokio::task::block_in_place(|| {
-                bucket_service::set_versioning(storage.as_ref(), bucket, false)
-            }) {
-                Ok(_) => {
-                    return Ok(apply_bucket_cors_headers(
-                        storage.as_ref(),
-                        bucket,
-                        req,
-                        ResponseBuilder::new(StatusCode::OK)
-                            .header("x-amz-request-id", &req_id)
-                            .header("x-amz-id-2", &header_utils::generate_request_id()),
-                        None,
-                    )
-                    .empty())
-                }
-                Err(crate::error::Error::BucketNotFound) => {
-                    return Ok(xml_error_response(
-                        StatusCode::NOT_FOUND,
-                        "NoSuchBucket",
-                        "Bucket not found",
-                        &req_id,
-                    ));
-                }
-                Err(e) => {
-                    return Ok(xml_error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                        &req_id,
-                    ));
-                }
-            }
-        }
-    } else if req.has_query_param("acl") {
-        let acl = match if req.body.is_empty() {
-            acl::acl_from_headers(req).map_err(|message| ("InvalidArgument", message))
-        } else {
-            acl::acl_from_xml_body(&req.body).map_err(|message| ("MalformedXML", message))
-        } {
-            Ok(acl) => acl,
-            Err((code, message)) => {
-                return Ok(xml_error_response(
-                    StatusCode::BAD_REQUEST,
-                    code,
-                    &message,
-                    &req_id,
-                ))
-            }
-        };
-        match tokio::task::block_in_place(|| {
-            bucket_service::put_bucket_acl(storage.as_ref(), bucket, acl)
-        }) {
-            Ok(_) => {
-                return Ok(apply_bucket_cors_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                    None,
-                )
-                .empty())
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("policy") {
-        let body = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        let policy: crate::models::policy::BucketPolicyDocument =
-            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON policy: {}", e))?;
-        match tokio::task::block_in_place(|| {
-            bucket_service::put_bucket_policy(storage.as_ref(), bucket, policy)
-        }) {
-            Ok(_) => {
-                return Ok(apply_bucket_cors_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                    None,
-                )
-                .empty())
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else {
-        tokio::task::block_in_place(|| {
-            bucket_service::create_bucket(storage.as_ref(), bucket.to_string())
-        })?;
-        Ok(ResponseBuilder::new(StatusCode::OK)
-            .header("x-amz-request-id", &req_id)
-            .header("x-amz-id-2", &header_utils::generate_request_id())
-            .empty())
-    }
-}
-
-#[allow(clippy::needless_return)]
-pub async fn bucket_get_or_list_objects(
-    storage: Arc<dyn Storage>,
-    auth_config: Arc<AuthConfig>,
-    bucket: &str,
-    req: &crate::server::http::Request,
-    req_id: String,
-) -> Result<Response<Body>, String> {
-    if cors::is_preflight(req) {
-        return Ok(cors::preflight_response(
-            storage.as_ref(),
+    req_id: &str,
+    cors_snapshot: Option<&str>,
+) -> Response<Body> {
+    match result {
+        Ok(_) => apply_bucket_cors_headers(
+            storage,
             bucket,
             req,
-            &req_id,
-        ));
-    }
-
-    if let Err(response) = check_authorization(
-        req,
-        &auth_config,
-        &storage,
-        bucket,
-        None,
-        bucket_get_action(req),
-    ) {
-        return Ok(response);
-    }
-
-    if req.has_query_param("requestPayment") {
-        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
-            Ok(bucket_record) => {
-                let payer = bucket_record
-                    .metadata
-                    .get(S3_REQUEST_PAYMENT_KEY)
-                    .map(|value| value.as_str())
-                    .unwrap_or("BucketOwner");
-                let xml = format!(
-                    "{}\n<RequestPaymentConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <Payer>{}</Payer>\n</RequestPaymentConfiguration>",
-                    xml_utils::xml_declaration(),
-                    payer
-                );
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("website") {
-        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
-            Ok(bucket_record) => match bucket_record.metadata.get(S3_WEBSITE_XML_KEY) {
-                Some(xml) => {
-                    return Ok(cors::apply_actual_request_headers(
-                        storage.as_ref(),
-                        bucket,
-                        req,
-                        ResponseBuilder::new(StatusCode::OK)
-                            .content_type("application/xml; charset=utf-8")
-                            .header("x-amz-request-id", &req_id)
-                            .header("x-amz-id-2", &header_utils::generate_request_id()),
-                    )
-                    .body(xml.clone().into_bytes())
-                    .build());
-                }
-                None => {
-                    return Ok(xml_error_response(
-                        StatusCode::NOT_FOUND,
-                        "NoSuchWebsiteConfiguration",
-                        "The specified bucket does not have a website configuration",
-                        &req_id,
-                    ))
-                }
-            },
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("cors") {
-        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
-            Ok(bucket_record) => match bucket_record.metadata.get(S3_CORS_XML_KEY) {
-                Some(xml) => {
-                    return Ok(cors::apply_actual_request_headers(
-                        storage.as_ref(),
-                        bucket,
-                        req,
-                        ResponseBuilder::new(StatusCode::OK)
-                            .content_type("application/xml; charset=utf-8")
-                            .header("x-amz-request-id", &req_id)
-                            .header("x-amz-id-2", &header_utils::generate_request_id()),
-                    )
-                    .body(xml.clone().into_bytes())
-                    .build());
-                }
-                None => {
-                    return Ok(xml_error_response(
-                        StatusCode::NOT_FOUND,
-                        "NoSuchCORSConfiguration",
-                        "The CORS configuration does not exist",
-                        &req_id,
-                    ))
-                }
-            },
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("lifecycle") {
-        match tokio::task::block_in_place(|| {
-            bucket_service::get_bucket_lifecycle(storage.as_ref(), bucket)
-        }) {
-            Ok(cfg) => {
-                let xml = xml_utils::lifecycle_xml(&cfg);
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(crate::error::Error::KeyNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchLifecycleConfiguration",
-                    "No lifecycle configuration present",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("policy") {
-        match tokio::task::block_in_place(|| {
-            bucket_service::get_bucket_policy(storage.as_ref(), bucket)
-        }) {
-            Ok(policy) => {
-                let json = serde_json::to_string(&policy)
-                    .map_err(|e| format!("JSON serialization error: {}", e))?;
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/json; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(json.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(crate::error::Error::KeyNotFound) => {
-                let xml = xml_utils::error_xml(
-                    "NoSuchBucketPolicy",
-                    "The bucket policy does not exist",
-                    &req_id,
-                );
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
-    } else if req.has_query_param("acl") {
-        match tokio::task::block_in_place(|| {
-            bucket_service::get_bucket_acl(storage.as_ref(), bucket)
-        }) {
-            Ok(acl) => {
-                let owner = crate::models::policy::Owner {
-                    id: "peas-emulator".to_string(),
-                    display_name: "S3 Emulator".to_string(),
-                };
-                let xml = xml_utils::acl_xml(&owner, &acl);
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ))
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ))
-            }
-        }
-    } else if req.has_query_param("versioning") {
-        match tokio::task::block_in_place(|| bucket_service::get_bucket(storage.as_ref(), bucket)) {
-            Ok(b) => {
-                let status = if b.versioning_enabled {
-                    Some("Enabled")
-                } else {
-                    Some("Suspended")
-                };
-                let xml = xml_utils::versioning_status_xml(status);
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
-    } else if req.has_query_param("uploads") {
-        match tokio::task::block_in_place(|| {
-            bucket_service::list_multipart_uploads(storage.as_ref(), bucket)
-        }) {
-            Ok(uploads) => {
-                let xml = xml_utils::list_multipart_uploads_xml(&uploads, bucket);
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(crate::error::Error::NoSuchUpload) => {
-                let xml = xml_utils::error_xml("NoSuchUpload", "Upload not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
-    } else if req.has_query_param("versions") {
-        let prefix = req.query_param("prefix");
-        let key_marker = req.query_param("key-marker");
-        let version_id_marker = req.query_param("version-id-marker");
-        let max_keys = req
-            .query_param("max-keys")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(1000);
-
-        match tokio::task::block_in_place(|| {
-            object_service::list_object_versions(storage.as_ref(), bucket, prefix)
-        }) {
-            Ok(mut versions) => {
-                versions.sort_unstable_by(|left, right| {
-                    right
-                        .last_modified
-                        .cmp(&left.last_modified)
-                        .then_with(|| left.key.cmp(&right.key))
-                        .then_with(|| left.version_id.cmp(&right.version_id))
-                });
-
-                let truncated = versions.len() > max_keys;
-                if truncated {
-                    versions.truncate(max_keys);
-                }
-
-                let next_key_marker = if truncated {
-                    versions.last().map(|version| version.key.as_str())
-                } else {
-                    None
-                };
-                let next_version_id_marker = if truncated {
-                    versions
-                        .last()
-                        .and_then(|version| version.version_id.as_deref())
-                } else {
-                    None
-                };
-
-                let xml = xml_utils::list_versions_xml(
-                    bucket,
-                    &versions,
-                    prefix.unwrap_or(""),
-                    key_marker,
-                    version_id_marker,
-                    max_keys,
-                    truncated,
-                    next_key_marker,
-                    next_version_id_marker,
-                );
-
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
-    } else if req.query_param("list-type") == Some("2") {
-        let prefix = req.query_param("prefix").unwrap_or("");
-        let delimiter = req
-            .query_param("delimiter")
-            .filter(|value| !value.is_empty());
-        let continuation_token = req
-            .query_param("continuation-token")
-            .filter(|value| !value.is_empty());
-        let start_after = req
-            .query_param("start-after")
-            .filter(|value| !value.is_empty());
-        let max_keys = req
-            .query_param("max-keys")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(1000);
-        let encoding_type = req.query_param("encoding-type");
-        let fetch_owner = matches!(
-            req.query_param("fetch-owner"),
-            Some(value) if value.is_empty() || value.eq_ignore_ascii_case("true")
-        );
-
-        match tokio::task::block_in_place(|| {
-            object_service::list_objects(storage.as_ref(), bucket, Some(prefix), None, None, None)
-        }) {
-            Ok(result) => {
-                let entries = build_list_objects_v2_entries(result.objects, prefix, delimiter);
-                let start_index =
-                    list_objects_v2_start_index(&entries, continuation_token, start_after);
-                let page_end = (start_index.saturating_add(max_keys)).min(entries.len());
-                let page_entries = if start_index < entries.len() {
-                    &entries[start_index..page_end]
-                } else {
-                    &entries[0..0]
-                };
-                let truncated = page_end < entries.len();
-                let next_continuation_token = if truncated {
-                    if page_end > start_index {
-                        Some(page_entries.last().unwrap().token())
-                    } else {
-                        Some(entries[start_index].token())
-                    }
-                } else {
-                    None
-                };
-
-                let xml = xml_utils::list_objects_v2_xml(
-                    page_entries,
-                    bucket,
-                    prefix,
-                    delimiter,
-                    max_keys,
-                    page_entries.len(),
-                    truncated,
-                    continuation_token,
-                    next_continuation_token,
-                    start_after,
-                    encoding_type,
-                    fetch_owner,
-                );
-
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type("application/xml; charset=utf-8")
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .body(xml.into_bytes())
-                .build());
-            }
-            Err(crate::error::Error::BucketNotFound) => {
-                let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-                return Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-        }
-    }
-
-    // Default: List objects
-    let prefix = req.query_param("prefix");
-    let delimiter = req.query_param("delimiter");
-    let marker = req.query_param("marker");
-    let max_keys = req
-        .query_param("max-keys")
-        .and_then(|s| s.parse::<usize>().ok());
-
-    match tokio::task::block_in_place(|| {
-        object_service::list_objects(
-            storage.as_ref(),
-            bucket,
-            prefix,
-            delimiter,
-            marker,
-            max_keys,
+            ResponseBuilder::new(StatusCode::NO_CONTENT)
+                .header("x-amz-request-id", req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id()),
+            cors_snapshot,
         )
-    }) {
-        Ok(mut result) => {
-            // Filter out expired objects (lifecycle eager enforcement)
-            result.objects.retain(|obj| {
-                match tokio::task::block_in_place(|| {
-                    crate::lifecycle::check_object_expiration(&storage, bucket, &obj.key)
-                }) {
-                    Ok(is_expired) => !is_expired,
-                    Err(_) => true,
-                }
-            });
-
-            let xml = xml_utils::list_objects_xml(
-                &result.objects,
-                &result.common_prefixes,
-                bucket,
-                prefix.unwrap_or(""),
-                delimiter,
-                marker,
-                result.objects.len(),
-                result.is_truncated,
-                result.next_marker.as_deref(),
-            );
-            Ok(cors::apply_actual_request_headers(
-                storage.as_ref(),
-                bucket,
-                req,
-                ResponseBuilder::new(StatusCode::OK)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .header("x-amz-id-2", &header_utils::generate_request_id()),
-            )
-            .body(xml.into_bytes())
-            .build())
-        }
-        Err(e) => {
-            let xml = xml_utils::error_xml("InternalError", &e.to_string(), &req_id);
-            Ok(ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes())
-                .build())
-        }
+        .empty(),
+        Err(e) => storage_error_response(&e, req_id),
     }
 }
 
@@ -1157,122 +209,22 @@ pub async fn bucket_post(
     req: &crate::server::http::Request,
     req_id: String,
 ) -> Result<Response<Body>, String> {
-    // Multi-object delete: POST /bucket?delete
     if req.has_query_param("delete") {
-        if !tokio::task::block_in_place(|| bucket_service::bucket_exists(storage.as_ref(), bucket))?
-        {
-            let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", &req_id);
-            return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .body(xml.into_bytes())
-                .build());
-        }
-
-        let body_str = String::from_utf8(req.body.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
-        let objects = parse_delete_keys(&body_str);
-
-        for (key, _) in &objects {
-            if let Err(response) = check_authorization(
-                req,
-                &auth_config,
-                &storage,
-                bucket,
-                Some(key.as_str()),
-                "s3:DeleteObject",
-            ) {
-                return Ok(response);
-            }
-        }
-
-        for (key, version) in &objects {
-            let _ = tokio::task::block_in_place(|| {
-                if let Some(v) = version {
-                    object_service::delete_object_version(storage.as_ref(), bucket, key, v)
-                } else {
-                    object_service::delete_object(storage.as_ref(), bucket, key)
-                }
-            });
-        }
-
-        let mut resp_xml = xml_utils::xml_declaration();
-        resp_xml.push_str("<DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-        for (key, version) in objects {
-            resp_xml.push_str("<Deleted>");
-            resp_xml.push_str(&format!("<Key>{}</Key>", escape_xml_str(&key)));
-            if let Some(v) = version {
-                resp_xml.push_str(&format!("<VersionId>{}</VersionId>", escape_xml_str(&v)));
-            }
-            resp_xml.push_str("</Deleted>");
-        }
-        resp_xml.push_str("</DeleteResult>");
-
-        return Ok(apply_bucket_cors_headers(
-            storage.as_ref(),
-            bucket,
-            req,
-            ResponseBuilder::new(StatusCode::OK)
-                .content_type("application/xml; charset=utf-8")
-                .header("x-amz-request-id", &req_id)
-                .header("x-amz-id-2", &header_utils::generate_request_id())
-                .body(resp_xml.into_bytes()),
-            None,
-        )
-        .build());
+        return bucket_post_multi_object_delete(storage, auth_config, bucket, req, &req_id);
     }
 
-    if let Some(content_type) = req.header("content-type") {
-        if content_type.starts_with("multipart/form-data") {
-            if !tokio::task::block_in_place(|| {
-                bucket_service::bucket_exists(storage.as_ref(), bucket)
-            })? {
-                return Ok(xml_error_response(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchBucket",
-                    "Bucket not found",
-                    &req_id,
-                ));
-            }
-
-            if let Some((key, data, file_content_type)) =
-                parse_multipart_form_upload(content_type, &req.body)
-            {
-                if let Err(response) = check_authorization(
-                    req,
-                    &auth_config,
-                    &storage,
-                    bucket,
-                    Some(key.as_str()),
-                    "s3:PutObject",
-                ) {
-                    return Ok(response);
-                }
-
-                let object = crate::models::Object::new(key.clone(), data, file_content_type);
-                tokio::task::block_in_place(|| {
-                    object_service::put_object(storage.as_ref(), bucket, key.clone(), object)
-                })?;
-
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    ResponseBuilder::new(StatusCode::NO_CONTENT)
-                        .header("Location", &format!("/{}/{}", bucket, key))
-                        .header("x-amz-request-id", &req_id)
-                        .header("x-amz-id-2", &header_utils::generate_request_id()),
-                )
-                .empty());
-            }
-
-            return Ok(xml_error_response(
-                StatusCode::BAD_REQUEST,
-                "InvalidRequest",
-                "Unable to parse multipart form upload",
-                &req_id,
-            ));
-        }
+    if let Some(content_type) = req
+        .header("content-type")
+        .filter(|content_type| content_type.starts_with("multipart/form-data"))
+    {
+        return bucket_post_browser_upload(
+            storage,
+            auth_config,
+            bucket,
+            req,
+            &req_id,
+            content_type,
+        );
     }
 
     let xml = xml_utils::error_xml(
@@ -1285,6 +237,131 @@ pub async fn bucket_post(
         .header("x-amz-request-id", &req_id)
         .body(xml.into_bytes())
         .build())
+}
+
+fn bucket_post_multi_object_delete(
+    storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
+    bucket: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+) -> Result<Response<Body>, String> {
+    if !tokio::task::block_in_place(|| bucket_service::bucket_exists(storage.as_ref(), bucket))? {
+        let xml = xml_utils::error_xml("NoSuchBucket", "Bucket not found", req_id);
+        return Ok(ResponseBuilder::new(StatusCode::NOT_FOUND)
+            .content_type("application/xml; charset=utf-8")
+            .header("x-amz-request-id", req_id)
+            .body(xml.into_bytes())
+            .build());
+    }
+
+    let body_str =
+        String::from_utf8(req.body.to_vec()).map_err(|e| format!("Invalid UTF-8 body: {}", e))?;
+    let objects = parse_delete_keys(&body_str);
+
+    for (key, _) in &objects {
+        if let Err(response) = check_authorization(
+            req,
+            &auth_config,
+            &storage,
+            bucket,
+            Some(key.as_str()),
+            "s3:DeleteObject",
+        ) {
+            return Ok(response);
+        }
+    }
+
+    for (key, version) in &objects {
+        let _ = tokio::task::block_in_place(|| {
+            if let Some(v) = version {
+                object_service::delete_object_version(storage.as_ref(), bucket, key, v)
+            } else {
+                object_service::delete_object(storage.as_ref(), bucket, key)
+            }
+        });
+    }
+
+    let mut resp_xml = xml_utils::xml_declaration();
+    resp_xml.push_str("<DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+    for (key, version) in objects {
+        resp_xml.push_str("<Deleted>");
+        resp_xml.push_str(&format!("<Key>{}</Key>", escape_xml_str(&key)));
+        if let Some(v) = version {
+            resp_xml.push_str(&format!("<VersionId>{}</VersionId>", escape_xml_str(&v)));
+        }
+        resp_xml.push_str("</Deleted>");
+    }
+    resp_xml.push_str("</DeleteResult>");
+
+    Ok(apply_bucket_cors_headers(
+        storage.as_ref(),
+        bucket,
+        req,
+        ResponseBuilder::new(StatusCode::OK)
+            .content_type("application/xml; charset=utf-8")
+            .header("x-amz-request-id", req_id)
+            .header("x-amz-id-2", &header_utils::generate_request_id())
+            .body(resp_xml.into_bytes()),
+        None,
+    )
+    .build())
+}
+
+fn bucket_post_browser_upload(
+    storage: Arc<dyn Storage>,
+    auth_config: Arc<AuthConfig>,
+    bucket: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+    content_type: &str,
+) -> Result<Response<Body>, String> {
+    if !tokio::task::block_in_place(|| bucket_service::bucket_exists(storage.as_ref(), bucket))? {
+        return Ok(xml_error_response(
+            StatusCode::NOT_FOUND,
+            "NoSuchBucket",
+            "Bucket not found",
+            req_id,
+        ));
+    }
+
+    if let Some((key, data, file_content_type)) =
+        parse_multipart_form_upload(content_type, &req.body)
+    {
+        if let Err(response) = check_authorization(
+            req,
+            &auth_config,
+            &storage,
+            bucket,
+            Some(key.as_str()),
+            "s3:PutObject",
+        ) {
+            return Ok(response);
+        }
+
+        let object = crate::models::Object::new(key.clone(), data, file_content_type);
+        tokio::task::block_in_place(|| {
+            object_service::put_object(storage.as_ref(), bucket, key.clone(), object)
+        })?;
+
+        return Ok(cors::apply_actual_request_headers(
+            storage.as_ref(),
+            bucket,
+            req,
+            ResponseBuilder::new(StatusCode::NO_CONTENT)
+                .header("Location", &format!("/{}/{}", bucket, key))
+                .header("x-amz-request-id", req_id)
+                .header("x-amz-id-2", &header_utils::generate_request_id()),
+        )
+        .empty());
+    }
+
+    Ok(xml_error_response(
+        StatusCode::BAD_REQUEST,
+        "InvalidRequest",
+        "Unable to parse multipart form upload",
+        req_id,
+    ))
 }
 
 #[cfg(test)]

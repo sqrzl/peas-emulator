@@ -1,5 +1,8 @@
 use crate::error::Error;
-use crate::models::{LifecycleConfiguration, Status, StorageClass, Transition};
+use crate::models::{
+    lifecycle::{NoncurrentVersionExpiration, Rule},
+    LifecycleConfiguration, Status, StorageClass, Transition,
+};
 use crate::storage::Storage;
 use chrono::{DateTime, NaiveDate, Utc};
 use std::collections::HashMap;
@@ -155,6 +158,12 @@ pub struct LifecycleExecutor {
     interval: Duration,
 }
 
+struct NoncurrentVersionGroup {
+    key: String,
+    current_version_id: Option<String>,
+    versions: Vec<crate::models::Object>,
+}
+
 impl LifecycleExecutor {
     /// Create a new lifecycle executor with the specified interval.
     pub fn new(storage: Arc<dyn Storage>, interval: Duration) -> Self {
@@ -228,149 +237,199 @@ impl LifecycleExecutor {
                 "Applying lifecycle rule"
             );
 
-            // List all current objects in the bucket (using pagination)
-            let result = tokio::task::block_in_place(|| {
-                self.storage
-                    .list_objects(bucket_name, None, None, None, None)
-            })?;
-            let objects = result.objects;
-
-            for object in objects {
-                // Get object tags
-                let tags = tokio::task::block_in_place(|| {
-                    self.storage.get_object_tags(bucket_name, &object.key)
-                })
-                .unwrap_or_default();
-
-                if !rule_matches_filter(rule, &object.key, &tags) {
-                    continue;
-                }
-
-                // Apply expiration action
-                if let Some(expiration) = &rule.expiration {
-                    if should_expire(object.last_modified, expiration, now) {
-                        info!(
-                            bucket = bucket_name,
-                            key = object.key,
-                            rule_id = rule.id.as_deref().unwrap_or("unnamed"),
-                            "Expiring object"
-                        );
-
-                        let _ = tokio::task::block_in_place(|| {
-                            self.storage.delete_object(bucket_name, &object.key)
-                        });
-
-                        continue;
-                    }
-                }
-
-                if let Some(transition) = rule
-                    .transitions
-                    .iter()
-                    .find(|transition| should_transition(object.last_modified, transition, now))
-                {
-                    let storage_class = storage_class_to_str(&transition.storage_class);
-
-                    if object.storage_class != storage_class {
-                        info!(
-                            bucket = bucket_name,
-                            key = object.key,
-                            rule_id = rule.id.as_deref().unwrap_or("unnamed"),
-                            storage_class = storage_class,
-                            "Transitioning object storage class"
-                        );
-
-                        if let Err(e) = tokio::task::block_in_place(|| {
-                            self.storage.update_object_storage_class(
-                                bucket_name,
-                                &object.key,
-                                storage_class,
-                            )
-                        }) {
-                            error!(
-                                bucket = bucket_name,
-                                key = object.key,
-                                rule_id = rule.id.as_deref().unwrap_or("unnamed"),
-                                storage_class = storage_class,
-                                error = %e,
-                                "Failed to transition object storage class"
-                            );
-                        }
-                    }
-                }
-            }
-
-            if let Some(noncurrent_expiration) = &rule.noncurrent_version_expiration {
-                let versions = tokio::task::block_in_place(|| {
-                    self.storage.list_object_versions(bucket_name, None)
-                })?;
-
-                let mut versions_by_key: HashMap<String, Vec<crate::models::Object>> =
-                    HashMap::new();
-
-                for version in versions {
-                    let tags = tokio::task::block_in_place(|| {
-                        self.storage.get_object_tags(bucket_name, &version.key)
-                    })
-                    .unwrap_or_default();
-
-                    if !rule_matches_filter(rule, &version.key, &tags) {
-                        continue;
-                    }
-
-                    versions_by_key
-                        .entry(version.key.clone())
-                        .or_default()
-                        .push(version);
-                }
-
-                for (key, mut versions) in versions_by_key {
-                    versions.sort_by(|left, right| {
-                        right
-                            .last_modified
-                            .cmp(&left.last_modified)
-                            .then_with(|| left.version_id.cmp(&right.version_id))
-                    });
-
-                    let current_version_id =
-                        tokio::task::block_in_place(|| self.storage.get_object(bucket_name, &key))
-                            .ok()
-                            .and_then(|object| object.version_id);
-
-                    for version in versions {
-                        if current_version_id.as_deref() == version.version_id.as_deref() {
-                            continue;
-                        }
-
-                        if should_expire_noncurrent_version(
-                            version.last_modified,
-                            noncurrent_expiration.noncurrent_days,
-                            now,
-                        ) {
-                            if let Some(version_id) = version.version_id.as_deref() {
-                                info!(
-                                    bucket = bucket_name,
-                                    key = key,
-                                    version_id = version_id,
-                                    rule_id = rule.id.as_deref().unwrap_or("unnamed"),
-                                    "Expiring noncurrent object version"
-                                );
-
-                                let _ = tokio::task::block_in_place(|| {
-                                    self.storage.delete_object_version(
-                                        bucket_name,
-                                        &key,
-                                        version_id,
-                                    )
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            self.apply_current_object_rule(bucket_name, rule, now)?;
+            self.apply_noncurrent_version_rule(bucket_name, rule, now)?;
         }
 
         Ok(())
+    }
+
+    fn apply_current_object_rule(
+        &self,
+        bucket_name: &str,
+        rule: &Rule,
+        now: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        let result = tokio::task::block_in_place(|| {
+            self.storage
+                .list_objects(bucket_name, None, None, None, None)
+        })?;
+
+        for object in result.objects {
+            let tags = self.object_tags(bucket_name, &object.key);
+            if !rule_matches_filter(rule, &object.key, &tags) {
+                continue;
+            }
+
+            if let Some(expiration) = &rule.expiration {
+                if should_expire(object.last_modified, expiration, now) {
+                    info!(
+                        bucket = bucket_name,
+                        key = object.key,
+                        rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                        "Expiring object"
+                    );
+
+                    let _ = tokio::task::block_in_place(|| {
+                        self.storage.delete_object(bucket_name, &object.key)
+                    });
+                    continue;
+                }
+            }
+
+            self.apply_transition(bucket_name, rule, &object, now);
+        }
+
+        Ok(())
+    }
+
+    fn apply_transition(
+        &self,
+        bucket_name: &str,
+        rule: &Rule,
+        object: &crate::models::Object,
+        now: DateTime<Utc>,
+    ) {
+        let Some(transition) = rule
+            .transitions
+            .iter()
+            .find(|transition| should_transition(object.last_modified, transition, now))
+        else {
+            return;
+        };
+
+        let storage_class = storage_class_to_str(&transition.storage_class);
+        if object.storage_class == storage_class {
+            return;
+        }
+
+        info!(
+            bucket = bucket_name,
+            key = object.key,
+            rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+            storage_class = storage_class,
+            "Transitioning object storage class"
+        );
+
+        if let Err(e) = tokio::task::block_in_place(|| {
+            self.storage
+                .update_object_storage_class(bucket_name, &object.key, storage_class)
+        }) {
+            error!(
+                bucket = bucket_name,
+                key = object.key,
+                rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                storage_class = storage_class,
+                error = %e,
+                "Failed to transition object storage class"
+            );
+        }
+    }
+
+    fn apply_noncurrent_version_rule(
+        &self,
+        bucket_name: &str,
+        rule: &Rule,
+        now: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        let Some(noncurrent_expiration) = &rule.noncurrent_version_expiration else {
+            return Ok(());
+        };
+
+        for (key, mut versions) in self.filtered_versions_by_key(bucket_name, rule)? {
+            versions.sort_by(|left, right| {
+                right
+                    .last_modified
+                    .cmp(&left.last_modified)
+                    .then_with(|| left.version_id.cmp(&right.version_id))
+            });
+
+            let current_version_id = self.current_version_id(bucket_name, &key);
+            self.expire_noncurrent_versions(
+                bucket_name,
+                rule,
+                noncurrent_expiration,
+                now,
+                NoncurrentVersionGroup {
+                    key,
+                    current_version_id,
+                    versions,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn filtered_versions_by_key(
+        &self,
+        bucket_name: &str,
+        rule: &Rule,
+    ) -> Result<HashMap<String, Vec<crate::models::Object>>, Error> {
+        let versions =
+            tokio::task::block_in_place(|| self.storage.list_object_versions(bucket_name, None))?;
+        let mut versions_by_key: HashMap<String, Vec<crate::models::Object>> = HashMap::new();
+
+        for version in versions {
+            let tags = self.object_tags(bucket_name, &version.key);
+            if rule_matches_filter(rule, &version.key, &tags) {
+                versions_by_key
+                    .entry(version.key.clone())
+                    .or_default()
+                    .push(version);
+            }
+        }
+
+        Ok(versions_by_key)
+    }
+
+    fn expire_noncurrent_versions(
+        &self,
+        bucket_name: &str,
+        rule: &Rule,
+        expiration: &NoncurrentVersionExpiration,
+        now: DateTime<Utc>,
+        version_group: NoncurrentVersionGroup,
+    ) {
+        for version in version_group.versions {
+            if version_group.current_version_id.as_deref() == version.version_id.as_deref() {
+                continue;
+            }
+
+            if !should_expire_noncurrent_version(
+                version.last_modified,
+                expiration.noncurrent_days,
+                now,
+            ) {
+                continue;
+            }
+
+            if let Some(version_id) = version.version_id.as_deref() {
+                info!(
+                    bucket = bucket_name,
+                    key = version_group.key,
+                    version_id = version_id,
+                    rule_id = rule.id.as_deref().unwrap_or("unnamed"),
+                    "Expiring noncurrent object version"
+                );
+
+                let _ = tokio::task::block_in_place(|| {
+                    self.storage
+                        .delete_object_version(bucket_name, &version_group.key, version_id)
+                });
+            }
+        }
+    }
+
+    fn current_version_id(&self, bucket_name: &str, key: &str) -> Option<String> {
+        tokio::task::block_in_place(|| self.storage.get_object(bucket_name, key))
+            .ok()
+            .and_then(|object| object.version_id)
+    }
+
+    fn object_tags(&self, bucket_name: &str, key: &str) -> HashMap<String, String> {
+        tokio::task::block_in_place(|| self.storage.get_object_tags(bucket_name, key))
+            .unwrap_or_default()
     }
 }
 

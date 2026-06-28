@@ -50,13 +50,7 @@ pub async fn object_get(
         return Ok(response);
     }
 
-    // Check if object should be deleted due to lifecycle rules (eager enforcement)
-    let is_expired = tokio::task::block_in_place(|| {
-        crate::lifecycle::check_object_expiration(&storage, bucket, key)
-    });
-
-    if is_expired.is_ok() && is_expired.unwrap() {
-        // Object was deleted due to lifecycle expiration
+    if object_expired(&storage, bucket, key) {
         return Ok(xml_error_response(
             StatusCode::NOT_FOUND,
             "NoSuchKey",
@@ -66,181 +60,206 @@ pub async fn object_get(
     }
 
     if req.has_query_param("tagging") {
-        match tokio::task::block_in_place(|| {
-            object_service::get_object_tags(storage.as_ref(), bucket, key)
-        }) {
-            Ok(tags) => {
-                let xml = xml_utils::tagging_xml(&tags);
-                return Ok(xml_success_response(StatusCode::OK, xml, &req_id));
-            }
-            Err(e) => return Ok(storage_error_response(&e, &req_id)),
-        }
+        return Ok(object_tagging_response(&storage, bucket, key, &req_id));
     }
 
     if req.has_query_param("acl") {
-        match tokio::task::block_in_place(|| {
-            object_service::get_object_acl(storage.as_ref(), bucket, key)
-        }) {
-            Ok(acl) => {
-                let owner = crate::models::policy::Owner {
-                    id: "peas-emulator".to_string(),
-                    display_name: "S3 Emulator".to_string(),
-                };
-                let xml = xml_utils::acl_xml(&owner, &acl);
-                return Ok(xml_success_response(StatusCode::OK, xml, &req_id));
-            }
-            Err(e) => return Ok(storage_error_response(&e, &req_id)),
-        }
+        return Ok(object_acl_response(&storage, bucket, key, &req_id));
     }
 
     if let Some(version_id) = req.query_param("versionId") {
-        match tokio::task::block_in_place(|| {
-            object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
-        }) {
-            Ok(obj) => {
-                if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
-                    return Ok(response);
-                }
-                if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
-                    return Ok(response);
-                }
-
-                let builder = object_response_headers(
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type(&obj.content_type)
-                        .header("Content-Length", &obj.size.to_string()),
-                    &obj,
-                    &req_id,
-                );
-
-                return Ok(cors::apply_actual_request_headers(
-                    storage.as_ref(),
-                    bucket,
-                    req,
-                    builder,
-                )
-                .body(obj.data)
-                .build());
-            }
-            Err(e) => return Ok(storage_error_response(&e, &req_id)),
-        }
+        return Ok(object_version_response(
+            &storage, bucket, key, version_id, req, &req_id,
+        ));
     }
 
     if req.has_query_param("uploadId") {
         let upload_id = req.query_param("uploadId").unwrap_or("");
-        match tokio::task::block_in_place(|| {
-            object_service::list_parts(storage.as_ref(), bucket, upload_id)
-        }) {
-            Ok(parts) => {
-                let xml = xml_utils::list_parts_xml(bucket, key, upload_id, &parts);
-                return Ok(ResponseBuilder::new(StatusCode::OK)
-                    .content_type("application/xml; charset=utf-8")
-                    .header("x-amz-request-id", &req_id)
-                    .body(xml.into_bytes())
-                    .build());
-            }
-            Err(e) => {
-                return Ok(xml_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "InternalError",
-                    &e.to_string(),
-                    &req_id,
-                ));
-            }
-        }
+        return Ok(object_parts_response(
+            &storage, bucket, key, upload_id, &req_id,
+        ));
     }
 
-    let range_header = req.header("range").map(|s| s.to_string());
-
-    // Range support
-    if let Some(range_str) = range_header {
-        let range = parse_range(&range_str);
-        match range {
-            Some((start, end_opt)) => {
-                match tokio::task::block_in_place(|| {
-                    object_service::get_object_range(storage.as_ref(), bucket, key, start, end_opt)
-                }) {
-                    Ok((obj, data)) => {
-                        if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
-                            return Ok(response);
-                        }
-                        if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
-                            return Ok(response);
-                        }
-
-                        let len = data.len() as u64;
-                        let end_idx = start + len.saturating_sub(1);
-                        let builder = object_response_headers(
-                            ResponseBuilder::new(StatusCode::PARTIAL_CONTENT)
-                                .content_type(&obj.content_type)
-                                .header("Content-Length", &len.to_string())
-                                .header(
-                                    "Content-Range",
-                                    &format!("bytes {}-{}/{}", start, end_idx, obj.size),
-                                ),
-                            &obj,
-                            &req_id,
-                        );
-
-                        Ok(cors::apply_actual_request_headers(
-                            storage.as_ref(),
-                            bucket,
-                            req,
-                            builder,
-                        )
-                        .body(data)
-                        .build())
-                    }
-                    Err(e) => Ok(xml_error_response(
-                        StatusCode::RANGE_NOT_SATISFIABLE,
-                        "InvalidRange",
-                        &e.to_string(),
-                        &req_id,
-                    )),
-                }
-            }
-            None => Ok(xml_error_response(
-                StatusCode::RANGE_NOT_SATISFIABLE,
-                "InvalidRange",
-                "Invalid Range header",
-                &req_id,
-            )),
-        }
-    } else {
-        // Default: Get full object
-        match tokio::task::block_in_place(|| {
-            object_service::get_object(storage.as_ref(), bucket, key)
-        }) {
-            Ok(obj) => {
-                if let Some(response) = validate_get_sse_headers(req, &obj, &req_id) {
-                    return Ok(response);
-                }
-                if let Some(response) = check_object_conditionals(req, &obj, &req_id) {
-                    return Ok(response);
-                }
-
-                let builder = object_response_headers(
-                    ResponseBuilder::new(StatusCode::OK)
-                        .content_type(&obj.content_type)
-                        .header("Content-Length", &obj.size.to_string()),
-                    &obj,
-                    &req_id,
-                );
-
-                Ok(
-                    cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder)
-                        .body(obj.data)
-                        .build(),
-                )
-            }
-            Err(e) => Ok(xml_error_response(
-                StatusCode::NOT_FOUND,
-                "NoSuchKey",
-                &e.to_string(),
-                &req_id,
-            )),
-        }
+    if let Some(range) = req.header("range") {
+        return Ok(object_range_response(
+            &storage, bucket, key, req, &req_id, range,
+        ));
     }
+
+    Ok(object_full_response(&storage, bucket, key, req, &req_id))
+}
+
+fn object_expired(storage: &Arc<dyn Storage>, bucket: &str, key: &str) -> bool {
+    tokio::task::block_in_place(|| crate::lifecycle::check_object_expiration(storage, bucket, key))
+        .unwrap_or(false)
+}
+
+fn object_tagging_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    req_id: &str,
+) -> Response<Body> {
+    match tokio::task::block_in_place(|| {
+        object_service::get_object_tags(storage.as_ref(), bucket, key)
+    }) {
+        Ok(tags) => xml_success_response(StatusCode::OK, xml_utils::tagging_xml(&tags), req_id),
+        Err(e) => storage_error_response(&e, req_id),
+    }
+}
+
+fn object_acl_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    req_id: &str,
+) -> Response<Body> {
+    match tokio::task::block_in_place(|| {
+        object_service::get_object_acl(storage.as_ref(), bucket, key)
+    }) {
+        Ok(acl) => {
+            let owner = crate::models::policy::Owner {
+                id: "peas-emulator".to_string(),
+                display_name: "S3 Emulator".to_string(),
+            };
+            xml_success_response(StatusCode::OK, xml_utils::acl_xml(&owner, &acl), req_id)
+        }
+        Err(e) => storage_error_response(&e, req_id),
+    }
+}
+
+fn object_version_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    version_id: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+) -> Response<Body> {
+    match tokio::task::block_in_place(|| {
+        object_service::get_object_version(storage.as_ref(), bucket, key, version_id)
+    }) {
+        Ok(obj) => object_payload_response(storage, bucket, req, req_id, obj, StatusCode::OK, None),
+        Err(e) => storage_error_response(&e, req_id),
+    }
+}
+
+fn object_parts_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+    req_id: &str,
+) -> Response<Body> {
+    match tokio::task::block_in_place(|| {
+        object_service::list_parts(storage.as_ref(), bucket, upload_id)
+    }) {
+        Ok(parts) => {
+            let xml = xml_utils::list_parts_xml(bucket, key, upload_id, &parts);
+            ResponseBuilder::new(StatusCode::OK)
+                .content_type("application/xml; charset=utf-8")
+                .header("x-amz-request-id", req_id)
+                .body(xml.into_bytes())
+                .build()
+        }
+        Err(e) => xml_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+            req_id,
+        ),
+    }
+}
+
+fn object_range_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+    range_header: &str,
+) -> Response<Body> {
+    let Some((start, end)) = parse_range(range_header) else {
+        return xml_error_response(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "InvalidRange",
+            "Invalid Range header",
+            req_id,
+        );
+    };
+
+    match tokio::task::block_in_place(|| {
+        object_service::get_object_range(storage.as_ref(), bucket, key, start, end)
+    }) {
+        Ok((obj, data)) => {
+            let len = data.len() as u64;
+            let end_idx = start + len.saturating_sub(1);
+            let content_range = format!("bytes {}-{}/{}", start, end_idx, obj.size);
+            object_payload_response(
+                storage,
+                bucket,
+                req,
+                req_id,
+                obj,
+                StatusCode::PARTIAL_CONTENT,
+                Some((data, len, content_range)),
+            )
+        }
+        Err(e) => xml_error_response(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "InvalidRange",
+            &e.to_string(),
+            req_id,
+        ),
+    }
+}
+
+fn object_full_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    key: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+) -> Response<Body> {
+    match tokio::task::block_in_place(|| object_service::get_object(storage.as_ref(), bucket, key))
+    {
+        Ok(obj) => object_payload_response(storage, bucket, req, req_id, obj, StatusCode::OK, None),
+        Err(e) => xml_error_response(StatusCode::NOT_FOUND, "NoSuchKey", &e.to_string(), req_id),
+    }
+}
+
+fn object_payload_response(
+    storage: &Arc<dyn Storage>,
+    bucket: &str,
+    req: &crate::server::http::Request,
+    req_id: &str,
+    mut obj: crate::models::Object,
+    status: StatusCode,
+    range: Option<(Vec<u8>, u64, String)>,
+) -> Response<Body> {
+    if let Some(response) = validate_get_sse_headers(req, &obj, req_id) {
+        return response;
+    }
+    if let Some(response) = check_object_conditionals(req, &obj, req_id) {
+        return response;
+    }
+
+    let (data, content_length, content_range) = match range {
+        Some((data, len, content_range)) => (data, len, Some(content_range)),
+        None => (std::mem::take(&mut obj.data), obj.size, None),
+    };
+    let mut builder = ResponseBuilder::new(status)
+        .content_type(&obj.content_type)
+        .header("Content-Length", &content_length.to_string());
+
+    if let Some(content_range) = content_range {
+        builder = builder.header("Content-Range", &content_range);
+    }
+
+    let builder = object_response_headers(builder, &obj, req_id);
+    cors::apply_actual_request_headers(storage.as_ref(), bucket, req, builder)
+        .body(data)
+        .build()
 }
 
 pub async fn object_put(

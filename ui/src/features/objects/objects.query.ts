@@ -22,6 +22,49 @@ export type DownloadedObject = {
   fileName: string;
 };
 
+type ObjectPageVisit = (page: ObjectPage) => boolean | void;
+
+async function walkObjectPages({
+  bucketName,
+  search,
+  pathPrefix,
+  signal,
+  visit,
+}: {
+  bucketName: string;
+  search?: string;
+  pathPrefix?: string;
+  signal: AbortSignal;
+  visit: ObjectPageVisit;
+}): Promise<void> {
+  const prefixes = [pathPrefix];
+  const includeFolders = !search?.trim();
+
+  for (let index = 0; index < prefixes.length; index += 1) {
+    let next: string | undefined;
+    const currentPrefix = prefixes[index];
+
+    do {
+      const page = await loadObjectPage({
+        bucketName,
+        next,
+        search,
+        pathPrefix: currentPrefix,
+        signal,
+      });
+
+      if (visit(page) === false) {
+        return;
+      }
+
+      if (includeFolders) {
+        prefixes.push(...page.folders.map((folder) => folder.prefix));
+      }
+      next = page.next ?? undefined;
+    } while (next);
+  }
+}
+
 export async function loadObjectPage({
   bucketName,
   next,
@@ -67,28 +110,16 @@ export async function loadAllObjectPages({
   signal: AbortSignal;
 }): Promise<ObjectInfo[]> {
   const items: ObjectInfo[] = [];
-  const prefixes = [pathPrefix];
 
-  for (let index = 0; index < prefixes.length; index += 1) {
-    let next: string | undefined;
-    const currentPrefix = prefixes[index];
-
-    do {
-      const page = await loadObjectPage({
-        bucketName,
-        next,
-        search,
-        pathPrefix: currentPrefix,
-        signal,
-      });
-
+  await walkObjectPages({
+    bucketName,
+    search,
+    pathPrefix,
+    signal,
+    visit: (page) => {
       items.push(...page.items);
-      if (!search?.trim()) {
-        prefixes.push(...page.folders.map((folder) => folder.prefix));
-      }
-      next = page.next ?? undefined;
-    } while (next);
-  }
+    },
+  });
 
   return items;
 }
@@ -104,33 +135,23 @@ export async function findObjectByBlobId({
   pathPrefix?: string;
   signal: AbortSignal;
 }): Promise<ObjectInfo | undefined> {
-  const prefixes = [pathPrefix];
+  let resolved: ObjectInfo | undefined;
 
-  for (let index = 0; index < prefixes.length; index += 1) {
-    let next: string | undefined;
-    const currentPrefix = prefixes[index];
-
-    do {
-      const page = await loadObjectPage({
-        bucketName,
-        next,
-        pathPrefix: currentPrefix,
-        signal,
-      });
-
-      const resolved = page.items.find(
+  await walkObjectPages({
+    bucketName,
+    pathPrefix,
+    signal,
+    visit: (page) => {
+      resolved = page.items.find(
         (object) => blobIdFromBlobKey(object.key) === blobId
       );
       if (resolved) {
-        return resolved;
+        return false;
       }
+    },
+  });
 
-      prefixes.push(...page.folders.map((folder) => folder.prefix));
-      next = page.next ?? undefined;
-    } while (next);
-  }
-
-  return undefined;
+  return resolved;
 }
 
 export async function countBucketObjects({
